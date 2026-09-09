@@ -695,6 +695,9 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:8px;cursor:pointer">
       <input type="checkbox" id="cf_subBold" style="width:18px;height:18px;flex:0 0 auto"><span>字幕加粗（竖屏小屏更清楚）</span>
     </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
+      <input type="checkbox" id="cf_subBg" style="width:18px;height:18px;flex:0 0 auto"><span>半透明黑底（背景乱时更好读，对标 MoneyPrinterTurbo 字幕底）</span>
+    </label>
     <div class="hint" style="margin-top:6px">颜色用 ASS 的 <b>BGR</b> 顺序：白色 = <code>FFFFFF</code>，黄色 = <code>00FFFF</code>。改完重新导出合成包即可，不影响的 .srt 本身。</div>
 
     <div class="sec-t">用量与成本追踪（对标 ArcReel）</div>
@@ -895,7 +898,7 @@ var DEFAULT_CFG = {
   lipBase:'', lipKey:'', lipMode:'get', lipAuto:false,
   pipeShots:6, pipeBatch:0, pipeChunk:3000,
   bgmUrl:'', bgmVol:0.18, bgmFade:2, cnRate:4.5,
-  subFont:'Microsoft YaHei', subSize:14, subMargin:36, subColor:'FFFFFF', subOutlineColor:'000000', subOutline:1, subBold:true,
+  subFont:'Microsoft YaHei', subSize:14, subMargin:36, subColor:'FFFFFF', subOutlineColor:'000000', subOutline:1, subBold:true, subBg:false,
   costImg:0.1, costVidSec:0.5, costTts:0, costLip:0.1,
   usedImg:0, usedVidSec:0, usedTts:0, usedLip:0,
   /* v2.5：并发队列 / 多 Key 轮换 / 成片输出参数 */
@@ -1063,7 +1066,8 @@ var SELDEF = { '图片状态':'未生成', '视频状态':'未生成', '配音�
 function toProps(o){
   var p = {};
   for(var k in o){
-    var v = o[k]; if(v === undefined) continue;
+    var v = o[k]; if(v === undefined || v === null) continue;
+    if(k.charAt(0) === '_') continue;                    /* 下划线开头的本地字段（如 _imgHist/_imgNewer）不落资料库 */
     if(FTYPE[k] === 'number') p[k] = { number: num(v) };
     else if(FTYPE[k] === 'select') p[k] = { select: String(v || SELDEF[k] || '未生成') };
     else p[k] = { text: String(v == null ? '' : v) };
@@ -1553,8 +1557,13 @@ function renderGenList(){
           '<div class="media" style="aspect-ratio:'+ar+'">'+imgHtml+'</div>' +
           '<div class="mbtns"><button class="btn sm" data-act="img" data-id="'+s._id+'"'+(busy?' disabled':'')+'>'+(iu ? '重新生图' : '生成图片')+'</button>' +
             '<button class="btn gh sm" data-act="viewimg" data-id="'+s._id+'"'+(iu?'':' disabled')+'>看大图</button>' +
-            '<button class="btn gh sm" data-act="lock" data-id="'+s._id+'"'+(iu?'':' disabled')+' style="'+(locked?'color:#B46B00;border-color:#F5D9A0':'')+'">'+(locked?'★ 基准帧':'☆ 标为满意')+'</button></div>' +
+            '<button class="btn gh sm" data-act="lock" data-id="'+s._id+'"'+(iu?'':' disabled')+' style="'+(locked?'color:#B46B00;border-color:#F5D9A0':'')+'">'+(locked?'★ 基准帧':'☆ 标为满意')+'</button>' +
+            (Array.isArray(s._imgHist) && s._imgHist.length ? '<button class="btn gh sm" data-act="rollimg" data-id="'+s._id+'" title="回退到上一版图片（当前图保留在历史里）">⇄ 上一版('+s._imgHist.length+')</button>' : '') +
+            '</div>' +
           '<div class="media" style="aspect-ratio:'+ar+';margin-top:12px">'+vidHtml+'</div>' +
+          (s._imgNewer && (s['视频URL'] || s['口型视频URL'])
+            ? '<div class="hint" style="color:#B46B00;margin-top:4px">已换图：下方视频基于旧图生成，请点「重新生视频」让画面与新图一致。</div>'
+            : '') +
           '<div class="mbtns"><button class="btn sm" data-act="vid" data-id="'+s._id+'"'+(busy || !iu ? ' disabled':'')+'>'+(vu ? '重新生视频' : '生成视频')+'</button>' +
             '<button class="btn gh sm" data-act="openvid" data-id="'+s._id+'"'+(vu?'':' disabled')+'>打开</button></div>' +
         '</div>' +
@@ -1774,6 +1783,7 @@ function fillSettings(){
   if($('cf_subOutlineColor')) $('cf_subOutlineColor').value = cfg.subOutlineColor || '000000';
   if($('cf_subOutline')) $('cf_subOutline').value = num(cfg.subOutline);
   if($('cf_subBold')) $('cf_subBold').checked = !!cfg.subBold;
+  if($('cf_subBg')) $('cf_subBg').checked = !!cfg.subBg;
   if($('cf_bgmVol')) $('cf_bgmVol').value = num(cfg.bgmVol);
   if($('cf_bgmFade')) $('cf_bgmFade').value = num(cfg.bgmFade);
   if($('cf_costImg')) $('cf_costImg').value = num(cfg.costImg);
@@ -1828,6 +1838,7 @@ function readSettings(){
   if($('cf_subOutlineColor')) cfg.subOutlineColor = ($('cf_subOutlineColor').value.trim() || '000000').replace(/^#/, '').toUpperCase();
   if($('cf_subOutline')) cfg.subOutline = Math.max(0, Math.min(6, num($('cf_subOutline').value)));
   if($('cf_subBold')) cfg.subBold = !!($('cf_subBold').checked);
+  if($('cf_subBg')) cfg.subBg = !!($('cf_subBg').checked);
   if($('cf_bgmVol')) cfg.bgmVol = Math.min(1, Math.max(0, num($('cf_bgmVol').value)));
   if($('cf_bgmFade')) cfg.bgmFade = Math.min(10, Math.max(0, num($('cf_bgmFade').value)));
   if($('cf_costImg')) cfg.costImg = Math.max(0, num($('cf_costImg').value));
@@ -1874,6 +1885,45 @@ function parseJsonSafe(t){ try{ return JSON.parse(t); }catch(e){ return null; } 
 /* 一致性关键：把角色 / 场景设定卡同时作为「文字锚点」和「图片参考」注入每一镜 */
 var SHOTSIZE_EN = { '远景':'extreme wide shot', '全景':'full wide shot', '中景':'medium shot',
                     '近景':'medium close-up', '特写':'close-up', '大特写':'extreme close-up' };
+/* v2.7：镜头语言受控词表（对标火宝把机位角度/运镜枚举化）。用户或拆镜模型填受控中文，
+   提示词拼装时自动映射成规范英文，避免中英混拼让镜头语言不稳定；词典没命中的自由文本原样保留。 */
+var CAM_MOVE_EN = {
+  '固定':'static (locked-off) shot', '固定机位':'static (locked-off) shot', '静止':'static shot',
+  '推镜':'push-in', '推近':'slow push-in', '缓慢推近':'slow push-in', '推进':'push-in',
+  '拉镜':'pull-back', '拉远':'slow pull-back', '缓慢拉远':'slow pull-back', '拉出':'pull-back',
+  '摇镜':'pan', '横摇':'pan', '左摇':'pan left', '右摇':'pan right', '上摇':'tilt up', '下摇':'tilt down',
+  '横移':'tracking (lateral) shot', '移镜':'tracking shot', '跟拍':'following shot', '跟随':'following shot',
+  '升降':'crane/jib shot', '升降镜':'crane shot', '环绕':'orbit around the subject', '环绕镜':'orbit around the subject',
+  '手持':'handheld shot', '手持跟拍':'handheld follow shot', '甩镜':'whip pan', '急摇':'whip pan'
+};
+var CAM_ANGLE_EN = {
+  '平视':'eye-level camera', '平拍':'eye-level camera',
+  '俯视':'high angle (looking down)', '俯拍':'high angle (looking down)', '鸟瞰':'top-down view',
+  '仰视':'low angle (looking up)', '仰拍':'low angle (looking up)',
+  '过肩':'over-the-shoulder shot', '侧拍':'side profile camera', '侧面':'side profile camera',
+  '背拍':'shot from behind', '背面':'shot from behind', '正面':'front-on camera', '正面平视':'front-on eye-level camera',
+  '45度':'three-quarter (45°) angle', '四分之三':'three-quarter (45°) angle', '顶拍':'top-down shot'
+};
+function _mapLex(t, dict){
+  t = String(t || '').trim(); if(!t) return '';
+  if(dict[t]) return dict[t];
+  var hits = [], keys = Object.keys(dict).sort(function(a, b){ return b.length - a.length; });
+  keys.forEach(function(k){ if(t.indexOf(k) > -1) hits.push(dict[k]); });
+  return hits.length ? hits.join(' + ') : t;          // 没命中任何词 → 原样返回，不打断自由创作
+}
+function cameraMoveEn(t){ return _mapLex(t, CAM_MOVE_EN); }
+function cameraAngleEn(t){ return _mapLex(t, CAM_ANGLE_EN); }
+/* 组合机位+运镜的英文：把一个镜的「运镜」字段（可能混写机位与运动）转成可控英文提示 */
+function cameraLangEn(t){
+  var raw = String(t || '').trim(); if(!raw) return '';
+  var ang = cameraAngleEn(raw), mov = cameraMoveEn(raw);
+  var out = [];
+  if(ang && ang !== raw) out.push(ang);
+  if(mov && mov !== raw) out.push(mov);
+  if(!out.length) return raw;
+  var set = out.filter(function(v, i){ return out.indexOf(v) === i; });
+  return set.join(', ');
+}
 var CONSIST_TAIL = 'CRITICAL CONSISTENCY RULES: ' +
   'the face, hairstyle, hair color, body proportions and outfit of every character MUST be identical to their reference picture; ' +
   'do NOT redesign, do NOT age, do NOT change clothes, do NOT alter facial features; ' +
@@ -1904,8 +1954,9 @@ function buildImageBody(s){
   parts.push('Shot content: ' + main);
   /* 5. 表演 / 情绪（性格一致性） */
   if(String(s['角色情绪'] || '').trim()) parts.push('Performance and emotion: ' + String(s['角色情绪']).trim() + '.');
-  /* 6. 运镜 */
-  if(String(s['运镜'] || '').trim()) parts.push('Camera: ' + String(s['运镜']).trim());
+  /* 6. 运镜 / 机位（受控词表映射成英文，保证镜头语言稳定） */
+  var mv = String(s['运镜'] || '').trim();
+  if(mv){ var mvEn = cameraLangEn(mv); parts.push('Camera: ' + mv + (mvEn && mvEn !== mv ? ' (' + mvEn + ')' : '')); }
   /* 6.5 光影 / 时间 / 天气 / 色调（画面质感与氛围一致性的关键维度） */
   var la = String(s['光影氛围'] || '').trim();
   if(la) parts.push('Lighting, time of day and atmosphere: ' + la + '.');
@@ -2114,6 +2165,10 @@ function genImage(id){
         var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : r.text.slice(0,180);
         throw new Error('HTTP ' + r.status + ' ' + msg);
       }
+      var cur = shotById(id) || s;
+      var oldUrl = cur['图片URL'] || '';
+      if(oldUrl && oldUrl !== url) pushImgHist(cur, oldUrl);    /* 旧图先入历史，不静默覆盖 */
+      if(oldUrl !== url) markImageChanged(cur);                  /* 有下游视频则提示「换图待重做」 */
       patchShot(id, { 图片URL:url, 图片状态:'已完成', 错误信息:'', 更新时间:nowStr() });
       bumpUse('usedImg', 1);
       toast('第 ' + s['镜号'] + ' 镜图片完成');
@@ -2126,9 +2181,38 @@ function genImage(id){
     .then(function(){ delete state.busy[id]; refreshAll(); });
 }
 
+/* --- v2.7：同镜图像版本历史（对标 MoneyPrinterTurbo 多版本选优）---
+   每次重生成/替换本镜图片前，先把旧的「当前图」压入 _imgHist（本地字段，不进资料库），
+   绝不静默覆盖；并提供 rollbackImg 一键切回上一版。旧图只要还留在历史里，
+   后续镜头的一致性基准帧就不会因为一次误生成而「丢了原来的脸」。 */
+function pushImgHist(s, oldUrl){
+  if(!s || !oldUrl) return;
+  s._imgHist = Array.isArray(s._imgHist) ? s._imgHist.slice() : [];
+  if(s['图片URL'] !== oldUrl && s._imgHist.indexOf(oldUrl) === -1) s._imgHist.push(oldUrl);
+  if(s._imgHist.length > 9) s._imgHist = s._imgHist.slice(-9);   // 最多留 9 版
+}
+function rollbackImg(id){
+  var s = shotById(id); if(!s || !Array.isArray(s._imgHist) || !s._imgHist.length){ toast('没有可回退的历史图'); return; }
+  var hist = s._imgHist.slice();
+  var prev = hist.pop();                      // 取最近一版
+  var cur = s['图片URL'] || '';
+  var obj = { 图片URL: prev, _imgHist: hist, _imgNewer: false, 更新时间: nowStr() };
+  if(cur) pushImgHist(Object.assign({}, s, { 图片URL: '' }), cur);   // 把当前图放回历史
+  if(s['视频URL'] || s['口型视频URL']){ obj.视频URL=''; obj.口型视频URL=''; obj.任务ID=''; obj.视频状态='未生成'; obj.口型状态='不需要'; }
+  toast('第 ' + s['镜号'] + ' 镜已切回上一版图片' + (obj.视频URL === '' && (s['视频URL']||s['口型视频URL']) ? '（旧视频已作废，请重新生成）' : ''));
+  patchShot(id, obj);
+}
+/* 本镜图片被更新：若它已有基于旧图的视频 / 口型视频，标记「换图待重做」，不静默删，UI 上给警示 */
+function markImageChanged(s){
+  if(!s) return;
+  if(s['视频URL'] || s['口型视频URL']) s._imgNewer = true;
+}
+
 /* --- 视频：agnes-video-2.5-flash keyframe --- */
 function buildVideoBody(s){
-  var prompt = String(s['运镜'] || '') + '，' + String(s['画面描述'] || '');
+  /* v2.7：运镜/机位经受控词表映射为英文镜头语言，画面仍用中文描述，提升视频动态的确定性 */
+  var camEn = cameraLangEn(s['运镜']);
+  var prompt = (camEn ? camEn + '. ' : '') + String(s['画面描述'] || '');
   if(String(s['角色情绪'] || '').trim()) prompt += '，人物情绪：' + String(s['角色情绪']).trim();
   if(String(s['光影氛围'] || '').trim()) prompt += '，光影氛围：' + String(s['光影氛围']).trim();
   if(cfg.prefix) prompt = cfg.prefix + prompt;
@@ -2183,7 +2267,7 @@ function startPoll(id){
         var url = pickVideoUrl(j);
         if(st === 'completed' || st === 'succeeded' || st === 'success' || url){
           stopPoll(id);
-          patchShot(id, { 视频状态:'已完成', 视频URL:url, 错误信息:'', 更新时间:nowStr() });
+          patchShot(id, { 视频状态:'已完成', 视频URL:url, 错误信息:'', _imgNewer:false, 更新时间:nowStr() });
           bumpUse('usedVidSec', Math.min(12, Math.max(4, num(s['时长秒']) || 5)));
           toast('第 ' + s['镜号'] + ' 镜视频完成');
         }else if(st === 'failed' || st === 'error'){
@@ -2569,6 +2653,7 @@ function shQ(s){ return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 function exportRenderPack(){
   if(!state.shots.length){ toast('还没有分镜'); return; }
   var list = state.shots.slice().sort(function(a, b){ return num(a['镜号']) - num(b['镜号']); });
+  var ridx = assignRenderIdx(list);   /* 段号：只数有 图片/视频 的镜，空镜不占号 */
   var wh = ratioWH(), total = 0, segs = [];
   list.forEach(function(s, i){
     var vu = s['口型视频URL'] || s['视频URL'] || '';
@@ -2576,7 +2661,7 @@ function exportRenderPack(){
     if(!vu && !iu) return;                               /* 图都没有的镜跳过，并在清单里标注 */
     var d = Math.min(12, Math.max(4, num(s['时长秒']) || 5));
     total += d;
-    segs.push({ idx: ('00' + (i + 1)).slice(-3), no: s['镜号'], url: vu || iu, isVid: !!vu, d: d });
+    segs.push({ idx: padSeg(ridx[s._id]), no: s['镜号'], url: vu || iu, isVid: !!vu, d: d });
   });
   if(!segs.length){ toast('还没有生成任何图片 / 视频，无法合成'); return; }
   var fade = Math.min(10, Math.max(0, num(cfg.bgmFade)));
@@ -2585,12 +2670,16 @@ function exportRenderPack(){
   var filter = '[2:a]volume=' + vol + ',afade=t=in:d=' + fade + ',afade=t=out:st=' + fadeOutAt + ':d=' + fade + '[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]';
   /* 字幕样式：全部可在设置里调，字号会按输出分辨率缩放，保证竖屏横屏观感一致 */
   var fs = num(cfg.subSize) || 14;
+  /* v2.7：可选手动「半透明黑底」增强可读性（对标 MoneyPrinterTurbo 的字幕底）。
+     开启时用 ASS BorderStyle=4 画底（Box，Outline 为盒边），不开则沿用描边方案。 */
+  var subBgOn = !!cfg.subBg;
   var subStyle = "subtitles=subs.srt:force_style='FontName=" + (cfg.subFont || 'Microsoft YaHei') +
     ",FontSize=" + fs +
     ",PrimaryColour=&H" + (cfg.subColor || 'FFFFFF') +
-    ",OutlineColour=&H" + (cfg.subOutlineColor || '000000') +
-    ",Outline=" + (num(cfg.subOutline) || 1) +
-    ",Shadow=0,Alignment=2,MarginV=" + (num(cfg.subMargin) || 36) +
+    (subBgOn
+      ? ",BorderStyle=4,BackColour=&H99000000,Outline=3,Shadow=0"
+      : ",OutlineColour=&H" + (cfg.subOutlineColor || '000000') + ",Outline=" + (num(cfg.subOutline) || 1) + ",Shadow=0") +
+    ",Alignment=2,MarginV=" + (num(cfg.subMargin) || 36) +
     ",Bold=" + (cfg.subBold ? 1 : 0) + "'";
   var sh = [], bat = [];
   sh.push('#!/bin/bash');
@@ -2695,6 +2784,18 @@ function exportRenderPack(){
 function sortedShots(){
   return state.shots.slice().sort(function(a, b){ return num(a['镜号']) - num(b['镜号']); });
 }
+/* v2.7：给排序后的每个分镜分配「落盘段号 seg_NN」。口径与 render.sh 一致——
+   只数「有图片或有视频」的镜（纯图镜也会被 render.sh 垫段成 seg），纯文字空镜不计。
+   FCPXML 与合成脚本都用它命名文件，保证导入剪辑软件后引用的 seg_N.mp4 与 render.sh
+   实际落盘的是同一镜，修复此前「缺视频镜时两处编号错位、剪到别的镜」的问题。 */
+function assignRenderIdx(sortedList){
+  var m = {}, k = 0;
+  sortedList.forEach(function(s){
+    if(String(s['口型视频URL'] || s['视频URL'] || s['图片URL'] || '').trim()){ k++; m[s._id] = k; }
+  });
+  return m;
+}
+function padSeg(n){ return ('00' + n).slice(-3); }
 function pushUndo(){
   try{
     state.undo = state.undo || [];
@@ -2867,6 +2968,7 @@ function exportFcpXml(){
   var vw = (num(r[1]) || 16) > (num(r[0]) || 9) ? 720 : 1280;
   var vh = Math.round(vw * (num(r[1]) || 16) / (num(r[0]) || 9) / 2) * 2;
   var list = sortedShots();
+  var ridx = assignRenderIdx(list);            /* seg 段号：与 render.sh 落盘文件名同口径 */
   /* 只对有视频的镜头做紧密排布；无视频（还没生成/失败）的镜头不占时间轴，
      这样导入后镜头是紧挨着的，再单独补那几镜即可 */
   var placed = [];
@@ -2893,7 +2995,7 @@ function exportFcpXml(){
     placedSec += d;
     totalFrames = Math.max(totalFrames, Math.round((s._placeOff + d) * fps));
     var aid = 'a' + n;
-    var file = 'seg_' + (i + 1) + '.mp4';               /* 与 render.sh 落盘的文件名一致 */
+    var file = 'seg_' + padSeg(ridx[s._id]) + '.mp4';   /* 与 render.sh 落盘的文件名一致（v2.7 统一段号） */
     res.push('<asset id="' + aid + '" name="shot' + xmlEsc(s['镜号']) + '" uid="shot-' + xmlEsc(s._id) + '" start="0s" duration="' + fcpDur(d, fps) + '" hasVideo="1" hasAudio="1" format="r0">' +
       '<media-rep kind="original-media" src="file://./' + file + '" srcUrl="' + xmlEsc(url) + '"/>' +
       '</asset>');
@@ -4029,8 +4131,28 @@ function seedDemo(){
 /* ---------------- 导出 ---------------- */
 function exportJson(){
   var data = { exportedAt: nowStr(), novel: $('novel').value || '', assets: state.assets, shots: state.shots };
-  download('短剧工作台备份_' + nowStr().replace(/[: ]/g,'-') + '.json', JSON.stringify(data, null, 2), 'application/json');
-  toast('已导出 JSON 备份');
+  /* v2.7：配音随备份恢复。音频 base64 较大，默认询问是否一并导出（不导仍可导整轨 .wav） */
+  askConfirm('是否把每镜配音一并存进备份？', '要恢复配音就选“是”，文件会较大。', true)
+    .then(function(includeAud){
+      if(includeAud){
+        var byNo = {};
+        state.shots.forEach(function(s){
+          var a = audLoad(s._id);
+          if(a && a.b64) byNo[num(s['镜号'])] = { b64:a.b64, mime:a.mime, dur:a.dur };
+        });
+        data.audioByNo = byNo;
+      }
+      download('短剧工作台备份_' + nowStr().replace(/[: ]/g,'-') + '.json', JSON.stringify(data, null, 2), 'application/json');
+      toast('已导出 JSON 备份' + (includeAud ? '（含配音）' : ''));
+    });
+}
+/* 导入后，若备份里带音频，按「镜号」写回本机配音缓存（镜号在导入重排后仍稳定） */
+function restoreBackupAudio(data){
+  if(!data || !data.audioByNo) return;
+  state.shots.forEach(function(s){
+    var o = data.audioByNo[num(s['镜号'])];
+    if(o && o.b64) audSave(s._id, o.b64, o.mime || 'audio/mpeg', o.dur || num(s['音频时长']) || 0);
+  });
 }
 function exportMd(){
   var lines = ['# 分镜脚本', '', '> 导出时间：' + nowStr(), ''];
@@ -4125,6 +4247,7 @@ function runImport(arr, data){
       try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
       if(data.novel) $('novel').value = data.novel;
       localStorage.setItem(LS+'novel', $('novel').value);
+      restoreBackupAudio(data);                // v2.7：把随备份的配音写回本机
       refreshAll(); toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡');
       return;
     }
@@ -4144,7 +4267,7 @@ function runImport(arr, data){
     }).then(function(){ if(data.novel) $('novel').value = data.novel; })
       .then(function(){ localStorage.setItem(LS+'novel', $('novel').value); })
       .then(function(){ return loadShots(); })
-      .then(function(){ refreshAll(); toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡'); })
+      .then(function(){ restoreBackupAudio(data); refreshAll(); toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡'); })
       .catch(function(e){ console.error(e); toast('导入失败'); });
 }
 
@@ -4232,6 +4355,7 @@ function bind(){
         if(sl) patchShot(id, { 满意锁定: (sl['满意锁定'] === '是' ? '否' : '是'), 更新时间: nowStr() });
         break;
       }
+      case 'rollimg': rollbackImg(id); break;
       case 'delasset': {
         var da = null;
         for(var ai=0; ai<state.assets.length; ai++){ if(state.assets[ai]._id === id) da = state.assets[ai]; }
