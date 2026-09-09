@@ -598,6 +598,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </label>
     <div class="fld"><label>全局负向提示词（自动拼在每次生图请求里）</label><input class="inp" id="cf_neg" placeholder="different face, changed hairstyle, changed outfit, deformed hands, extra fingers, watermark, text"></div>
     <div class="fld"><label>全局画风前缀（自动拼在每个提示词前）</label><input class="inp" id="cf_prefix" placeholder="例：中国古装悬疑短剧，电影级写实，"></div>
+    <div class="fld"><label>项目级统一画风令牌（对标 Jellyfish 全局风格，固定注入每个镜头，防整剧调性漂移）</label><input class="inp" id="cf_globalStyle" placeholder="例：暖色调古风，绢本工笔质感，淡金色夕照，环境光统一偏暖"></div>
 
     <div class="sec-t">配音 · 小米 MiMo TTS（限时免费）</div>
     <div class="hint" style="margin-bottom:10px">在 <b>platform.xiaomimimo.com</b> 申请 TTS 专用 API Key（与模型推理 Key 不通用）。浏览器直连会被跨域拦截，建议 TTS Base URL 填本地代理：<b>http://127.0.0.1:8787/tts/v1</b>（启动代理时加 <b>--tts https://api.xiaomimimo.com</b>）。</div>
@@ -903,7 +904,11 @@ var DEFAULT_CFG = {
   usedImg:0, usedVidSec:0, usedTts:0, usedLip:0,
   /* v2.5：并发队列 / 多 Key 轮换 / 成片输出参数 */
   agnesKeys:'', conc:2, retry:1,
-  trans:'fade', transDur:0.5, kb:'in', fps:30, bitrate:'8M', stylePreset:''
+  trans:'fade', transDur:0.5, kb:'in', fps:30, bitrate:'8M', stylePreset:'',
+  /* v2.8：项目级「全局统一画风令牌」——对标 Jellyfish 的全局风格防漂移。
+     填一段画风/年代/材质/光质描述，会固定注入每一个镜头（生图/生视频）的提示词尾部，
+     让整部剧从第一镜到最后一镜保持同一视觉调性，而不是各镜自由发挥。 */
+  globalStyle:''
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1752,6 +1757,7 @@ function fillSettings(){
   if($('cf_refMax')) $('cf_refMax').value = String(cfg.refMax || 4);
   if($('cf_multiView')) $('cf_multiView').checked = !!cfg.multiView;
   if($('cf_neg')) $('cf_neg').value = cfg.neg;
+  if($('cf_globalStyle')) $('cf_globalStyle').value = cfg.globalStyle || '';
   if($('cf_ttsKey')) $('cf_ttsKey').value = cfg.ttsKey;
   if($('cf_ttsBase')) $('cf_ttsBase').value = cfg.ttsBase;
   if($('cf_ttsModel')) $('cf_ttsModel').value = cfg.ttsModel;
@@ -1810,6 +1816,7 @@ function readSettings(){
   if($('cf_refMax')) cfg.refMax = num($('cf_refMax').value) || 4;
   if($('cf_multiView')) cfg.multiView = !!$('cf_multiView').checked;
   if($('cf_neg')) cfg.neg = $('cf_neg').value.trim();
+  if($('cf_globalStyle')) cfg.globalStyle = $('cf_globalStyle').value.trim();
   if($('cf_ttsKey')) cfg.ttsKey = $('cf_ttsKey').value.trim();
   if($('cf_ttsBase')) cfg.ttsBase = ($('cf_ttsBase').value.trim() || 'https://api.xiaomimimo.com/v1').replace(/\/+$/,'');
   if($('cf_ttsModel')) cfg.ttsModel = $('cf_ttsModel').value;
@@ -1961,6 +1968,8 @@ function buildImageBody(s){
   var la = String(s['光影氛围'] || '').trim();
   if(la) parts.push('Lighting, time of day and atmosphere: ' + la + '.');
   parts.push(CONSIST_TAIL);
+  /* v2.8：项目级统一画风令牌——整剧固定同一调性（画风/年代/材质/光质），每镜都注入，防各镜自由发挥漂移 */
+  if(String(cfg.globalStyle || '').trim()) parts.push('Global art style for this whole drama (apply consistently): ' + String(cfg.globalStyle).trim() + '.');
   /* 7. 负向提示 */
   var neg = [cfg.neg, String(s['负向提示'] || '').trim()].filter(Boolean).join(', ');
   if(neg) parts.push('Avoid: ' + neg + '.');
@@ -2215,6 +2224,8 @@ function buildVideoBody(s){
   var prompt = (camEn ? camEn + '. ' : '') + String(s['画面描述'] || '');
   if(String(s['角色情绪'] || '').trim()) prompt += '，人物情绪：' + String(s['角色情绪']).trim();
   if(String(s['光影氛围'] || '').trim()) prompt += '，光影氛围：' + String(s['光影氛围']).trim();
+  /* v2.8：项目级统一画风令牌——整剧固定同一视觉调性，防止镜头间风格漂移 */
+  if(String(cfg.globalStyle || '').trim()) prompt += '，本剧统一画风：' + String(cfg.globalStyle).trim();
   if(cfg.prefix) prompt = cfg.prefix + prompt;
   /* 视频提示词覆盖：在「查看提示词」里手动改过就用改后的 */
   if(String(s['视频提示词覆盖'] || '').trim()) prompt = String(s['视频提示词覆盖']).trim();
@@ -2443,8 +2454,10 @@ function genAudio(id){
         /* URL 音频同样要解析真实时长，否则音画同步 / 字幕 / 整轨全部失效 */
         return fetchAudioBuf(url).then(function(buf){
           var dur = buf ? buf.duration : 0;
-          var patch = { 音频URL:url, 音频时长:dur, 配音状态:'已完成', 错误信息:'', 更新时间:nowStr() };
-          if(cfg.ttsSync && dur > 0) patch['时长秒'] = Math.min(12, Math.max(4, Math.ceil(dur)));
+          /* v2.8：音频时长也 clamp 到 4–12，与时长秒、render.sh 段长同口径，杜绝 SRT/整轨/合成三处不一致 */
+          var eff = (cfg.ttsSync && dur > 0) ? Math.min(12, Math.max(4, Math.ceil(dur))) : dur;
+          var patch = { 音频URL:url, 音频时长:eff, 配音状态:'已完成', 错误信息:'', 更新时间:nowStr() };
+          if(cfg.ttsSync && dur > 0) patch['时长秒'] = eff;
           bumpUse('usedTts', 1);
           patchShot(id, patch);
           toast('第 ' + s['镜号'] + ' 镜配音完成' +
@@ -2456,13 +2469,12 @@ function genAudio(id){
       return decodeAudioBuf(b64).then(function(buf){
         var dur = buf ? buf.duration : 0;
         if(!audSave(id, b64, mime, dur)) throw new Error('本机音频存储已满，无法保存配音');
-        var patch = { 音频URL:'local', 音频时长:dur, 配音状态:'已完成', 错误信息:'', 更新时间:nowStr() };
+        /* v2.8：音频时长 clamp 到 4–12，与时长秒同口径 */
+        var eff = (cfg.ttsSync && dur > 0) ? Math.min(12, Math.max(4, Math.ceil(dur))) : dur;
+        var patch = { 音频URL:'local', 音频时长:eff, 配音状态:'已完成', 错误信息:'', 更新时间:nowStr() };
         bumpUse('usedTts', 1);
         /* 关键：把镜头时长对齐到语音长度，视频按这个时长生成 → 音画同步 */
-        if(cfg.ttsSync && dur > 0){
-          var sec = Math.min(12, Math.max(4, Math.ceil(dur)));
-          patch['时长秒'] = sec;
-        }
+        if(cfg.ttsSync && dur > 0) patch['时长秒'] = eff;
         patchShot(id, patch);
         toast('第 ' + s['镜号'] + ' 镜配音完成（' + dur.toFixed(1) + ' 秒）' +
               (cfg.ttsSync && dur > 0 ? '，镜头时长已对齐为 ' + patch['时长秒'] + ' 秒' : ''));
@@ -2535,10 +2547,11 @@ function srtTime(t){
   return p(h)+':'+p(m)+':'+p(Math.floor(s))+','+String(Math.floor((s%1)*1000)).padStart(3,'0');
 }
 function shotDur(s){
-  /* 优先用生成配音时解析出的真实时长（本机 / URL 音频都写在字段里） */
-  var d = num(s['音频时长']);
-  if(d > 0) return d;
-  return num(s['时长秒']) || 5;
+  /* 统一镜头有效时长口径（v2.8，对标 Jellyfish 时间轴一致性）：
+     优先用配音解析的真实时长，并 clamp 到 API/成片允许的 4–12 秒——
+     保证 SRT / 整轨配音 / FCPXML / render.sh 四处的镜头时长完全一致，不再各算各的。 */
+  var raw = num(s['音频时长']) > 0 ? num(s['音频时长']) : (num(s['时长秒']) || 5);
+  return Math.min(12, Math.max(4, raw));
 }
 function exportSrt(){
   if(!state.shots.length){ toast('还没有分镜'); return; }
@@ -2659,7 +2672,7 @@ function exportRenderPack(){
     var vu = s['口型视频URL'] || s['视频URL'] || '';
     var iu = s['图片URL'] || '';
     if(!vu && !iu) return;                               /* 图都没有的镜跳过，并在清单里标注 */
-    var d = Math.min(12, Math.max(4, num(s['时长秒']) || 5));
+    var d = shotDur(s);                                  /* v2.8：统一时长口径，与 SRT/整轨/FCPXML 完全一致 */
     total += d;
     segs.push({ idx: padSeg(ridx[s._id]), no: s['镜号'], url: vu || iu, isVid: !!vu, d: d });
   });
