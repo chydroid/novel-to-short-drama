@@ -898,7 +898,7 @@ var DEFAULT_CFG = {
   subFont:'Microsoft YaHei', subSize:14, subMargin:36, subColor:'FFFFFF', subOutlineColor:'000000', subOutline:1, subBold:true,
   costImg:0.1, costVidSec:0.5, costTts:0, costLip:0.1,
   usedImg:0, usedVidSec:0, usedTts:0, usedLip:0,
-  /* v5：并发队列 / 多 Key 轮换 / 成片输出参数 */
+  /* v2.5：并发队列 / 多 Key 轮换 / 成片输出参数 */
   agnesKeys:'', conc:2, retry:1,
   trans:'fade', transDur:0.5, kb:'in', fps:30, bitrate:'8M', stylePreset:''
 };
@@ -2607,7 +2607,7 @@ function exportRenderPack(){
     sh.push('# ' + l);
     bat.push('rem ' + l);
   });
-  /* v5：图片垫段加 Ken Burns 运镜，段内淡入淡出（保持总时长不变，避免与配音轨错位） */
+  /* v2.5：图片垫段加 Ken Burns 运镜，段内淡入淡出（保持总时长不变，避免与配音轨错位） */
   var fps = Math.max(24, Math.min(60, num(cfg.fps) || 30));
   var bitrate = String(cfg.bitrate || '8M').replace(/[^\w]/g, '') || '8M';
   var trans = (cfg.trans === 'none') ? 'none' : 'fade';
