@@ -445,12 +445,15 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
           <div class="fld" data-page-node-id="P3qrKd8Tqdg15Vp2LMCezx"><label data-page-node-id="Hj4EOxwULxDy5jwhBeHRMF">单镜时长（秒）</label><input class="inp" type="number" id="shotSec" value="5" min="4" max="12" data-page-node-id="zJAH2a3ijZQMlX2EK9aDYG"></div>
           <div class="fld" data-page-node-id="UYChsbY8srSIdVCgGfMaDO"><label data-page-node-id="EeiV4QMz6lVtcL1avhngek">题材 / 画风</label><input class="inp" id="shotStyle" placeholder="例：古装悬疑、写实电影感" data-page-node-id="gSpipwsBQAPdZmH4aOZYFy"></div>
         </div>
+        <div class="hint" style="margin-bottom:8px">风格预设（一键同时设置题材画风、提示词前缀与负向词，对标 moyin-creator 风格模板）：</div>
+        <div class="tools" id="stylePresets" style="margin-top:0;margin-bottom:12px"></div>
         <div class="tools" style="margin-top:0" data-page-node-id="1PYiF4KLrfb9Lzeaep7u1f">
           <button class="btn big" id="btnSplit" data-page-node-id="9ErA7LYi1xJSpCzKJ2djPB">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="V5VvC9LA8TXCsaJPsZb9mZ"><path d="m12 2 2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8 5.8 21.3l2.4-7.4L2 9.4h7.6L12 2Z" data-page-node-id="aH5tWfcoHAY9p2pyAZQlJI"/></svg>
             AI 一键拆镜
           </button>
           <button class="btn gh" id="btnAddShot" data-page-node-id="cdHVi0qSPOXE7XgYHlwOor">+ 手动加一镜</button>
+          <button class="btn gh" data-act="undo" title="撤销上一次分镜改动（Ctrl+Z）">撤销</button>
           <button class="btn gh" id="btnDemo" data-page-node-id="Drn4EgHQUL8ko67TLP92y4">载入示例分镜</button>
         </div>
         <div class="result" id="splitResult" data-page-node-id="5ajly6loKBA8CxK4joQrDF"></div>
@@ -570,6 +573,15 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <button class="btn gh sm" id="btnTest" data-page-node-id="3xWYzAqBCMekm7iVbmkC77">测试 Agnes 连通性</button>
     <div class="result" id="testResult" data-page-node-id="ZiYSyEUbRthK4KSQdbBFqn"></div>
 
+    <div class="sec-t">并发与多 Key 轮换（对标 moyin-creator 并行队列 / key rotation）</div>
+    <div class="hint" style="margin-bottom:10px">批量生成默认<b>串行</b>较慢。这里可调并发路数与失败自动重试；多个 Key 每行一个会自动轮换，遇到 <b>429 限流 / 401 鉴权失败</b>自动换下一个 Key 重试，适合多账号分摊配额。</div>
+    <div class="fld"><label>多个 Agnes API Key（每行一个，留空则只用上面那个）</label><textarea class="inp" id="cf_agnesKeys" rows="3" placeholder="sk-xxxxxx&#10;sk-yyyyyy"></textarea></div>
+    <div class="row3">
+      <div class="fld"><label>并发路数</label><input class="inp" type="number" id="cf_conc" min="1" max="8" step="1"></div>
+      <div class="fld"><label>失败自动重试</label><input class="inp" type="number" id="cf_retry" min="0" max="3" step="1"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn gh sm" id="btnStopBatch" style="height:38px">停止当前批量</button></div>
+    </div>
+
     <div class="sec-t">一致性增强（决定角色 / 场景会不会漂移）</div>
     <div class="fld"><label>参考图策略</label><select class="inp" id="cf_refMode">
       <option value="best">定妆照 + 已满意镜头帧（推荐，越往后越稳）</option>
@@ -641,6 +653,25 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div class="row2">
       <div class="fld"><label>音量（0-1，建议 0.1-0.25，人声优先）</label><input class="inp" type="number" id="cf_bgmVol" min="0" max="1" step="0.01"></div>
       <div class="fld"><label>淡入淡出（秒）</label><input class="inp" type="number" id="cf_bgmFade" min="0" max="10" step="0.5"></div>
+    </div>
+
+    <div class="sec-t">成片输出（影响一键合成包脚本）</div>
+    <div class="row3">
+      <div class="fld"><label>镜头间转场</label><select class="inp" id="cf_trans">
+        <option value="fade">淡入淡出（推荐）</option>
+        <option value="none">硬切</option>
+      </select></div>
+      <div class="fld"><label>转场时长（秒）</label><input class="inp" type="number" id="cf_transDur" min="0" max="2" step="0.1"></div>
+      <div class="fld"><label>图片垫段运镜</label><select class="inp" id="cf_kb">
+        <option value="in">缓慢推近（Ken Burns）</option>
+        <option value="out">缓慢拉远</option>
+        <option value="none">静止</option>
+      </select></div>
+    </div>
+    <div class="row3">
+      <div class="fld"><label>输出帧率</label><input class="inp" type="number" id="cf_fps" min="24" max="60" step="1"></div>
+      <div class="fld"><label>输出码率</label><input class="inp" id="cf_bitrate" placeholder="8M"></div>
+      <div class="fld"><label>&nbsp;</label><div class="hint" style="padding-top:8px">转场与运镜在 FFmpeg 合成时生效</div></div>
     </div>
     <div class="hint">导出「整轨配音 .wav」时会自动把 BGM 循环铺底、按音量混合并做首尾淡入淡出；一键合成脚本里也会带上这条 BGM。</div>
 
@@ -810,7 +841,10 @@ var DEFAULT_CFG = {
   pipeShots:6, pipeBatch:0, pipeChunk:3000,
   bgmUrl:'', bgmVol:0.18, bgmFade:2,
   costImg:0.1, costVidSec:0.5, costTts:0, costLip:0.1,
-  usedImg:0, usedVidSec:0, usedTts:0, usedLip:0
+  usedImg:0, usedVidSec:0, usedTts:0, usedLip:0,
+  /* v5：并发队列 / 多 Key 轮换 / 成片输出参数 */
+  agnesKeys:'', conc:2, retry:1,
+  trans:'fade', transDur:0.5, kb:'in', fps:30, bitrate:'8M', stylePreset:''
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -823,6 +857,68 @@ function saveCfg(){
   try{ localStorage.setItem(LS+'cfg', JSON.stringify(cfg)); }catch(e){}
   fillSettings();
 }
+/* ---------- 多 API Key 轮询（对标 moyin-creator 的 API key rotation） ----------
+   多个 Key 每行一个，依次轮换；遇 429/401/403 自动换下一个重试一次，抗限流。 */
+function keyList(){
+  var out = [];
+  String(cfg.agnesKeys || '').split(/[\n,;]/).forEach(function(k){ k = k.trim(); if(k) out.push(k); });
+  if(!out.length && cfg.agnesKey) out.push(cfg.agnesKey);
+  else if(cfg.agnesKey && out.indexOf(cfg.agnesKey) === -1) out.push(cfg.agnesKey);
+  return out;
+}
+function hasAgnesKey(){ return !!keyList().length; }
+function ak(){
+  var l = keyList();
+  if(!l.length) return cfg.agnesKey || '';
+  if(typeof state.keyIdx !== 'number') state.keyIdx = 0;
+  return l[(state.keyIdx++) % l.length];
+}
+/* 带 Key 轮换的 POST：限流/鉴权失败时自动换下一个 Key 重试 */
+function apiPostAgnes(url, body, tries){
+  tries = tries || 0;
+  var key = ak();
+  return apiPost(url, key, body).then(function(r){
+    var limited = (r.status === 429 || r.status === 401 || r.status === 403);
+    if(limited && tries < Math.max(1, keyList().length)){
+      return apiPostAgnes(url, body, tries + 1);
+    }
+    return r;
+  });
+}
+/* ---------- 并发任务池（对标 moyin-creator 的 multi-task parallel queue） ----------
+   list: 任务数组；worker(item) 返回 Promise；失败自动重试 cfg.retry 次；
+   onOne(done, total) 每完成一个回调一次。 */
+function runPool(list, worker, onOne){
+  var conc = Math.max(1, Math.min(8, num(cfg.conc) || 1));
+  var retryN = Math.max(0, Math.min(3, num(cfg.retry)));
+  var total = list.length, done = 0, i = 0, stopped = false;
+  function one(item){
+    var attempt = 0;
+    function run(){
+      if(stopped || state.stopBatch) return Promise.resolve();
+      return Promise.resolve()
+        .then(function(){ return worker(item); })
+        .catch(function(e){
+          attempt++;
+          if(attempt <= retryN){
+            return wait(1500 * attempt).then(run);   /* 退避重试，不影响其它并发任务 */
+          }
+          console.error(e);
+        });
+    }
+    return run().then(function(){ done++; if(onOne) onOne(done, total); });
+  }
+  var workers = [];
+  for(var k = 0; k < Math.min(conc, total); k++){
+    workers.push((function worker(){
+      if(i >= total) return Promise.resolve();
+      var item = list[i++];
+      return one(item).then(worker);
+    })());
+  }
+  return Promise.all(workers);
+}
+
 /* ---------- 用量与成本追踪（对标 ArcReel 成本追踪） ---------- */
 function bumpUse(k, n){ cfg[k] = num(cfg[k]) + (n || 1); saveCfg(); }
 function usageCost(){
@@ -1268,7 +1364,16 @@ function renderShotTable(){
       '<div class="c" data-l="出场角色"><input data-f="出场角色" value="'+esc(s['出场角色'])+'" placeholder="林小满, 陈老师"></div>' +
       '<div class="c" data-l="场景"><input data-f="场景" value="'+esc(s['场景'])+'" placeholder="高三2班教室"></div>' +
       '<div class="c" data-l="时长(秒)"><input type="number" data-f="时长秒" value="'+esc(num(s['时长秒'])||5)+'"></div>' +
-      '<div class="c" style="display:flex;gap:4px;align-items:center"><button class="rowdel" data-act="openshot" data-id="'+s._id+'" title="去生成">' +
+      '<div class="c" style="display:flex;gap:4px;align-items:center">' +
+        '<button class="rowdel" data-act="up" data-id="'+s._id+'" title="上移（重排镜号）">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>' +
+        '<button class="rowdel" data-act="down" data-id="'+s._id+'" title="下移（重排镜号）">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>' +
+        '<button class="rowdel" data-act="dup" data-id="'+s._id+'" title="复制此镜">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>' +
+        '<button class="rowdel" data-act="ins" data-id="'+s._id+'" title="在此镜后插入空镜">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
+        '<button class="rowdel" data-act="openshot" data-id="'+s._id+'" title="去生成">' +
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>' +
         '<button class="rowdel" data-act="del" data-id="'+s._id+'" title="删除">' +
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
@@ -1576,6 +1681,14 @@ function fillSettings(){
   if($('pipeBatch')) $('pipeBatch').value = cfg.pipeBatch || 0;
   if($('pipeChunk')) $('pipeChunk').value = cfg.pipeChunk || 3000;
   if($('cf_bgmUrl')) $('cf_bgmUrl').value = cfg.bgmUrl || '';
+  if($('cf_agnesKeys')) $('cf_agnesKeys').value = cfg.agnesKeys || '';
+  if($('cf_conc')) $('cf_conc').value = num(cfg.conc) || 1;
+  if($('cf_retry')) $('cf_retry').value = num(cfg.retry);
+  if($('cf_trans')) $('cf_trans').value = cfg.trans || 'fade';
+  if($('cf_transDur')) $('cf_transDur').value = num(cfg.transDur);
+  if($('cf_kb')) $('cf_kb').value = cfg.kb || 'in';
+  if($('cf_fps')) $('cf_fps').value = num(cfg.fps) || 30;
+  if($('cf_bitrate')) $('cf_bitrate').value = cfg.bitrate || '8M';
   if($('cf_bgmVol')) $('cf_bgmVol').value = num(cfg.bgmVol);
   if($('cf_bgmFade')) $('cf_bgmFade').value = num(cfg.bgmFade);
   if($('cf_costImg')) $('cf_costImg').value = num(cfg.costImg);
@@ -1614,6 +1727,14 @@ function readSettings(){
   if($('cf_lipMode')) cfg.lipMode = $('cf_lipMode').value;
   if($('cf_lipAuto')) cfg.lipAuto = !!$('cf_lipAuto').checked;
   if($('cf_bgmUrl')) cfg.bgmUrl = $('cf_bgmUrl').value.trim();
+  if($('cf_agnesKeys')) cfg.agnesKeys = $('cf_agnesKeys').value.trim();
+  if($('cf_conc')) cfg.conc = Math.max(1, Math.min(8, num($('cf_conc').value) || 1));
+  if($('cf_retry')) cfg.retry = Math.max(0, Math.min(3, num($('cf_retry').value)));
+  if($('cf_trans')) cfg.trans = $('cf_trans').value;
+  if($('cf_transDur')) cfg.transDur = Math.max(0, Math.min(2, num($('cf_transDur').value)));
+  if($('cf_kb')) cfg.kb = $('cf_kb').value;
+  if($('cf_fps')) cfg.fps = Math.max(24, Math.min(60, num($('cf_fps').value) || 30));
+  if($('cf_bitrate')) cfg.bitrate = $('cf_bitrate').value.trim() || '8M';
   if($('cf_bgmVol')) cfg.bgmVol = Math.min(1, Math.max(0, num($('cf_bgmVol').value)));
   if($('cf_bgmFade')) cfg.bgmFade = Math.min(10, Math.max(0, num($('cf_bgmFade').value)));
   if($('cf_costImg')) cfg.costImg = Math.max(0, num($('cf_costImg').value));
@@ -1756,13 +1877,13 @@ function genAsset(id, which){
   for(var i=0;i<state.assets.length;i++){ if(state.assets[i]._id === id) a = state.assets[i]; }
   if(!a) return Promise.resolve();
   if(state.busy['a_' + id]) return Promise.resolve();   /* 防双击重复计费 */
-  if(!cfg.agnesKey){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
+  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   var nm = a['名称'] || (a['类型'] || '');
   var field = which === 2 ? '参考图2' : '参考图URL';
   var patch = { 状态:'生成中', 错误信息:'', 更新时间:nowStr() };
   state.busy['a_' + id] = true;
   return patchAsset(id, patch)
-    .then(function(){ return apiPost(cfg.agnesBase + '/images/generations', cfg.agnesKey, buildAssetBody(a, which)); })
+    .then(function(){ return apiPostAgnes(cfg.agnesBase + '/images/generations', buildAssetBody(a, which)); })
     .then(function(r){
       var j = parseJsonSafe(r.text);
       var url = j && j.data && j.data[0] && (j.data[0].url || (j.data[0].b64_json ? 'data:image/png;base64,'+j.data[0].b64_json : ''));
@@ -1787,7 +1908,7 @@ function genAsset(id, which){
 function batchAssets(){
   var need1 = state.assets.filter(function(a){ return (a['状态'] || '未生成') === '未生成' || a['状态'] === '失败'; });
   if(!need1.length && !cfg.multiView){ toast('没有待生成的设定图'); return; }
-  if(!cfg.agnesKey){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
+  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
   toast('开始生成设定图（这一步决定后面所有镜头的一致性）…');
   need1.reduce(function(chain, a){
     return chain.then(function(){ return genAsset(a._id, 1); });
@@ -1871,10 +1992,10 @@ function aiAnchors(){
 }
 function genImage(id){
   var s = shotById(id); if(!s) return Promise.resolve();
-  if(!cfg.agnesKey){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
+  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   state.busy[id] = true;
   return patchShot(id, { 图片状态:'生成中', 错误信息:'', 更新时间:nowStr() })
-    .then(function(){ return apiPost(cfg.agnesBase + '/images/generations', cfg.agnesKey, buildImageBody(shotById(id) || s)); })
+    .then(function(){ return apiPostAgnes(cfg.agnesBase + '/images/generations', buildImageBody(shotById(id) || s)); })
     .then(function(r){
       var j = parseJsonSafe(r.text);
       var url = j && j.data && j.data[0] && (j.data[0].url || (j.data[0].b64_json ? 'data:image/png;base64,'+j.data[0].b64_json : ''));
@@ -1941,7 +2062,7 @@ function startPoll(id){
     if(!s || !s['任务ID']){ stopPoll(id); return; }
     tries++;
     if(tries > 240){ stopPoll(id); patchShot(id, { 视频状态:'失败', 错误信息:'轮询超时（超过 12 分钟）', 更新时间:nowStr() }); return; }
-    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-2.5-flash', cfg.agnesKey)
+    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-2.5-flash', ak())
       .then(function(r){
         var j = parseJsonSafe(r.text);
         var st = pickStatus(j);
@@ -1970,10 +2091,10 @@ function startPoll(id){
 }
 function genVideo(id){
   var s = shotById(id); if(!s) return Promise.resolve();
-  if(!cfg.agnesKey){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
+  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   if(!s['图片URL']){ toast('请先生成这一镜的图片'); return Promise.resolve(); }
   state.busy[id] = true; refreshAll();
-  return apiPost(cfg.agnesBase + '/videos', cfg.agnesKey, buildVideoBody(s))
+  return apiPostAgnes(cfg.agnesBase + '/videos', buildVideoBody(s))
     .then(function(r){
       var j = parseJsonSafe(r.text);
       if(r.status >= 400){
@@ -2167,10 +2288,11 @@ function batchAudio(){
   askConfirm((est || ('共 ' + list.length + ' 条配音。')) + '确定开始？', '开始')
     .then(function(ok){
       if(!ok) return;
-      toast('开始生成 ' + list.length + ' 条配音…');
-      list.reduce(function(chain, s){
-        return chain.then(function(){ return genAudio(s._id); });
-      }, Promise.resolve()).then(function(){ toast('配音全部完成'); });
+      toast('开始生成 ' + list.length + ' 条配音（并发 ' + Math.max(1, Math.min(8, num(cfg.conc) || 1)) + '）…');
+      state.stopBatch = false;
+      runPool(list, function(s){ return genAudio(s._id); },
+        function(done, total){ toast('配音进度 ' + done + '/' + total); })
+        .then(function(){ toast('配音全部完成'); });
     });
 }
 function testTts(){
@@ -2359,22 +2481,49 @@ function exportRenderPack(){
    '  2. 本目录会自动生成 合成清单.json 备查；',
    '  3. 运行本脚本（sh: bash render.sh / bat: 双击 render.bat），完成后得到 成片.mp4。',
    '说明：Agnes 的图片/视频 URL 是公网直链，ffmpeg 可直接读取；URL 有时效，请尽快合成。',
-   '字幕/配音与画面若有轻微漂移，请在设置里开启「配音后自动对齐镜头时长」并重新生成对不上的镜头视频。'].forEach(function(l){
+   '字幕/配音与画面若有轻微漂移，请在设置里开启「配音后自动对齐镜头时长」并重新生成对不上的镜头视频。','  4. 镜头间转场采用「段内淡入淡出」，总时长不变，因此不会与配音轨/字幕错位；图片垫段带 Ken Burns 缓慢推拉运镜。'].forEach(function(l){
     sh.push('# ' + l);
     bat.push('rem ' + l);
   });
+  /* v5：图片垫段加 Ken Burns 运镜，段内淡入淡出（保持总时长不变，避免与配音轨错位） */
+  var fps = Math.max(24, Math.min(60, num(cfg.fps) || 30));
+  var bitrate = String(cfg.bitrate || '8M').replace(/[^\w]/g, '') || '8M';
+  var trans = (cfg.trans === 'none') ? 'none' : 'fade';
+  var td = Math.max(0, Math.min(2, num(cfg.transDur) || 0.5));
+  if(td > 0 && td > (Math.min.apply(null, segs.map(function(g){ return g.d; })) / 2)) td = 0.2;
+  var kb = cfg.kb || 'in';
+  function baseFilter(withFade, d){
+    var f = 'scale=' + wh.w + ':' + wh.h + ':force_original_aspect_ratio=decrease,pad=' + wh.w + ':' + wh.h + ':(ow-iw)/2:(oh-ih)/2,setsar=1,fps=' + fps;
+    if(withFade && td > 0) f += ',fade=t=in:st=0:d=' + td + ',fade=t=out:st=' + (Math.max(0, d - td)).toFixed(2) + ':d=' + td;
+    return f + ',format=yuv420p';
+  }
+  function kbFilter(d){
+    var frames = Math.max(1, Math.round(d * fps));
+    var z = (kb === 'out') ? "if(lte(zoom,1.0),1.18,max(1.002,zoom-0.0012))" : "min(zoom+0.0012,1.18)";
+    if(kb === 'none') return null;
+    return "zoompan=z='" + z + "':d=" + frames + ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=" + wh.w + "x" + wh.h + ":fps=" + fps;
+  }
   segs.forEach(function(g){
-    if(g.isVid){
+    var out = 'seg_' + g.idx + '.mp4';
+    if(g.isVid && trans === 'none'){
+      /* 硬切：视频段直接拷贝，最快 */
       sh.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（视频）');
-      sh.push('ffmpeg -y -loglevel error -i ' + shQ(g.url) + ' -c copy seg_' + g.idx + '.mp4 || ffmpeg -y -loglevel error -i ' + shQ(g.url) + ' seg_' + g.idx + '.mp4');
+      sh.push('ffmpeg -y -loglevel error -i ' + shQ(g.url) + ' -c copy ' + out + ' || ffmpeg -y -loglevel error -i ' + shQ(g.url) + ' ' + out);
       bat.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（视频）');
-      bat.push('ffmpeg -y -loglevel error -i "' + g.url + '" -c copy seg_' + g.idx + '.mp4');
-      bat.push('if errorlevel 1 ffmpeg -y -loglevel error -i "' + g.url + '" seg_' + g.idx + '.mp4');
+      bat.push('ffmpeg -y -loglevel error -i "' + g.url + '" -c copy ' + out);
+      bat.push('if errorlevel 1 ffmpeg -y -loglevel error -i "' + g.url + '" ' + out);
+    }else if(g.isVid){
+      var vf = baseFilter(true, g.d);
+      sh.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（视频 + 淡入淡出）');
+      sh.push('ffmpeg -y -loglevel error -i ' + shQ(g.url) + ' -t ' + g.d + ' -vf "' + vf + '" -r ' + fps + ' -b:v ' + bitrate + ' ' + out);
+      bat.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（视频 + 淡入淡出）');
+      bat.push('ffmpeg -y -loglevel error -i "' + g.url + '" -t ' + g.d + ' -vf "' + vf + '" -r ' + fps + ' -b:v ' + bitrate + ' ' + out);
     }else{
-      sh.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（图片垫段 ' + g.d + ' 秒）');
-      sh.push('ffmpeg -y -loglevel error -loop 1 -i ' + shQ(g.url) + ' -t ' + g.d + ' -r 30 -vf "scale=' + wh.w + ':' + wh.h + ':force_original_aspect_ratio=decrease,pad=' + wh.w + ':' + wh.h + ':(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p" seg_' + g.idx + '.mp4');
-      bat.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（图片垫段 ' + g.d + ' 秒）');
-      bat.push('ffmpeg -y -loglevel error -loop 1 -i "' + g.url + '" -t ' + g.d + ' -r 30 -vf "scale=' + wh.w + ':' + wh.h + ':force_original_aspect_ratio=decrease,pad=' + wh.w + ':' + wh.h + ':(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p" seg_' + g.idx + '.mp4');
+      var f = 'scale=' + wh.w * 2 + ':' + wh.h * 2 + ':force_original_aspect_ratio=increase,crop=' + wh.w * 2 + ':' + wh.h * 2 + ',' + kbFilter(g.d) + ',' + baseFilter(true, g.d);
+      sh.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（图片垫段 ' + g.d + ' 秒' + (kb === 'none' ? '' : ' + ' + (kb === 'out' ? '拉远' : '推近') + '运镜') + '）');
+      sh.push('ffmpeg -y -loglevel error -loop 1 -framerate ' + fps + ' -t ' + g.d + ' -i ' + shQ(g.url) + ' -vf "' + f + '" -r ' + fps + ' -b:v ' + bitrate + ' ' + out);
+      bat.push('echo [seg ' + g.idx + '] 第 ' + g.no + ' 镜（图片垫段 ' + g.d + ' 秒' + (kb === 'none' ? '' : ' + ' + (kb === 'out' ? '拉远' : '推近') + '运镜') + '）');
+      bat.push('ffmpeg -y -loglevel error -loop 1 -framerate ' + fps + ' -t ' + g.d + ' -i "' + g.url + '" -vf "' + f + '" -r ' + fps + ' -b:v ' + bitrate + ' ' + out);
     }
   });
   var concatLines = segs.map(function(g){ return "file 'seg_" + g.idx + ".mp4'"; }).join('\n');
@@ -2407,6 +2556,9 @@ function exportRenderPack(){
     导出时间: nowStr(), 画幅: cfg.imgRatio, 分辨率: (wh.w + 'x' + wh.h),
     视频总时长秒: Math.round(total), 段数: segs.length,
     字幕文件: 'subs.srt（由「导出字幕 .srt」改名）', 配音文件: 'voice.wav（由「导出整轨配音 .wav」改名）',
+    转场: (trans === 'none' ? '硬切' : ('段内淡入淡出 ' + td + ' 秒')),
+    图片运镜: (kb === 'none' ? '静止' : (kb === 'out' ? '缓慢拉远 Ken Burns' : '缓慢推近 Ken Burns')),
+    帧率: fps, 码率: bitrate,
     BGM: cfg.bgmUrl || '（未配置）',
     缺失镜头: list.filter(function(s){ return !(s['口型视频URL'] || s['视频URL'] || s['图片URL']); }).map(function(s){ return s['镜号']; }),
     段清单: segs.map(function(g){ return { 镜号: g.no, 类型: g.isVid ? '视频' : '图片垫段', 时长秒: g.d, URL: g.url }; })
@@ -2415,6 +2567,166 @@ function exportRenderPack(){
   setTimeout(function(){ download('render.bat', bat.join('\r\n') + '\r\n', 'text/plain;charset=utf-8'); }, 250);
   setTimeout(function(){ download('合成清单.json', JSON.stringify(manifest, null, 2), 'application/json;charset=utf-8'); }, 500);
   toast('合成包已导出（render.sh / render.bat / 合成清单.json），配合字幕和整轨配音即可一键出成片');
+}
+
+/* ---------- 分镜编辑：排序 / 复制 / 插入 / 撤销（对标导演 Timeline 可拖拽调整） ---------- */
+function sortedShots(){
+  return state.shots.slice().sort(function(a, b){ return num(a['镜号']) - num(b['镜号']); });
+}
+function pushUndo(){
+  try{
+    state.undo = state.undo || [];
+    state.undo.push(JSON.stringify(state.shots.map(function(s){
+      var o = {}; for(var k in s){ if(k !== '_localOnly') o[k] = s[k]; } return o;
+    })));
+    if(state.undo.length > 20) state.undo.shift();
+  }catch(e){}
+}
+function undoShots(){
+  if(!state.undo || !state.undo.length){ toast('没有可撤销的操作'); return; }
+  var snap = JSON.parse(state.undo.pop());
+  var p = db(), byId = {}, snapIds = {};
+  state.shots.forEach(function(s){ byId[s._id] = s; });
+  snap.forEach(function(x){ snapIds[x._id] = true; });
+  var chain = Promise.resolve();
+  state.shots.forEach(function(s){
+    if(!snapIds[s._id]){
+      chain = chain.then(function(){ return p ? p.deleteRecord({ databaseId: DB_ID, recordId: s._id }) : Promise.resolve(); });
+    }
+  });
+  snap.forEach(function(x){
+    var cur = byId[x._id];
+    if(!cur){
+      chain = chain.then(function(){ return p ? p.addRecord({ databaseId: DB_ID, properties: toProps(x) }) : Promise.resolve(); });
+    }else{
+      var diff = {}, has = false;
+      for(var k in x){ if(k === '_id') continue; if(String(cur[k] == null ? '' : cur[k]) !== String(x[k] == null ? '' : x[k])){ diff[k] = x[k]; has = true; } }
+      if(has) chain = chain.then(function(){ return p ? p.updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps(diff) }) : Promise.resolve(); });
+    }
+  });
+  chain
+    .catch(function(e){ console.error(e); })
+    .then(function(){
+      state.shots = snap.map(function(x){ return Object.assign({}, x); });
+      if(!hasCloud()) localSave(state.shots);
+      return loadShots();
+    })
+    .then(function(){ refreshAll(); toast('已撤销上一步操作'); });
+}
+/* 重排后统一重编号（镜号即顺序，云端也只认这个字段） */
+function renumber(arr){
+  arr.forEach(function(s, i){ s['镜号'] = i + 1; });
+  return arr;
+}
+function moveShot(id, dir){
+  var arr = sortedShots(), i = -1;
+  arr.forEach(function(s, k){ if(s._id === id) i = k; });
+  var j = i + dir;
+  if(i < 0 || j < 0 || j >= arr.length){ return; }
+  pushUndo();
+  var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  renumber(arr);
+  var p = db(), chain = Promise.resolve();
+  arr.forEach(function(s){
+    chain = chain.then(function(){
+      state.shots = state.shots.map(function(x){ return x._id === s._id ? Object.assign({}, x, { 镜号: s['镜号'] }) : x; });
+      return p ? p.updateRecord({ databaseId: DB_ID, recordId: s._id, properties: toProps({ 镜号: s['镜号'] }) }) : Promise.resolve();
+    });
+  });
+  chain.catch(function(e){ console.error(e); }).then(function(){
+    if(!hasCloud()) localSave(state.shots);
+    refreshAll(); toast('已移动，镜号已重排');
+  });
+}
+function dupShot(id){
+  var s = shotById(id); if(!s) return;
+  pushUndo();
+  var o = Object.assign({}, s), arr = sortedShots(), idx = -1;
+  arr.forEach(function(x, k){ if(x._id === id) idx = k; });
+  renumber(arr);
+  o['镜号'] = (idx >= 0 ? idx + 2 : arr.length + 1);
+  o['图片状态'] = '未生成'; o['视频状态'] = '未生成'; o['配音状态'] = '未生成';
+  o['图片URL'] = ''; o['视频URL'] = ''; o['音频URL'] = ''; o['任务ID'] = ''; o['满意锁定'] = '否';
+  o['更新时间'] = nowStr();
+  var after = arr.filter(function(x){ return num(x['镜号']) >= o['镜号']; })
+    .map(function(x){
+      var n = num(x['镜号']) + 1;
+      state.shots = state.shots.map(function(y){ return y._id === x._id ? Object.assign({}, y, { 镜号: n }) : y; });
+      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps({ 镜号: n }) }) : Promise.resolve();
+    });
+  Promise.all(after).catch(function(){}).then(function(){
+    addShotObj(o);
+    if(!hasCloud()) localSave(state.shots);
+    toast('已复制该镜（生成状态已重置）');
+  });
+}
+function insertShotAfter(id){
+  var arr = sortedShots(), idx = -1;
+  arr.forEach(function(x, k){ if(x._id === id) idx = k; });
+  pushUndo();
+  renumber(arr);
+  var no = idx >= 0 ? idx + 2 : arr.length + 1;
+  var after = arr.filter(function(x){ return num(x['镜号']) >= no; })
+    .map(function(x){
+      var n = num(x['镜号']) + 1;
+      state.shots = state.shots.map(function(y){ return y._id === x._id ? Object.assign({}, y, { 镜号: n }) : y; });
+      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps({ 镜号: n }) }) : Promise.resolve();
+    });
+  Promise.all(after).catch(function(){}).then(function(){
+    addShotObj({ 镜号:no, 画面描述:'', 英文提示词:'', 运镜:'', 台词旁白:'', 时长秒:num($('shotSec') ? $('shotSec').value : 0) || 5,
+      出场角色:'', 场景:'', 景别:'中景', 说话角色:'', 角色情绪:'',
+      图片状态:'未生成', 视频状态:'未生成', 配音状态:'未生成', 满意锁定:'否',
+      口型风险:'低', 口型状态:'不需要', 图片URL:'', 视频URL:'', 音频URL:'', 音频时长:0, 任务ID:'', 错误信息:'', 更新时间:nowStr() });
+    if(!hasCloud()) localSave(state.shots);
+    toast('已在该镜后插入空镜');
+  });
+}
+
+/* ---------- 风格预设库（对标 moyin-creator 一键视觉风格切换） ---------- */
+var STYLE_PRESETS = [
+  { n:'写实电影感', style:'现代都市写实，电影级质感',
+    pre:'cinematic live-action still, realistic film grain, shallow depth of field, anamorphic lens, dramatic lighting,',
+    neg:'anime style, illustration, 3d render, cartoon, painting, oversaturated' },
+  { n:'国风古装', style:'中国古装，东方美学',
+    pre:'chinese ancient costume drama still, cinematic eastern aesthetics, soft natural light, intricate hanfu embroidery,',
+    neg:'modern clothing, western architecture, sci-fi, neon, anime' },
+  { n:'日系动画', style:'日式二维动画番剧',
+    pre:'japanese anime key visual, clean line art, cel shading, soft pastel palette, detailed background art,',
+    neg:'photorealistic, live action, heavy noise, deformed face' },
+  { n:'3D 动画', style:'三维动画电影',
+    pre:'pixar-style 3d animation film still, soft global illumination, stylized characters, subsurface scattering,',
+    neg:'2d flat art, sketch, realistic photo, harsh shadows' },
+  { n:'水墨国漫', style:'水墨风国漫',
+    pre:'chinese ink wash painting style, expressive brush strokes, monochrome with subtle color accents, xuan paper texture,',
+    neg:'photorealistic, neon, cyberpunk, heavy saturation' },
+  { n:'赛博朋克', style:'赛博朋克科幻',
+    pre:'cyberpunk sci-fi still, neon glow, rain-slicked streets, volumetric fog, high contrast teal and magenta,',
+    neg:'pastoral, ancient costume, watercolor, low contrast' },
+  { n:'黑白悬疑', style:'黑白悬疑犯罪',
+    pre:'black and white noir film still, hard chiaroscuro lighting, venetian blind shadows, high contrast monochrome,',
+    neg:'color, bright cheerful, anime, pastel' },
+  { n:'青春校园', style:'青春校园清新',
+    pre:'youth campus drama still, bright natural daylight, fresh airy color grading, soft lens flare,',
+    neg:'dark gritty, horror, cyberpunk, heavy grain' }
+];
+function renderStylePresets(){
+  var box = $('stylePresets');
+  if(!box) return;
+  box.innerHTML = STYLE_PRESETS.map(function(p){
+    var on = cfg.stylePreset === p.n;
+    return '<button class="btn gh sm" data-style="'+esc(p.n)+'" style="'+(on ? 'border-color:var(--pri);color:var(--pri)' : '')+'">'+esc(p.n)+'</button>';
+  }).join('');
+}
+function applyStylePreset(name){
+  var p = null;
+  STYLE_PRESETS.forEach(function(x){ if(x.n === name) p = x; });
+  if(!p) return;
+  cfg.stylePreset = p.n;
+  cfg.prefix = p.pre;
+  cfg.neg = p.neg;
+  var st = $('shotStyle'); if(st) st.value = p.style;
+  saveCfg(); renderStylePresets();
+  toast('已切换到「' + p.n + '」风格：画风、提示词前缀、负向词均已更新');
 }
 
 /* --- 文本模型：拆镜 --- */
@@ -2506,19 +2818,22 @@ function batch(kind){
     return vs === '未生成' || vs === '失败';
   });
   if(!list.length){ toast(kind === 'img' ? '没有待生成图片的镜头' : '没有待生成视频的镜头'); return; }
-  if(!cfg.agnesKey){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
+  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
   var est = costEstimateTxt(list, kind === 'img' ? { img:1 } : { vid:1 });
-  askConfirm((est || ('共 ' + list.length + ' 个镜头。')) + '确定开始批量生成？', '开始')
+  var conc = Math.max(1, Math.min(8, num(cfg.conc) || 1));
+  askConfirm((est || ('共 ' + list.length + ' 个镜头。')) + '（并发 ' + conc + ' 路' +
+    (num(cfg.retry) > 0 ? '，失败自动重试 ' + num(cfg.retry) + ' 次' : '') + '）确定开始批量生成？', '开始')
     .then(function(ok){
       if(!ok) return;
-      toast('开始批量处理 ' + list.length + ' 个镜头…');
-      list.reduce(function(chain, s){
-        return chain.then(function(){
-          if(kind === 'img') return genImage(s._id);
-          if(!s['图片URL']) return Promise.resolve();
-          return genVideo(s._id);
-        });
-      }, Promise.resolve()).then(function(){ toast('批量任务已全部提交'); });
+      toast('开始批量处理 ' + list.length + ' 个镜头（并发 ' + conc + '）…');
+      state.stopBatch = false;
+      runPool(list, function(s){
+        if(kind === 'img') return genImage(s._id);
+        if(!s['图片URL']) return Promise.resolve();
+        return genVideo(s._id);
+      }, function(done, total){
+        toast('批量进度 ' + done + '/' + total);
+      }).then(function(){ toast('批量任务已全部完成'); });
     });
 }
 function retryFailed(){
@@ -2528,14 +2843,13 @@ function retryFailed(){
   askConfirm((est || ('共 ' + list.length + ' 个失败镜头。')) + '确定一键重试？', '重试')
     .then(function(ok){
       if(!ok) return;
-      toast('重试 ' + list.length + ' 个失败镜头…');
-      list.reduce(function(chain, s){
-        return chain.then(function(){
-          if(s['图片状态'] === '失败') return genImage(s._id);
-          if(s['视频状态'] === '失败' && s['图片URL']) return genVideo(s._id);
-          return Promise.resolve();
-        });
-      }, Promise.resolve()).then(function(){ toast('重试完成'); });
+      toast('重试 ' + list.length + ' 个失败镜头（并发 ' + Math.max(1, Math.min(8, num(cfg.conc) || 1)) + '）…');
+      state.stopBatch = false;
+      runPool(list, function(s){
+        if(s['图片状态'] === '失败') return genImage(s._id);
+        if(s['视频状态'] === '失败' && s['图片URL']) return genVideo(s._id);
+        return Promise.resolve();
+      }).then(function(){ toast('重试完成'); });
     });
 }
 
@@ -2762,7 +3076,7 @@ function pipeStepList(list, kind){
     var s = list[i]; i++;
     var cur = shotById(s._id);
     if(!cur) return nx();
-    if(!cfg.agnesKey && kind !== 'audio'){ return Promise.resolve(i); }
+    if(!hasAgnesKey() && kind !== 'audio'){ return Promise.resolve(i); }
     if(kind === 'img'){
       if(cur['图片状态'] === '已完成' || cur['图片状态'] === '生成中') return nx();
       pipeTip('  生图 ' + i + '/' + list.length + '（第 ' + cur['镜号'] + ' 镜）');
@@ -2884,7 +3198,7 @@ function runPipeline(){
     doVid: $('pipe_doVid').checked,
     doLip: $('pipe_doLip').checked
   };
-  if((opt.doAssetImg || opt.doImg || opt.doVid) && !cfg.agnesKey){
+  if((opt.doAssetImg || opt.doImg || opt.doVid) && !hasAgnesKey()){
     toast('勾选了生图/生视频，请先在设置里填 Agnes API Key'); openDrawer(); return;
   }
   if(opt.doAudio && !cfg.ttsKey){ toast('勾选了配音，请先在设置里填小米 TTS Key'); openDrawer(); return; }
@@ -3130,10 +3444,11 @@ function batchLipsync(){
   askConfirm((est || ('共 ' + list.length + ' 个镜头。')) + '确定开始？', '开始')
     .then(function(ok){
       if(!ok) return;
-      toast('开始对口型 ' + list.length + ' 个镜头…');
-      list.reduce(function(chain, s){
-        return chain.then(function(){ return genLipsync(s._id).then(function(){ return waitShot(s._id, '口型状态', 300000); }); });
-      }, Promise.resolve()).then(function(){ toast('对口型全部处理完'); });
+      toast('开始对口型 ' + list.length + ' 个镜头（并发 ' + Math.max(1, Math.min(8, num(cfg.conc) || 1)) + '）…');
+      state.stopBatch = false;
+      runPool(list, function(s){
+        return genLipsync(s._id).then(function(){ return waitShot(s._id, '口型状态', 300000); });
+      }).then(function(){ toast('对口型全部处理完'); });
     });
 }
 function testLip(){
@@ -3203,7 +3518,7 @@ function aiAnchorsQuiet(list){
 function batchAssetsQuiet(){
   var need1 = state.assets.filter(function(a){ return (a['状态'] || '未生成') === '未生成' || a['状态'] === '失败'; });
   if(!need1.length && !cfg.multiView) return Promise.resolve();
-  if(!cfg.agnesKey) return Promise.resolve();
+  if(!hasAgnesKey()) return Promise.resolve();
   return need1.reduce(function(chain, a){
     return chain.then(function(){ return genAsset(a._id, 1); });
   }, Promise.resolve()).then(function(){
@@ -3404,9 +3719,9 @@ function testAgnes(){
   var box = $('testResult');
   box.className = 'result show'; box.textContent = '测试中…';
   readSettings();
-  if(!cfg.agnesKey){ box.className='result show bad'; box.textContent='请先填 Agnes API Key'; return; }
+  if(!hasAgnesKey()){ box.className='result show bad'; box.textContent='请先填 Agnes API Key'; return; }
   var url = cfg.agnesQuery + '/agnesapi?video_id=__connect_test__&model_name=agnes-video-2.5-flash';
-  apiGet(url, cfg.agnesKey).then(function(r){
+  apiGet(url, ak()).then(function(r){
     var j = parseJsonSafe(r.text);
     if(r.status === 401 || r.status === 403){
       box.className = 'result show bad'; box.textContent = '网络通了，但 API Key 不被接受（HTTP ' + r.status + '）。请检查 Key。';
@@ -3460,10 +3775,15 @@ function bind(){
       }
       case 'del': {
         var ds = shotById(id);
-        askConfirm('确定删除第 ' + (ds ? ds['镜号'] : '') + ' 镜？删除后不可恢复。', '删除', true)
-          .then(function(ok){ if(ok){ if(!id){ toast('没取到这一镜的 ID，请刷新页面重试'); return; } delShot(id); } });
+        askConfirm('确定删除第 ' + (ds ? ds['镜号'] : '') + ' 镜？删除后可用「撤销」恢复。', '删除', true)
+          .then(function(ok){ if(ok){ if(!id){ toast('没取到这一镜的 ID，请刷新页面重试'); return; } pushUndo(); delShot(id); } });
         break;
       }
+      case 'up': moveShot(id, -1); break;
+      case 'down': moveShot(id, 1); break;
+      case 'dup': dupShot(id); break;
+      case 'ins': insertShotAfter(id); break;
+      case 'undo': undoShots(); break;
       case 'openshot': setView('gen'); state.expanded[id] = true; renderGenList();
         setTimeout(function(){ var el = document.querySelector('.gen[data-id="'+id+'"]'); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 80);
         break;
@@ -3580,6 +3900,21 @@ function bind(){
   if($('btnExpSrt')) $('btnExpSrt').addEventListener('click', exportSrt);
   if($('btnExpAudio')) $('btnExpAudio').addEventListener('click', exportAudioTrack);
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
+  if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
+    state.stopBatch = true; toast('已请求停止，正在跑的这几个会跑完');
+  });
+  if($('stylePresets')) $('stylePresets').addEventListener('click', function(ev){
+    var b = ev.target.closest ? ev.target.closest('[data-style]') : null;
+    if(b) applyStylePreset(b.getAttribute('data-style'));
+  });
+  renderStylePresets();
+  document.addEventListener('keydown', function(ev){
+    if((ev.ctrlKey || ev.metaKey) && String(ev.key).toLowerCase() === 'z'){
+      var tag = (ev.target && ev.target.tagName || '').toLowerCase();
+      if(tag === 'input' || tag === 'textarea') return;   /* 不抢输入框内的撤销 */
+      ev.preventDefault(); undoShots();
+    }
+  });
   if($('btnResetUse')) $('btnResetUse').addEventListener('click', function(){
     askConfirm('把用量统计（图片 / 视频秒 / 配音 / 口型计数）清零？单价不变。', '清零', true)
       .then(function(ok){
@@ -3638,7 +3973,7 @@ function bind(){
   $('btnWipeKey').addEventListener('click', function(){
     askConfirm('清除本机保存的 Agnes / 文本模型 / TTS / 唇形服务的所有 Key？', '清除', true).then(function(ok){
       if(!ok) return;
-      cfg.agnesKey = ''; cfg.textKey = ''; cfg.ttsKey = ''; cfg.lipKey = ''; saveCfg(); toast('已清除全部 Key');
+      cfg.agnesKey = ''; cfg.agnesKeys = ''; cfg.textKey = ''; cfg.ttsKey = ''; cfg.lipKey = ''; saveCfg(); toast('已清除全部 Key');
     });
   });
   $('dlgYes').addEventListener('click', function(){ closeDlg(true); });
