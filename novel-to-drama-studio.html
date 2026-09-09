@@ -344,6 +344,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <div class="sp"></div>
         <button class="btn gh sm" id="btnNewRole">+ 新增角色</button>
         <button class="btn gh sm" id="btnPickRoles">从分镜提取</button>
+        <button class="btn sm" id="btnAiExtract">AI 从小说提取</button>
       </div>
       <div class="card-bd">
         <div class="hint" style="margin-bottom:12px">角色卡会生成一张<b>全身定妆照</b>（中性背景）。「英文锚点」是长相一致的关键，要写清：年龄、性别、发型发色、面部特征、常穿服装与配色。</div>
@@ -466,6 +467,8 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <h2 data-page-node-id="1KF4qpDJFj3sUVt3oRkRiU">分镜表</h2>
         <div class="sp" data-page-node-id="DS3BgLpApZk9Yvx80XeGCZ"></div>
         <span class="hint" id="shotCountTxt" data-page-node-id="g7jUMAIuC2pgigEzI9hGFD"></span>
+        <div class="sp"></div>
+        <button class="btn gh sm" id="btnAuditShot">质检分镜</button>
       </div>
       <div class="tbl-hd" data-page-node-id="4oijz2bIJtBGIuXUfZXRMe">
         <div style="text-align:center" data-page-node-id="GyRAVyRKQ43St9qT195tDQ">镜号</div><div data-page-node-id="43ooI1ycERcHdbKiMXZLSR">画面描述</div><div data-page-node-id="urDlRylndOfyhzqgo8GbJE">运镜</div><div data-page-node-id="BuptZOCiASIZVVkTPbjSDK">台词 / 旁白</div><div>出场角色</div><div>场景</div><div data-page-node-id="OSBGaEAc1MWeEdvZdwCnQt">时长(秒)</div><div data-page-node-id="DbyO63P1mo9yYKGJ6zdngO">操作</div>
@@ -521,9 +524,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
           <button class="btn gh" id="btnExpSrt">导出字幕 .srt</button>
           <button class="btn gh" id="btnExpAudio">导出整轨配音 .wav</button>
           <button class="btn" id="btnExpRender">一键合成包（FFmpeg 脚本，出成片）</button>
+          <button class="btn gh" id="btnExpFcp">导出剪辑时间线 .fcpxml</button>
           <button class="btn gh" id="btnBatchAudio">批量生成全部配音</button>
         </div>
-        <div class="hint" style="margin-top:10px" data-page-node-id="vo7mV5unQ1zQubHUSgiRg2"><b>两条出片路线：</b>①「一键合成包」导出 FFmpeg 脚本，配合字幕 + 整轨配音直接合出带字幕、带 BGM 的 <b>成片.mp4</b>（脚本直接读取各镜的公网 URL，需本机装有 <a href="https://ffmpeg.org" target="_blank" rel="noopener">FFmpeg</a>）；② 手动路线：把各镜视频按顺序拖进剪映 / PR，再对齐整轨配音与字幕（都按每镜实际音频时长排时间轴，对齐 0 点即可音画同步）。</div>
+        <div class="hint" style="margin-top:10px" data-page-node-id="vo7mV5unQ1zQubHUSgiRg2"><b>两条出片路线：</b>①「一键合成包」导出 FFmpeg 脚本，配合字幕 + 整轨配音直接合出带字幕、带 BGM 的 <b>成片.mp4</b>（脚本直接读取各镜的公网 URL，需本机装有 <a href="https://ffmpeg.org" target="_blank" rel="noopener">FFmpeg</a>）；② 时间线路线：导出「剪辑时间线 .fcpxml」，先跑一次合成脚本把各镜落盘成 seg_N.mp4，再导入 Premiere / 达芬奇 / Final Cut，镜头顺序、时长、台词都已排好；③ 手动路线：把各镜视频按顺序拖进剪映 / PR，再对齐整轨配音与字幕（都按每镜实际音频时长排时间轴，对齐 0 点即可音画同步）。</div>
       </div>
     </section>
   </section>
@@ -618,7 +622,9 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="Mia">Mia</option><option value="Chloe">Chloe</option><option value="Milo">Milo</option><option value="Dean">Dean</option>
       </select></div>
       <div class="fld"><label>音频格式</label><select class="inp" id="cf_ttsFormat"><option value="mp3">mp3（体积小，推荐）</option><option value="wav">wav（无损，体积大）</option></select></div>
+      <div class="fld"><label>中文语速（字/秒）</label><input class="inp" type="number" id="cf_cnRate" min="2" max="8" step="0.1" placeholder="4.5"></div>
     </div>
+    <div class="hint" style="margin:-4px 0 10px">语速只用于「质检」时估算台词需要几秒，默认 4.5 字/秒；念得慢的旁白可下调。</div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_ttsSync" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>配音完成后<b>自动把镜头时长对齐到语音长度</b>（音画同步的关键，会限制在 4–12 秒内）</span>
@@ -675,6 +681,22 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </div>
     <div class="hint">导出「整轨配音 .wav」时会自动把 BGM 循环铺底、按音量混合并做首尾淡入淡出；一键合成脚本里也会带上这条 BGM。</div>
 
+    <div class="sec-t">字幕样式（烧录进成片时生效）</div>
+    <div class="row3">
+      <div class="fld"><label>字体名</label><input class="inp" id="cf_subFont" placeholder="Microsoft YaHei"></div>
+      <div class="fld"><label>字号</label><input class="inp" type="number" id="cf_subSize" min="8" max="48" step="1"></div>
+      <div class="fld"><label>底部边距</label><input class="inp" type="number" id="cf_subMargin" min="0" max="200" step="2"></div>
+    </div>
+    <div class="row3">
+      <div class="fld"><label>文字颜色（BGR 十六进制）</label><input class="inp" id="cf_subColor" placeholder="FFFFFF"></div>
+      <div class="fld"><label>描边颜色（BGR）</label><input class="inp" id="cf_subOutlineColor" placeholder="000000"></div>
+      <div class="fld"><label>描边粗细</label><input class="inp" type="number" id="cf_subOutline" min="0" max="6" step="0.5"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:8px;cursor:pointer">
+      <input type="checkbox" id="cf_subBold" style="width:18px;height:18px;flex:0 0 auto"><span>字幕加粗（竖屏小屏更清楚）</span>
+    </label>
+    <div class="hint" style="margin-top:6px">颜色用 ASS 的 <b>BGR</b> 顺序：白色 = <code>FFFFFF</code>，黄色 = <code>00FFFF</code>。改完重新导出合成包即可，不影响的 .srt 本身。</div>
+
     <div class="sec-t">用量与成本追踪（对标 ArcReel）</div>
     <div class="hint" style="margin-bottom:10px">每次生成成功自动计数。单价按你的套餐折算填写，填 0 就只计数不算钱。</div>
     <div class="row2">
@@ -721,6 +743,39 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   <div class="dlg-f" data-page-node-id="ZxMeELlSoUQt7GzrbObOLC">
     <button class="btn gh" id="dlgNo" data-page-node-id="Ii2Mr3hpqGLzRBMuHaNWbQ">取消</button>
     <button class="btn" id="dlgYes" data-page-node-id="FaRxp0JvfxyE5AkgOFzTzA">确定</button>
+  </div>
+</div>
+
+<!-- 提示词调试弹窗：查看 / 改写最终送给模型的提示词 -->
+<div class="dlgmask" id="pmMask"></div>
+<div class="dialog" id="pmBox" style="max-width:720px">
+  <div class="dlg-t" id="pmTitle">提示词</div>
+  <div class="dlg-m" id="pmMsg" style="max-height:62vh;overflow:auto"></div>
+  <div class="dlg-f">
+    <button class="btn gh" id="pmReset">还原自动拼装</button>
+    <button class="btn gh" id="pmClose">关闭</button>
+    <button class="btn" id="pmSave">保存改写</button>
+  </div>
+</div>
+
+<!-- 质检报告弹窗 -->
+<div class="dlgmask" id="qaMask"></div>
+<div class="dialog" id="qaBox" style="max-width:680px">
+  <div class="dlg-t" id="qaTitle">分镜质检报告</div>
+  <div class="dlg-m" id="qaMsg" style="max-height:60vh;overflow:auto"></div>
+  <div class="dlg-f">
+    <button class="btn gh" id="qaClose">关闭</button>
+  </div>
+</div>
+
+<!-- AI 提取结果确认弹窗 -->
+<div class="dlgmask" id="exMask"></div>
+<div class="dialog" id="exBox" style="max-width:720px">
+  <div class="dlg-t" id="exTitle">AI 提取结果</div>
+  <div class="dlg-m" id="exMsg" style="max-height:58vh;overflow:auto"></div>
+  <div class="dlg-f">
+    <button class="btn gh" id="exClose">取消</button>
+    <button class="btn" id="exSave">写入设定表</button>
   </div>
 </div>
 
@@ -839,7 +894,8 @@ var DEFAULT_CFG = {
   ttsVoice:'mimo_default', ttsNarr:'白桦', ttsFormat:'mp3', ttsSync:true,
   lipBase:'', lipKey:'', lipMode:'get', lipAuto:false,
   pipeShots:6, pipeBatch:0, pipeChunk:3000,
-  bgmUrl:'', bgmVol:0.18, bgmFade:2,
+  bgmUrl:'', bgmVol:0.18, bgmFade:2, cnRate:4.5,
+  subFont:'Microsoft YaHei', subSize:14, subMargin:36, subColor:'FFFFFF', subOutlineColor:'000000', subOutline:1, subBold:true,
   costImg:0.1, costVidSec:0.5, costTts:0, costLip:0.1,
   usedImg:0, usedVidSec:0, usedTts:0, usedLip:0,
   /* v5：并发队列 / 多 Key 轮换 / 成片输出参数 */
@@ -1184,7 +1240,14 @@ function anchorsForShot(s){
     if(a['英文锚点']) head.push(String(a['英文锚点']));
     else if(a['中文描述']) head.push(String(a['中文描述']));
     rolePhrase.push(nm + ' (' + head.join(', ') + ')');
-    if(a['常服']) outfitPhrase.push(nm + ' wears ' + String(a['常服']));
+    /* 服装锁：优先用「整体常服」，没填就用结构化外观自动拼装（发型 + 上装 + 下装 + 配饰） */
+    var ob = [];
+    if(String(a['发型'] || '').trim()) ob.push('hair: ' + String(a['发型']).trim());
+    var cloth = [String(a['上装'] || '').trim(), String(a['下装'] || '').trim()].filter(Boolean).join(' with ');
+    if(String(a['常服'] || '').trim()) ob.push('outfit: ' + String(a['常服']).trim() + (cloth ? ' (' + cloth + ')' : ''));
+    else if(cloth) ob.push('outfit: ' + cloth);
+    if(String(a['配饰道具'] || '').trim()) ob.push('always carries/wears: ' + String(a['配饰道具']).trim());
+    if(ob.length) outfitPhrase.push(nm + ' — ' + ob.join(', '));
     if(a['性格语气']) persona.push(nm + '：' + String(a['性格语气']));
   });
 
@@ -1460,12 +1523,20 @@ function renderGenList(){
           '</div>' +
           '<div class="fld"><div class="mini">画面描述（中文，给你自己看）</div><input class="inp" data-f="画面描述" value="'+esc(s['画面描述'])+'"></div>' +
           '<div class="fld"><div class="mini">图像生成提示词（英文效果更好，留空则用画面描述）</div><textarea class="inp" data-f="英文提示词" rows="3">'+esc(s['英文提示词'])+'</textarea></div>' +
-          '<div class="row2">' +
+          '<div class="row3">' +
             '<div class="fld"><div class="mini">运镜 / 动作</div><input class="inp" data-f="运镜" value="'+esc(s['运镜'])+'" placeholder="镜头缓慢推进"></div>' +
             '<div class="fld"><div class="mini">时长（秒）</div><input class="inp" type="number" data-f="时长秒" value="'+esc(num(s['时长秒'])||5)+'"></div>' +
+            '<div class="fld"><div class="mini">光影 / 时间 / 天气</div><input class="inp" data-f="光影氛围" value="'+esc(s['光影氛围'])+'" placeholder="黄昏暖侧光，雨后微湿"></div>' +
           '</div>' +
           '<div class="fld"><div class="mini">台词 / 旁白</div><input class="inp" data-f="台词旁白" value="'+esc(s['台词旁白'])+'"></div>' +
           '<div class="fld"><div class="mini">本镜负向提示（可选，追加到全局负向词后）</div><input class="inp" data-f="负向提示" value="'+esc(s['负向提示'])+'" placeholder="如：no glasses, no smile"></div>' +
+          '<div class="fld"><div class="mini">提示词调试（查看最终送给模型的完整提示词，可改写后生效）</div>' +
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+              '<button class="btn gh sm" data-act="showprompt" data-id="'+s._id+'">查看 / 改写提示词</button>' +
+              (String(s['图片提示词覆盖'] || '').trim() ? '<span class="tag warn">生图提示词已改写</span><button class="btn gh sm" data-act="clrprompt" data-id="'+s._id+'">还原自动拼装</button>' : '') +
+              (String(s['视频提示词覆盖'] || '').trim() ? '<span class="tag warn">生视频提示词已改写</span>' : '') +
+            '</div>' +
+          '</div>' +
           '<div class="fld"><div class="mini">配音（小米 MiMo TTS）</div>' +
             '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
               '<button class="btn sm" data-act="audio" data-id="'+s._id+'"'+(busy?' disabled':'')+'>'+(auReady ? '重新配音' : '生成配音')+'</button>' +
@@ -1507,9 +1578,15 @@ function assetCardHtml(a){
   var roleExtra =
     '<div class="row3" style="margin-top:8px">' +
       '<div class="fld" style="margin:0"><div class="mini">性别 / 年龄</div><input class="inp" data-af="性别年龄" value="'+esc(a['性别年龄'])+'" placeholder="男 / 40 岁"></div>' +
-      '<div class="fld" style="margin:0"><div class="mini">常服（防换装）</div><input class="inp" data-af="常服" value="'+esc(a['常服'])+'" placeholder="深色西装白衬衫"></div>' +
+      '<div class="fld" style="margin:0"><div class="mini">发型 / 发色</div><input class="inp" data-af="发型" value="'+esc(a['发型'])+'" placeholder="齐刘海黑色长直发"></div>' +
       '<div class="fld" style="margin:0"><div class="mini">性格 / 语气</div><input class="inp" data-af="性格语气" value="'+esc(a['性格语气'])+'" placeholder="严厉苛刻，说话带压迫感"></div>' +
-    '</div>';
+    '</div>' +
+    '<div class="row3" style="margin-top:8px">' +
+      '<div class="fld" style="margin:0"><div class="mini">上装</div><input class="inp" data-af="上装" value="'+esc(a['上装'])+'" placeholder="白色校服衬衫"></div>' +
+      '<div class="fld" style="margin:0"><div class="mini">下装</div><input class="inp" data-af="下装" value="'+esc(a['下装'])+'" placeholder="藏青色百褶裙"></div>' +
+      '<div class="fld" style="margin:0"><div class="mini">配饰 / 标志道具</div><input class="inp" data-af="配饰道具" value="'+esc(a['配饰道具'])+'" placeholder="圆形细框眼镜，帆布书包"></div>' +
+    '</div>' +
+    '<div class="fld" style="margin-top:8px"><div class="mini">整体常服（防换装；留空则自动用「上装 + 下装 + 配饰」拼装）</div><input class="inp" data-af="常服" value="'+esc(a['常服'])+'" placeholder="白色校服衬衫配藏青百褶裙"></div>';
   var sceneExtra =
     '<div class="row2" style="margin-top:8px">' +
       '<div class="fld" style="margin:0"><div class="mini">时间 / 光线</div><input class="inp" data-af="性别年龄" value="'+esc(a['性别年龄'])+'" placeholder="下午，西侧窗光"></div>' +
@@ -1673,6 +1750,7 @@ function fillSettings(){
   if($('cf_ttsNarr')) $('cf_ttsNarr').value = cfg.ttsNarr;
   if($('cf_ttsFormat')) $('cf_ttsFormat').value = cfg.ttsFormat;
   if($('cf_ttsSync')) $('cf_ttsSync').checked = !!cfg.ttsSync;
+  if($('cf_cnRate')) $('cf_cnRate').value = num(cfg.cnRate) || 4.5;
   if($('cf_lipBase')) $('cf_lipBase').value = cfg.lipBase || '';
   if($('cf_lipKey')) $('cf_lipKey').value = cfg.lipKey || '';
   if($('cf_lipMode')) $('cf_lipMode').value = cfg.lipMode || 'get';
@@ -1689,6 +1767,13 @@ function fillSettings(){
   if($('cf_kb')) $('cf_kb').value = cfg.kb || 'in';
   if($('cf_fps')) $('cf_fps').value = num(cfg.fps) || 30;
   if($('cf_bitrate')) $('cf_bitrate').value = cfg.bitrate || '8M';
+  if($('cf_subFont')) $('cf_subFont').value = cfg.subFont || 'Microsoft YaHei';
+  if($('cf_subSize')) $('cf_subSize').value = num(cfg.subSize) || 14;
+  if($('cf_subMargin')) $('cf_subMargin').value = num(cfg.subMargin) || 36;
+  if($('cf_subColor')) $('cf_subColor').value = cfg.subColor || 'FFFFFF';
+  if($('cf_subOutlineColor')) $('cf_subOutlineColor').value = cfg.subOutlineColor || '000000';
+  if($('cf_subOutline')) $('cf_subOutline').value = num(cfg.subOutline);
+  if($('cf_subBold')) $('cf_subBold').checked = !!cfg.subBold;
   if($('cf_bgmVol')) $('cf_bgmVol').value = num(cfg.bgmVol);
   if($('cf_bgmFade')) $('cf_bgmFade').value = num(cfg.bgmFade);
   if($('cf_costImg')) $('cf_costImg').value = num(cfg.costImg);
@@ -1722,6 +1807,7 @@ function readSettings(){
   if($('cf_ttsNarr')) cfg.ttsNarr = $('cf_ttsNarr').value;
   if($('cf_ttsFormat')) cfg.ttsFormat = $('cf_ttsFormat').value;
   if($('cf_ttsSync')) cfg.ttsSync = !!$('cf_ttsSync').checked;
+  if($('cf_cnRate')) cfg.cnRate = Math.max(2, Math.min(8, num($('cf_cnRate').value) || 4.5));
   if($('cf_lipBase')) cfg.lipBase = ($('cf_lipBase').value.trim() || '').replace(/\/+$/,'');
   if($('cf_lipKey')) cfg.lipKey = $('cf_lipKey').value.trim();
   if($('cf_lipMode')) cfg.lipMode = $('cf_lipMode').value;
@@ -1735,6 +1821,13 @@ function readSettings(){
   if($('cf_kb')) cfg.kb = $('cf_kb').value;
   if($('cf_fps')) cfg.fps = Math.max(24, Math.min(60, num($('cf_fps').value) || 30));
   if($('cf_bitrate')) cfg.bitrate = $('cf_bitrate').value.trim() || '8M';
+  if($('cf_subFont')) cfg.subFont = $('cf_subFont').value.trim() || 'Microsoft YaHei';
+  if($('cf_subSize')) cfg.subSize = Math.max(8, Math.min(48, num($('cf_subSize').value) || 14));
+  if($('cf_subMargin')) cfg.subMargin = Math.max(0, Math.min(200, num($('cf_subMargin').value)));
+  if($('cf_subColor')) cfg.subColor = ($('cf_subColor').value.trim() || 'FFFFFF').replace(/^#/, '').toUpperCase();
+  if($('cf_subOutlineColor')) cfg.subOutlineColor = ($('cf_subOutlineColor').value.trim() || '000000').replace(/^#/, '').toUpperCase();
+  if($('cf_subOutline')) cfg.subOutline = Math.max(0, Math.min(6, num($('cf_subOutline').value)));
+  if($('cf_subBold')) cfg.subBold = !!($('cf_subBold').checked);
   if($('cf_bgmVol')) cfg.bgmVol = Math.min(1, Math.max(0, num($('cf_bgmVol').value)));
   if($('cf_bgmFade')) cfg.bgmFade = Math.min(10, Math.max(0, num($('cf_bgmFade').value)));
   if($('cf_costImg')) cfg.costImg = Math.max(0, num($('cf_costImg').value));
@@ -1813,14 +1906,19 @@ function buildImageBody(s){
   if(String(s['角色情绪'] || '').trim()) parts.push('Performance and emotion: ' + String(s['角色情绪']).trim() + '.');
   /* 6. 运镜 */
   if(String(s['运镜'] || '').trim()) parts.push('Camera: ' + String(s['运镜']).trim());
+  /* 6.5 光影 / 时间 / 天气 / 色调（画面质感与氛围一致性的关键维度） */
+  var la = String(s['光影氛围'] || '').trim();
+  if(la) parts.push('Lighting, time of day and atmosphere: ' + la + '.');
   parts.push(CONSIST_TAIL);
   /* 7. 负向提示 */
   var neg = [cfg.neg, String(s['负向提示'] || '').trim()].filter(Boolean).join(', ');
   if(neg) parts.push('Avoid: ' + neg + '.');
 
+  /* 图片提示词覆盖：在「查看提示词」里手动改过就用改后的（参考图仍然带上） */
+  var finalPrompt = String(s['图片提示词覆盖'] || '').trim() || parts.filter(Boolean).join(' ');
   var body = {
     model: 'agnes-image-2.5-flash',
-    prompt: parts.filter(Boolean).join(' '),
+    prompt: finalPrompt,
     size: cfg.imgSize,
     ratio: cfg.imgRatio,
     extra_body: { response_format: 'url' }
@@ -1849,7 +1947,20 @@ function buildAssetBody(a, which){
   which = which || 1;
   var anchor = (a['英文锚点'] && String(a['英文锚点']).trim()) || (a['中文描述'] || '').trim() || String(a['名称']||'').trim();
   var isRole = a['类型'] === '角色';
-  var outfit = (isRole && a['常服']) ? ' wearing ' + String(a['常服']) : '';
+  /* 服装/外观描述：优先「整体常服」，否则用结构化字段自动拼装，保证定妆照和分镜图口径一致 */
+  var outfit = '';
+  if(isRole){
+    var ob = [];
+    if(String(a['发型'] || '').trim()) ob.push(String(a['发型']).trim() + ' hair');
+    if(String(a['常服'] || '').trim()) ob.push('wearing ' + String(a['常服']).trim());
+    else{
+      var cl = [String(a['上装'] || '').trim(), String(a['下装'] || '').trim()].filter(Boolean).join(' and ');
+      if(cl) ob.push('wearing ' + cl);
+    }
+    if(String(a['配饰道具'] || '').trim()) ob.push('with ' + String(a['配饰道具']).trim());
+    if(String(a['性别年龄'] || '').trim()) ob.unshift(String(a['性别年龄']).trim());
+    outfit = ob.length ? ', ' + ob.join(', ') : '';
+  }
   var extra;
   if(isRole){
     extra = which === 2
@@ -2019,7 +2130,10 @@ function genImage(id){
 function buildVideoBody(s){
   var prompt = String(s['运镜'] || '') + '，' + String(s['画面描述'] || '');
   if(String(s['角色情绪'] || '').trim()) prompt += '，人物情绪：' + String(s['角色情绪']).trim();
+  if(String(s['光影氛围'] || '').trim()) prompt += '，光影氛围：' + String(s['光影氛围']).trim();
   if(cfg.prefix) prompt = cfg.prefix + prompt;
+  /* 视频提示词覆盖：在「查看提示词」里手动改过就用改后的 */
+  if(String(s['视频提示词覆盖'] || '').trim()) prompt = String(s['视频提示词覆盖']).trim();
   /* API 只接受 4–12 秒，手动填超范围会被整单拒绝 */
   var sec = Math.min(12, Math.max(4, num(s['时长秒']) || num(cfg.vidSec) || 5));
   return {
@@ -2469,7 +2583,15 @@ function exportRenderPack(){
   var vol = Math.min(1, Math.max(0, num(cfg.bgmVol)));
   var fadeOutAt = Math.max(0, Math.round(total - fade));
   var filter = '[2:a]volume=' + vol + ',afade=t=in:d=' + fade + ',afade=t=out:st=' + fadeOutAt + ':d=' + fade + '[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]';
-  var subStyle = "subtitles=subs.srt:force_style='FontName=Microsoft YaHei,FontSize=14,Outline=1,Shadow=0,MarginV=36'";
+  /* 字幕样式：全部可在设置里调，字号会按输出分辨率缩放，保证竖屏横屏观感一致 */
+  var fs = num(cfg.subSize) || 14;
+  var subStyle = "subtitles=subs.srt:force_style='FontName=" + (cfg.subFont || 'Microsoft YaHei') +
+    ",FontSize=" + fs +
+    ",PrimaryColour=&H" + (cfg.subColor || 'FFFFFF') +
+    ",OutlineColour=&H" + (cfg.subOutlineColor || '000000') +
+    ",Outline=" + (num(cfg.subOutline) || 1) +
+    ",Shadow=0,Alignment=2,MarginV=" + (num(cfg.subMargin) || 36) +
+    ",Bold=" + (cfg.subBold ? 1 : 0) + "'";
   var sh = [], bat = [];
   sh.push('#!/bin/bash');
   sh.push('# 《小说转短剧》一键合成脚本（macOS / Linux。需已安装 ffmpeg：brew install ffmpeg 或 apt install ffmpeg）');
@@ -2729,6 +2851,316 @@ function applyStylePreset(name){
   toast('已切换到「' + p.n + '」风格：画风、提示词前缀、负向词均已更新');
 }
 
+/* ---------- 导出剪辑时间线 FCPXML（PR / 达芬奇 / Final Cut 可直接导入） ----------
+   说明：本文件按「先跑一次 render.sh 把各镜视频落盘成 seg_1.mp4…」的目录结构引用本地文件，
+   所以不依赖公网 URL 也能正常剪辑、调速、加特效。 */
+function xmlEsc(t){
+  return String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function fcpDur(sec, fps){ return Math.max(1, Math.round(num(sec) * fps)) + '/' + fps + 's'; }
+function exportFcpXml(){
+  if(!state.shots.length){ toast('还没有分镜'); return; }
+  var fps = num(cfg.fps) || 30;
+  var r = String(cfg.imgRatio || '9:16').split(':');
+  var vw = (num(r[1]) || 16) > (num(r[0]) || 9) ? 720 : 1280;
+  var vh = Math.round(vw * (num(r[1]) || 16) / (num(r[0]) || 9) / 2) * 2;
+  var list = sortedShots();
+  /* 只对有视频的镜头做紧密排布；无视频（还没生成/失败）的镜头不占时间轴，
+     这样导入后镜头是紧挨着的，再单独补那几镜即可 */
+  var placed = [];
+  var cursor = 0;
+  list.forEach(function(s){
+    if(String(s['口型视频URL'] || s['视频URL'] || '').trim()){
+      s._placeOff = cursor;
+      placed.push(s);
+      cursor += shotDur(s);
+    } else {
+      s._placeOff = -1;
+    }
+  });
+
+  var res = [], clips = [], n = 0, skipped = [];
+  res.push('<format id="r0" name="FFVideoFormat' + vh + 'p' + fps + '" frameDuration="1/' + fps + 's" width="' + vw + '" height="' + vh + '" colorSpace="1-1-1 (Rec. 709)"/>');
+  var totalFrames = 0;
+  var placedSec = 0;
+  list.forEach(function(s, i){
+    var url = String(s['口型视频URL'] || s['视频URL'] || '').trim();
+    var d = shotDur(s);
+    if(!url){ skipped.push(s['镜号']); return; }        /* 没视频的镜头不进时间线，避免导入报错 */
+    n++;
+    placedSec += d;
+    totalFrames = Math.max(totalFrames, Math.round((s._placeOff + d) * fps));
+    var aid = 'a' + n;
+    var file = 'seg_' + (i + 1) + '.mp4';               /* 与 render.sh 落盘的文件名一致 */
+    res.push('<asset id="' + aid + '" name="shot' + xmlEsc(s['镜号']) + '" uid="shot-' + xmlEsc(s._id) + '" start="0s" duration="' + fcpDur(d, fps) + '" hasVideo="1" hasAudio="1" format="r0">' +
+      '<media-rep kind="original-media" src="file://./' + file + '" srcUrl="' + xmlEsc(url) + '"/>' +
+      '</asset>');
+    var note = String(s['台词旁白'] || '').trim();
+    /* offset 从真正的时间线 0 帧开始，不能用 fcpDur（它最小是 1 帧会让首镜后移 1 帧） */
+    var offFrame = Math.round(s._placeOff * fps);
+    var offStr = offFrame + '/' + fps + 's';
+    clips.push('<asset-clip ref="' + aid + '" offset="' + offStr + '" name="第' + xmlEsc(s['镜号']) + '镜 ' + xmlEsc(String(s['画面描述'] || '').slice(0, 20)) + '" start="0s" duration="' + fcpDur(d, fps) + '" format="r0" tcFormat="NDF">' +
+      (note ? '<note>' + xmlEsc(note) + '</note>' : '') +
+      '<adjust-volume amount="0dB"/>' +
+      '</asset-clip>');
+  });
+  if(!n){ toast('还没有任何镜头生成了视频，无法导出时间线'); return; }
+  totalFrames = Math.max(1, totalFrames);
+
+  var xml = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n' +
+    '<fcpxml version="1.9">\n  <resources>\n    ' + res.join('\n    ') + '\n  </resources>\n' +
+    '  <library location="file://./">\n    <event name="短剧素材">\n      <project name="成片">\n' +
+    '        <sequence format="r0" duration="' + totalFrames + '/' + fps + 's" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">\n' +
+    '          <spine>\n            ' + (clips.join('\n            ') || '') + '\n          </spine>\n' +
+    '        </sequence>\n      </project>\n    </event>\n  </library>\n</fcpxml>\n';
+
+  download('成片时间线.fcpxml', xml, 'application/xml;charset=utf-8');
+  toast('时间线已导出（' + n + ' 个镜头，' + fmtSec(Math.round(placedSec)) + '）' +
+        (skipped.length ? '，第 ' + skipped.join('/') + ' 镜无视频已跳过' : ''));
+}
+
+/* ---------- 提示词调试：查看 / 改写最终提示词（专业平台必备） ---------- */
+var pmShotId = '';
+function showPromptBox(id){
+  var s = shotById(id);
+  if(!s){ toast('找不到这一镜'); return; }
+  pmShotId = id;
+  var ip, vp;
+  try{ ip = buildImageBody(s).prompt; }catch(e){ ip = '（拼装失败：' + (e.message || e) + '）'; }
+  try{ vp = buildVideoBody(s).prompt; }catch(e){ vp = '（拼装失败：' + (e.message || e) + '）'; }
+  var nRef = 0;
+  try{ nRef = (buildImageBody(s).extra_body.image || []).length; }catch(e){}
+  $('pmTitle').textContent = '第 ' + s['镜号'] + ' 镜 · 最终提示词';
+  $('pmMsg').innerHTML =
+    '<div class="mini" style="margin-bottom:4px">生图提示词（改了就固定用你这份，不再自动拼装）</div>' +
+    '<textarea class="inp" id="pmImg" rows="10" style="font-size:12px;line-height:1.55">'+esc(ip)+'</textarea>' +
+    '<div class="mini" style="margin:12px 0 4px">生视频提示词</div>' +
+    '<textarea class="inp" id="pmVid" rows="5" style="font-size:12px;line-height:1.55">'+esc(vp)+'</textarea>' +
+    '<div class="hint" style="margin-top:10px">本镜会额外附带 <b>' + nRef + '</b> 张参考图（角色定妆 / 场景空景 / 基准帧），参考图不在提示词文本里，生成时由接口单独传入。两个框都清空并保存即还原为自动拼装。</div>';
+  $('pmBox').classList.add('on'); $('pmMask').classList.add('on');
+}
+function closePromptBox(){ $('pmBox').classList.remove('on'); $('pmMask').classList.remove('on'); pmShotId = ''; }
+function savePromptOverride(){
+  var id = pmShotId; if(!id) return;
+  var i = String($('pmImg').value || '').trim(), v = String($('pmVid').value || '').trim();
+  closePromptBox();
+  patchShot(id, { 图片提示词覆盖:i, 视频提示词覆盖:v, 更新时间:nowStr() });
+  toast((i || v) ? '已保存改写，下次生成用你这份' : '已还原为自动拼装');
+}
+
+/* ---------- 分镜质检 Agent（对标 moyin-creator 质检 Agent） ---------- */
+var QA = [];
+function auditShots(){
+  var shots = sortedShots();
+  if(!shots.length){ toast('还没有分镜可以质检'); return; }
+  var rate = num(cfg.cnRate) || 4.5;   /* 中文配音语速：字 / 秒 */
+  var issues = [], lastSize = '', sameRun = 0, totalSec = 0;
+  shots.forEach(function(s){
+    var no = s['镜号'], id = s._id, d = shotDur(s);
+    totalSec += d;
+    /* 1. 时长必须在模型允许的 4–12 秒内 */
+    if(num(s['时长秒']) < 4 || num(s['时长秒']) > 12){
+      issues.push({ lv:'err', id:id, no:no, text:'时长 ' + (num(s['时长秒'])||0) + ' 秒超出模型允许的 4–12 秒，会被接口整单拒绝', act:'dur', sec:Math.min(12, Math.max(4, Math.round(d || 5))) });
+    }
+    /* 2. 台词念不完 / 镜头太拖 */
+    var line = String(s['台词旁白'] || '').trim();
+    if(line){
+      var cn = (line.match(/[\u4e00-\u9fa5]/g) || []).length;
+      var need = cn / rate;
+      if(need > d + 0.3){
+        issues.push({ lv:'err', id:id, no:no, act:'dur', sec:Math.min(12, Math.max(4, Math.ceil(need))),
+          text:'台词约 ' + cn + ' 字，按 ' + rate + ' 字/秒需 ' + need.toFixed(1) + ' 秒，镜头只有 ' + d.toFixed(1) + ' 秒，配音会念不完' });
+      }else if(d - need > 3.5){
+        issues.push({ lv:'info', id:id, no:no, act:'dur', sec:Math.min(12, Math.max(4, Math.ceil(need + 0.5))),
+          text:'台词只需约 ' + need.toFixed(1) + ' 秒，镜头给了 ' + d.toFixed(1) + ' 秒，成片会拖 ' + (d - need).toFixed(1) + ' 秒' });
+      }
+    }
+    /* 3. 一致性资产缺口 */
+    splitNames(s['出场角色']).forEach(function(n){
+      var a = assetByName(n, '角色');
+      if(!a) issues.push({ lv:'err', id:id, no:no, act:'role', name:n, text:'出场角色「'+n+'」没有角色卡，无法锁定长相与服装' });
+      else if(!a['参考图URL']) issues.push({ lv:'warn', id:id, no:no, act:'gen', text:'角色「'+n+'」还没生成定妆照，本镜只能靠文字描述，漂移风险高' });
+    });
+    var scn = String(s['场景'] || '').trim();
+    if(scn){
+      var sc = assetByName(scn, '场景');
+      if(!sc) issues.push({ lv:'warn', id:id, no:no, act:'scene', name:scn, text:'场景「'+scn+'」没有场景卡，布局会逐镜变化' });
+      else if(!sc['参考图URL']) issues.push({ lv:'warn', id:id, no:no, act:'gen', text:'场景「'+scn+'」还没生成空景图，只能靠文字描述锁定布局' });
+    }
+    /* 4. 生成状态 */
+    if(s['图片状态'] === '失败') issues.push({ lv:'err', id:id, no:no, act:'img', text:'图片生成失败' + (s['错误信息'] ? '：' + String(s['错误信息']).slice(0,80) : '') });
+    if(s['视频状态'] === '失败') issues.push({ lv:'err', id:id, no:no, act:'vid', text:'视频生成失败' + (s['错误信息'] ? '：' + String(s['错误信息']).slice(0,80) : '') });
+    if(s['配音状态'] === '失败') issues.push({ lv:'err', id:id, no:no, act:'audio', text:'配音生成失败' + (s['错误信息'] ? '：' + String(s['错误信息']).slice(0,80) : '') });
+    /* 5. 口型风险 */
+    if(s['口型风险'] === '高' && s['口型状态'] !== '已完成' && s['口型状态'] !== '不需要'){
+      issues.push({ lv:'warn', id:id, no:no, act:'lip', text:'正面大脸说话，口型对不上风险高，建议改过肩 / 侧脸或做口型同步' });
+    }
+    /* 6. 连续同景别 */
+    var sz = String(s['景别'] || '中景');
+    if(sz === lastSize) sameRun++; else { lastSize = sz; sameRun = 1; }
+    if(sameRun === 3) issues.push({ lv:'info', id:id, no:no, act:'goto', text:'连续 3 镜都是「'+sz+'」，节奏会单调，建议插一镜其它景别' });
+  });
+  /* 7. 全局 */
+  if(totalSec < 30 && shots.length) issues.push({ lv:'info', id:'', no:'', act:'', text:'全片仅 ' + Math.round(totalSec) + ' 秒，短于 30 秒的竖屏短剧完播率通常较差' });
+  QA = issues;
+  var cnt = { err:0, warn:0, info:0 };
+  issues.forEach(function(i){ cnt[i.lv]++; });
+  $('qaTitle').textContent = '分镜质检报告 · ' + shots.length + ' 镜' + (cnt.err || cnt.warn ? '（' + (cnt.err ? cnt.err + ' 个必须处理' : '') + (cnt.err && cnt.warn ? '、' : '') + (cnt.warn ? cnt.warn + ' 个建议处理' : '') + '）' : '（未发现问题）');
+  if(!issues.length){
+    $('qaMsg').innerHTML = '<div class="hint">没有发现问题，可以去「成片与导出」收尾了。</div>';
+  }else{
+    var order = { err:0, warn:1, info:2 };
+    issues.sort(function(a, b){ return (order[a.lv] - order[b.lv]) || (num(a.no) - num(b.no)); });
+    $('qaMsg').innerHTML = issues.map(function(it, i){
+      var cls = it.lv === 'err' ? '#D93A3A' : (it.lv === 'warn' ? '#B46B00' : '#5B6076');
+      var btns = '';
+      if(it.act === 'dur') btns = '<button class="btn sm" data-qa="'+i+'" data-act="dur">改为 ' + it.sec + ' 秒</button>';
+      else if(it.act === 'role') btns = '<button class="btn sm" data-qa="'+i+'" data-act="role">建角色卡</button>';
+      else if(it.act === 'scene') btns = '<button class="btn sm" data-qa="'+i+'" data-act="scene">建场景卡</button>';
+      else if(it.act === 'img' || it.act === 'vid' || it.act === 'audio') btns = '<button class="btn sm" data-qa="'+i+'" data-act="'+it.act+'">重试</button>';
+      else if(it.act === 'lip') btns = '<button class="btn sm" data-qa="'+i+'" data-act="lip">AI 规避</button>';
+      if(it.id) btns += '<button class="btn gh sm" data-qa="'+i+'" data-act="goto">定位</button>';
+      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line2)">' +
+        '<span style="flex:0 0 auto;font-size:11px;font-weight:700;color:'+cls+';background:'+cls+'1A;padding:2px 7px;border-radius:6px;margin-top:2px">' +
+          (it.lv === 'err' ? '必须' : (it.lv === 'warn' ? '建议' : '提示')) + '</span>' +
+        '<span style="flex:1;font-size:13px;line-height:1.55">' + (it.no ? '<b>第'+esc(it.no)+'镜</b> · ' : '') + esc(it.text) + '</span>' +
+        '<span style="flex:0 0 auto;display:flex;gap:5px">' + btns + '</span></div>';
+    }).join('');
+  }
+  $('qaBox').classList.add('on'); $('qaMask').classList.add('on');
+}
+function closeQa(){ $('qaBox').classList.remove('on'); $('qaMask').classList.remove('on'); }
+function qaDo(i, act){
+  var it = QA[i]; if(!it) return;
+  if(act === 'dur'){ patchShot(it.id, { 时长秒: it.sec, 更新时间: nowStr() }); toast('第 ' + it.no + ' 镜时长已改为 ' + it.sec + ' 秒'); }
+  else if(act === 'role' || act === 'scene'){
+    addAsset({ 类型: act === 'role' ? '角色' : '场景', 名称: it.name, 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间: nowStr() });
+    toast('已建卡：' + it.name + '，去「② 角色与场景」补全描述后生成设定图');
+  }
+  else if(act === 'img'){ closeQa(); genImage(it.id); }
+  else if(act === 'vid'){ closeQa(); genVideo(it.id); }
+  else if(act === 'audio'){ closeQa(); genAudio(it.id); }
+  else if(act === 'lip'){ closeQa(); if(typeof avoidLipOne === 'function') avoidLipOne(it.id); else toast('请到该镜的口型区处理'); }
+  else if(act === 'goto'){ closeQa(); setView('gen'); state.expanded[it.id] = true; renderGenList(); }
+  else return;
+  if(act === 'dur' || act === 'role' || act === 'scene') auditShots();   /* 修完重跑，列表实时更新 */
+}
+
+/* ---------- AI 一键提取角色与场景（对标火宝角色提取 Agent） ---------- */
+var EX = { roles: [], scenes: [] };
+function jsonFromText(t){
+  var s = String(t).trim();
+  s = s.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  var a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if(a > -1 && b > a) s = s.slice(a, b + 1);
+  try{ return JSON.parse(s); }catch(e){ return null; }
+}
+function aiExtractAssets(){
+  var novel = String($('novel').value || '').trim();
+  if(!novel && state.chapters.length){
+    novel = state.chapters.map(function(c){ return String(c.title || '') + '\n' + String(c.text || ''); }).join('\n');
+  }
+  if(!novel){ toast('请先在「剧本拆镜」粘贴小说原文'); return; }
+  if(!cfg.textKey || !cfg.textModel){ toast('请先在设置里配置文本模型'); openDrawer(); return; }
+  toast('正在让模型读全文提取角色与场景…');
+  apiPost(cfg.textBase.replace(/\/+$/, '') + '/chat/completions', cfg.textKey, {
+    model: cfg.textModel,
+    messages: [
+      { role:'system', content:
+        '你是影视美术与选角助理。从用户给的小说正文里，提取出真正的主要角色（3–8 个）与主要场景（3–8 个）。\n' +
+        '只输出 JSON，不要任何解释文字、不要 markdown 代码块标记。格式：\n' +
+        '{"roles":[{"name":"","gender_age":"","hair":"","top":"","bottom":"","accessory":"","persona":"","desc":"","en":"","voice":""}],\n' +
+        ' "scenes":[{"name":"","time_light":"","props":"","desc":"","en":""}]}\n' +
+        '要求：\n' +
+        '- name 用小说里出现的人名/称呼，场景名要短且稳定，后续会用来跨镜匹配。\n' +
+        '- desc 是中文外貌/环境描述，30–60 字。\n' +
+        '- en 是英文一致性锚点，必须具体到可复现：年龄、性别、发型发色、面部特征、服装款式与配色（角色）；空间布局、门窗墙面地面家具位置、材质与色调（场景）。40–80 个英文单词。\n' +
+        '- voice 给出适合该角色的 TTS 音色风格提示，如「青年女声，清亮」/「中年男声，低沉沙哑」。\n' +
+        '- persona 是性格与说话方式，会喂给画面情绪与配音。\n' +
+        '- 只提取反复出现、对剧情重要的，龙套不要。'
+      },
+      { role:'user', content: '小说正文：\n' + novel.slice(0, 24000) }
+    ],
+    temperature: 0.4
+  }).then(function(r){
+    var j = parseJsonSafe(r.text);
+    if(r.status >= 400) throw new Error('HTTP ' + r.status + ' ' + String(r.text).slice(0, 180));
+    var content = j && j.choices && j.choices[0] && (j.choices[0].message && j.choices[0].message.content || j.choices[0].text);
+    if(!content) throw new Error('模型没有返回内容：' + String(r.text).slice(0, 180));
+    var o = jsonFromText(content);
+    if(!o) throw new Error('没能解析出 JSON，原始返回：' + String(content).slice(0, 200));
+    var roles = Array.isArray(o.roles) ? o.roles : [];
+    var scenes = Array.isArray(o.scenes) ? o.scenes : [];
+    if(!roles.length && !scenes.length) throw new Error('模型没提取出任何角色或场景');
+    EX.roles = roles.filter(function(x){ return String(x.name || '').trim(); }).slice(0, 12);
+    EX.scenes = scenes.filter(function(x){ return String(x.name || '').trim(); }).slice(0, 12);
+    renderExtractPreview();
+  }).catch(function(e){
+    console.error(e);
+    toast('提取失败：' + (e.message || e).toString().slice(0, 120));
+  });
+}
+function renderExtractPreview(){
+  var rHtml = EX.roles.length ? EX.roles.map(function(x, i){
+    var nm = esc(String(x.name).trim());
+    var dup = assetByName(String(x.name).trim(), '角色') ? ' <span class="tag warn">已存在，写入会跳过</span>' : '';
+    return '<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line2)">' +
+      '<input type="checkbox" data-ex="r' + i + '" checked style="margin-top:3px">' +
+      '<span><b>' + nm + '</b>' + dup +
+      '<div class="hint" style="margin-top:2px">' + esc([x.gender_age, x.hair, x.top, x.bottom, x.accessory].filter(Boolean).join(' · ')) + '</div>' +
+      '<div class="hint" style="margin-top:2px">性格：' + esc(x.persona || '—') + '　音色：' + esc(x.voice || '—') + '</div>' +
+      '<div class="hint" style="margin-top:2px;color:#5B5BD6">EN：' + esc(String(x.en || '').slice(0, 160)) + '</div></span></label>';
+  }).join('') : '<div class="hint">没提取到角色</div>';
+  var sHtml = EX.scenes.length ? EX.scenes.map(function(x, i){
+    var nm = esc(String(x.name).trim());
+    var dup = assetByName(String(x.name).trim(), '场景') ? ' <span class="tag warn">已存在，写入会跳过</span>' : '';
+    return '<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line2)">' +
+      '<input type="checkbox" data-ex="s' + i + '" checked style="margin-top:3px">' +
+      '<span><b>' + nm + '</b>' + dup +
+      '<div class="hint" style="margin-top:2px">' + esc([x.time_light, x.props].filter(Boolean).join(' · ')) + '</div>' +
+      '<div class="hint" style="margin-top:2px;color:#5B5BD6">EN：' + esc(String(x.en || '').slice(0, 160)) + '</div></span></label>';
+  }).join('') : '<div class="hint">没提取到场景</div>';
+  $('exTitle').textContent = 'AI 提取到 ' + EX.roles.length + ' 个角色、' + EX.scenes.length + ' 个场景';
+  $('exMsg').innerHTML =
+    '<div class="mini" style="margin-bottom:2px">角色（勾选要写入的）</div>' + rHtml +
+    '<div class="mini" style="margin:14px 0 2px">场景</div>' + sHtml +
+    '<div class="hint" style="margin-top:12px">写入后仍可在卡片里改描述；英文锚点越具体，跨镜长相与布局越稳。</div>';
+  $('exBox').classList.add('on'); $('exMask').classList.add('on');
+}
+function closeExtract(){ $('exBox').classList.remove('on'); $('exMask').classList.remove('on'); }
+function saveExtracted(){
+  var picks = [];
+  $('exMsg').querySelectorAll('input[data-ex]').forEach(function(cb){
+    if(!cb.checked) return;
+    var k = cb.getAttribute('data-ex'), i = num(k.slice(1));
+    if(k.charAt(0) === 'r'){
+      var x = EX.roles[i]; if(!x) return;
+      picks.push({ 类型:'角色', 名称:String(x.name).trim(), 性别年龄:String(x.gender_age||'').trim(), 发型:String(x.hair||'').trim(),
+        上装:String(x.top||'').trim(), 下装:String(x.bottom||'').trim(), 配饰道具:String(x.accessory||'').trim(),
+        性格语气:String(x.persona||'').trim(), TTS音色:String(x.voice||'').trim(),
+        中文描述:String(x.desc||'').trim(), 英文锚点:String(x.en||'').trim() });
+    }else{
+      var y = EX.scenes[i]; if(!y) return;
+      picks.push({ 类型:'场景', 名称:String(y.name).trim(), 性别年龄:String(y.time_light||'').trim(), 常服:String(y.props||'').trim(),
+        中文描述:String(y.desc||'').trim(), 英文锚点:String(y.en||'').trim() });
+    }
+  });
+  var todo = picks.filter(function(p){ return !assetByName(p['名称'], p['类型']); });
+  if(!todo.length){ toast('勾选的都已在设定表里了'); closeExtract(); return; }
+  closeExtract();
+  toast('正在写入 ' + todo.length + ' 张设定卡…');
+  todo.reduce(function(chain, p){
+    return chain.then(function(){
+      return addAsset(Object.assign({ 参考图URL:'', 参考图2:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, p));
+    });
+  }, Promise.resolve()).then(function(){
+    toast('已写入 ' + todo.length + ' 张设定卡，去填描述并生成设定图');
+    setView('asset');
+  }).catch(function(e){ console.error(e); toast('写入失败：' + (e.message || e)); });
+}
+
 /* --- 文本模型：拆镜 --- */
 var SIZES = ['远景','全景','中景','近景','特写','大特写'];
 function splitShotObj(it, sec){
@@ -2741,6 +3173,7 @@ function splitShotObj(it, sec){
     运镜: it.camera || '', 台词旁白: it.line || '', 时长秒: num(it.seconds) || sec,
     出场角色: charStr(it.characters), 场景: it.location || '',
     景别: size, 说话角色: speaker, 角色情绪: String(it.emotion || '').trim(),
+    光影氛围: String(it.lighting || it.light || '').trim(),
     图片状态:'未生成', 视频状态:'未生成', 配音状态:'未生成', 满意锁定:'否',
     口型风险: '低', 口型状态: '不需要',
     图片URL:'', 视频URL:'', 音频URL:'', 音频时长:0, 任务ID:'', 错误信息:'', 更新时间:nowStr()
@@ -2989,8 +3422,9 @@ function buildSplitSys(n, sec, style){
     '5) speaker 写这句台词谁说的，必须是 characters 里的名字之一；纯旁白或无人说话填「旁白」；' +
     '6) emotion 写这一镜人物情绪与表演（8-16 字中文），会同时喂给画面和配音；' +
     '7) 重要：承载台词的镜头尽量用「过肩、侧脸、背身、听者反应、手部或物件特写、远景」，尽量少用正面口部特写 —— AI 视频对不上嘴型；' +
-    '8) 只输出严格 JSON 数组，不要解释文字，不要代码块围栏。格式：' +
-    '[{"shot":1,"location":"场景名","characters":["角色名"],"shot_size":"中景","speaker":"角色名或旁白","emotion":"紧张，攥紧书包带","scene":"中文画面描述","prompt":"英文图像生成提示词","camera":"运镜","line":"台词或旁白","seconds":' + sec + '}]';
+    '8) lighting 写这一镜的光影 / 时间 / 天气（6-16 字中文，如「黄昏暖侧光，雨后微湿」「深夜，冷白顶光」），同一时段同一地点的镜头要保持一致，会同时喂给画面和视频；' +
+    '9) 只输出严格 JSON 数组，不要解释文字，不要代码块围栏。格式：' +
+    '[{"shot":1,"location":"场景名","characters":["角色名"],"shot_size":"中景","speaker":"角色名或旁白","emotion":"紧张，攥紧书包带","scene":"中文画面描述","prompt":"英文图像生成提示词","camera":"运镜","line":"台词或旁白","lighting":"黄昏暖侧光","seconds":' + sec + '}]';
 }
 /* 章节剧本化（对标火宝 script_rewriter）：小说正文 → 对白化、强钩子、紧凑节奏的短剧剧本。
    改写结果存 c.adapted，拆镜优先用它；「用原文」随时可还原。 */
@@ -3630,9 +4064,9 @@ function exportMd(){
   toast('已导出分镜脚本');
 }
 function exportCsv(){
-  var rows = [['镜号','章节','景别','画面描述','运镜','角色情绪','说话角色','台词旁白','语音秒','出场角色','场景','时长秒','图片URL','视频URL','口型视频URL','口型风险','图片状态','视频状态','配音状态','口型状态']];
+  var rows = [['镜号','章节','景别','光影氛围','画面描述','运镜','角色情绪','说话角色','台词旁白','语音秒','出场角色','场景','时长秒','图片URL','视频URL','口型视频URL','口型风险','图片状态','视频状态','配音状态','口型状态']];
   state.shots.forEach(function(s){
-    rows.push([s['镜号'], s['章节']||'', s['景别']||'中景', s['画面描述']||'', s['运镜']||'', s['角色情绪']||'', s['说话角色']||'',
+    rows.push([s['镜号'], s['章节']||'', s['景别']||'中景', s['光影氛围']||'', s['画面描述']||'', s['运镜']||'', s['角色情绪']||'', s['说话角色']||'',
                s['台词旁白']||'', num(s['音频时长'])>0 ? num(s['音频时长']).toFixed(2) : '', s['出场角色']||'', s['场景']||'',
                num(s['时长秒'])||5, s['图片URL']||'', s['视频URL']||'', s['口型视频URL']||'',
                s['口型风险']||'低', s['图片状态']||'', s['视频状态']||'', s['配音状态']||'未生成', s['口型状态']||'不需要']);
@@ -3805,6 +4239,8 @@ function bind(){
           .then(function(ok){ if(ok) delAsset(id); });
         break;
       }
+      case 'showprompt': showPromptBox(id); break;
+      case 'clrprompt': patchShot(id, { 图片提示词覆盖:'', 视频提示词覆盖:'', 更新时间:nowStr() }); toast('已还原为自动拼装'); break;
       case 'viewimg': { var s = shotById(id); if(s) openUrl(s['图片URL'], 'image'); break; }
       case 'openvid': { var s2 = shotById(id); if(s2) openUrl(s2['口型视频URL'] || s2['视频URL'], 'video'); break; }
       case 'lip': genLipsync(id); break;
@@ -3900,6 +4336,7 @@ function bind(){
   if($('btnExpSrt')) $('btnExpSrt').addEventListener('click', exportSrt);
   if($('btnExpAudio')) $('btnExpAudio').addEventListener('click', exportAudioTrack);
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
+  if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
   if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
     state.stopBatch = true; toast('已请求停止，正在跑的这几个会跑完');
   });
@@ -3982,6 +4419,32 @@ function bind(){
   document.addEventListener('keydown', function(e){
     if(e.key === 'Escape' && $('dialog').classList.contains('on')) closeDlg(false);
   });
+
+  /* 提示词调试弹窗 */
+  $('pmSave').addEventListener('click', savePromptOverride);
+  $('pmClose').addEventListener('click', closePromptBox);
+  $('pmReset').addEventListener('click', function(){
+    if($('pmImg')) $('pmImg').value = '';
+    if($('pmVid')) $('pmVid').value = '';
+  });
+  $('pmMask').addEventListener('click', closePromptBox);
+
+  /* 质检报告弹窗 */
+  $('qaClose').addEventListener('click', closeQa);
+  $('qaMask').addEventListener('click', closeQa);
+  $('qaMsg').addEventListener('click', function(ev){
+    var b = ev.target.closest ? ev.target.closest('button[data-qa]') : null;
+    if(!b) return;
+    qaDo(num(b.getAttribute('data-qa')), b.getAttribute('data-act'));
+  });
+
+  /* AI 提取弹窗 */
+  $('exSave').addEventListener('click', saveExtracted);
+  $('exClose').addEventListener('click', closeExtract);
+  $('exMask').addEventListener('click', closeExtract);
+
+  $('btnAuditShot').addEventListener('click', auditShots);
+  $('btnAiExtract').addEventListener('click', aiExtractAssets);
 
   document.querySelectorAll('.tab').forEach(function(b){
     b.addEventListener('click', function(){ setView(b.getAttribute('data-v')); });
