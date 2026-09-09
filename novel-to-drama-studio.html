@@ -566,6 +566,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <div class="fld" data-page-node-id="WDTzs2P8CzwEvy0R9vQqHv"><label data-page-node-id="35ah2A1uuDEzGpg3W5Nf79">视频比例</label><select class="inp" id="cf_vidRatio" data-page-node-id="GAsgJifUWwT9xAedCwESko"><option data-page-node-id="0HwviARDTTMmrOtcowPWUn">9:16</option><option data-page-node-id="LwL8UAZbrt7ogQj7b1rfj1">16:9</option><option data-page-node-id="u1WUkCg1TxIJFChBN7vIRd">1:1</option><option data-page-node-id="otFYODOyYYI4pU9V85vwTh">3:4</option><option data-page-node-id="O4HlyUSzuQZD1WDIRjMgQu">4:3</option><option data-page-node-id="77YUgp8v4RuDYbOydFzDcv">21:9</option></select></div>
       <div class="fld" data-page-node-id="ZPhA1qeq1QU4DhqwY63NDq"><label data-page-node-id="mUai2OeKxgpllm5oRHWHWi">视频分辨率</label><input class="inp" id="cf_vidSize" value="720P" readonly data-page-node-id="a6aMdhmFud3sENkvnOfnRL"></div>
     </div>
+    <div class="fld"><label>生图候选数（点分镜卡「A/B 选优」一次生成多版，挑最满意的一版）</label><select class="inp" id="cf_imgN"><option value="1">1（不启用 A/B，单图最快）</option><option value="2">2 版（A/B 对比，推荐）</option><option value="3">3 版（三选一，费用×3）</option></select></div>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
       <option value="6">6（一致性最强，角色多时才用，个别接口可能报错）</option></select></div>
@@ -699,6 +700,9 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
       <input type="checkbox" id="cf_subBg" style="width:18px;height:18px;flex:0 0 auto"><span>半透明黑底（背景乱时更好读，对标 MoneyPrinterTurbo 字幕底）</span>
     </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
+      <input type="checkbox" id="cf_srtCue" style="width:18px;height:18px;flex:0 0 auto"><span>逐句字幕（v2.9：台词按说话人/断句拆成多条字幕，时间按各句字数占比分配；对白带「角色名：」前缀）</span>
+    </label>
     <div class="hint" style="margin-top:6px">颜色用 ASS 的 <b>BGR</b> 顺序：白色 = <code>FFFFFF</code>，黄色 = <code>00FFFF</code>。改完重新导出合成包即可，不影响的 .srt 本身。</div>
 
     <div class="sec-t">用量与成本追踪（对标 ArcReel）</div>
@@ -769,6 +773,29 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   <div class="dlg-m" id="qaMsg" style="max-height:60vh;overflow:auto"></div>
   <div class="dlg-f">
     <button class="btn gh" id="qaClose">关闭</button>
+  </div>
+</div>
+
+<!-- v2.9：多版本候选 A/B 选优弹窗 -->
+<div class="dlgmask" id="cbMask"></div>
+<div class="dialog" id="cbBox" style="max-width:920px">
+  <div class="dlg-t" id="cbTitle">候选图选优</div>
+  <div class="dlg-m" id="cbMsg" style="max-height:66vh;overflow:auto"></div>
+  <div class="dlg-f">
+    <button class="btn gh" id="cbAllNo">全不要，重新生成</button>
+    <button class="btn gh" id="cbClose">关闭</button>
+  </div>
+</div>
+
+<!-- v2.9：台词逐句 cue 编辑弹窗 -->
+<div class="dlgmask" id="cueMask"></div>
+<div class="dialog" id="cueBox" style="max-width:880px">
+  <div class="dlg-t" id="cueTitle">台词逐句编辑</div>
+  <div class="dlg-m" id="cueMsg" style="max-height:62vh;overflow:auto"></div>
+  <div class="dlg-f">
+    <button class="btn gh" id="cueAdd">＋ 加一句</button>
+    <button class="btn gh" id="cueClose">取消</button>
+    <button class="btn" id="cueSave">保存回台词</button>
   </div>
 </div>
 
@@ -908,7 +935,10 @@ var DEFAULT_CFG = {
   /* v2.8：项目级「全局统一画风令牌」——对标 Jellyfish 的全局风格防漂移。
      填一段画风/年代/材质/光质描述，会固定注入每一个镜头（生图/生视频）的提示词尾部，
      让整部剧从第一镜到最后一镜保持同一视觉调性，而不是各镜自由发挥。 */
-  globalStyle:''
+  globalStyle:'',
+  /* v2.9：imgN = 「A/B 选优」一次生成的候选图数（2~3，1=不启用）；
+     srtCue = 导出字幕时按逐句 cue 拆条（说话人/情绪/断句结构化） */
+  imgN:1, srtCue:true
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1537,7 +1567,8 @@ function renderGenList(){
             '<div class="fld"><div class="mini">时长（秒）</div><input class="inp" type="number" data-f="时长秒" value="'+esc(num(s['时长秒'])||5)+'"></div>' +
             '<div class="fld"><div class="mini">光影 / 时间 / 天气</div><input class="inp" data-f="光影氛围" value="'+esc(s['光影氛围'])+'" placeholder="黄昏暖侧光，雨后微湿"></div>' +
           '</div>' +
-          '<div class="fld"><div class="mini">台词 / 旁白</div><input class="inp" data-f="台词旁白" value="'+esc(s['台词旁白'])+'"></div>' +
+          '<div class="fld"><div class="mini">台词 / 旁白（逐句格式：【情绪】角色名(OS)：台词；导出字幕与配音都会按句拆）</div><input class="inp" data-f="台词旁白" value="'+esc(s['台词旁白'])+'">' +
+            '<div style="margin-top:4px"><button class="btn gh sm" data-act="cueedit" data-id="'+s._id+'">逐句编辑（说话人 / 类型 / 情绪 / 断句）</button></div></div>' +
           '<div class="fld"><div class="mini">本镜负向提示（可选，追加到全局负向词后）</div><input class="inp" data-f="负向提示" value="'+esc(s['负向提示'])+'" placeholder="如：no glasses, no smile"></div>' +
           '<div class="fld"><div class="mini">提示词调试（查看最终送给模型的完整提示词，可改写后生效）</div>' +
             '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
@@ -1561,6 +1592,8 @@ function renderGenList(){
         '<div class="medcol">' +
           '<div class="media" style="aspect-ratio:'+ar+'">'+imgHtml+'</div>' +
           '<div class="mbtns"><button class="btn sm" data-act="img" data-id="'+s._id+'"'+(busy?' disabled':'')+'>'+(iu ? '重新生图' : '生成图片')+'</button>' +
+            '<button class="btn gh sm" data-act="imgcand" data-id="'+s._id+'"'+(busy?' disabled':'')+' title="一次生成多版候选图，弹出面板挑最满意的一版（候选数在设置里调）">A/B 选优</button>' +
+            (Array.isArray(s._imgCand) && s._imgCand.length ? '<button class="btn gh sm" data-act="pickcand" data-id="'+s._id+'" title="还有 '+s._imgCand.length+' 张候选图没挑，点开继续选">选图('+s._imgCand.length+')</button>' : '') +
             '<button class="btn gh sm" data-act="viewimg" data-id="'+s._id+'"'+(iu?'':' disabled')+'>看大图</button>' +
             '<button class="btn gh sm" data-act="lock" data-id="'+s._id+'"'+(iu?'':' disabled')+' style="'+(locked?'color:#B46B00;border-color:#F5D9A0':'')+'">'+(locked?'★ 基准帧':'☆ 标为满意')+'</button>' +
             (Array.isArray(s._imgHist) && s._imgHist.length ? '<button class="btn gh sm" data-act="rollimg" data-id="'+s._id+'" title="回退到上一版图片（当前图保留在历史里）">⇄ 上一版('+s._imgHist.length+')</button>' : '') +
@@ -1758,6 +1791,8 @@ function fillSettings(){
   if($('cf_multiView')) $('cf_multiView').checked = !!cfg.multiView;
   if($('cf_neg')) $('cf_neg').value = cfg.neg;
   if($('cf_globalStyle')) $('cf_globalStyle').value = cfg.globalStyle || '';
+  if($('cf_imgN')) $('cf_imgN').value = String(Math.min(3, Math.max(1, num(cfg.imgN) || 1)));
+  if($('cf_srtCue')) $('cf_srtCue').checked = cfg.srtCue !== false;
   if($('cf_ttsKey')) $('cf_ttsKey').value = cfg.ttsKey;
   if($('cf_ttsBase')) $('cf_ttsBase').value = cfg.ttsBase;
   if($('cf_ttsModel')) $('cf_ttsModel').value = cfg.ttsModel;
@@ -1817,6 +1852,8 @@ function readSettings(){
   if($('cf_multiView')) cfg.multiView = !!$('cf_multiView').checked;
   if($('cf_neg')) cfg.neg = $('cf_neg').value.trim();
   if($('cf_globalStyle')) cfg.globalStyle = $('cf_globalStyle').value.trim();
+  if($('cf_imgN')) cfg.imgN = Math.min(3, Math.max(1, num($('cf_imgN').value) || 1));
+  if($('cf_srtCue')) cfg.srtCue = !!$('cf_srtCue').checked;
   if($('cf_ttsKey')) cfg.ttsKey = $('cf_ttsKey').value.trim();
   if($('cf_ttsBase')) cfg.ttsBase = ($('cf_ttsBase').value.trim() || 'https://api.xiaomimimo.com/v1').replace(/\/+$/,'');
   if($('cf_ttsModel')) cfg.ttsModel = $('cf_ttsModel').value;
@@ -2217,6 +2254,91 @@ function markImageChanged(s){
   if(s['视频URL'] || s['口型视频URL']) s._imgNewer = true;
 }
 
+/* --- v2.9：多版本一次生成 A/B 选优（对标 MoneyPrinterTurbo / Jellyfish 的多候选工作流）---
+   一次并发生成 N 版候选图（N 在设置里配，2~3），弹出面板并排对比，
+   点「选它」才落到本镜当前图；没被选中的候选与当前图都会进入 _imgHist 版本历史，
+   与 v2.7 的 ⇄ 回退共用同一套历史，绝不静默覆盖任何一张已经花钱生成的图。 */
+function genImageCand(id){
+  var s = shotById(id); if(!s) return Promise.resolve();
+  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
+  var n = Math.min(3, Math.max(2, num(cfg.imgN) || 2));
+  state.busy[id] = true;
+  patchShot(id, { 图片状态:'生成中', 错误信息:'', 更新时间:nowStr() });
+  var jobs = [];
+  for(var i=0;i<n;i++) jobs.push(i);
+  return Promise.all(jobs.map(function(){
+    return apiPostAgnes(cfg.agnesBase + '/images/generations', buildImageBody(shotById(id) || s))
+      .then(function(r){
+        var j = parseJsonSafe(r.text);
+        if(r.status >= 400){
+          var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,160);
+          throw new Error('HTTP ' + r.status + ' ' + msg);
+        }
+        var urls = [];
+        if(j && Array.isArray(j.data)) j.data.forEach(function(d){
+          if(!d) return;
+          if(d.url) urls.push(d.url);
+          else if(d.b64_json) urls.push('data:image/png;base64,' + d.b64_json);
+        });
+        if(!urls.length) throw new Error('接口没有返回图片：' + (r.text || '').slice(0,120));
+        return urls;
+      });
+  })).then(function(arrs){
+    var urls = [];
+    arrs.forEach(function(a){ a.forEach(function(u){ if(urls.indexOf(u) === -1) urls.push(u); }); });
+    if(!urls.length) throw new Error('没有取到候选图');
+    var cur = shotById(id) || s;
+    cur._imgCand = urls;
+    patchShot(id, { 图片状态: cur['图片URL'] ? '已完成' : '未生成', 错误信息:'', 更新时间:nowStr() });
+    bumpUse('usedImg', urls.length);
+    openCandPanel(id);
+  }).catch(function(e){
+    console.error(e);
+    patchShot(id, { 图片状态:'失败', 错误信息:guessCorsMsg(e).slice(0,300), 更新时间:nowStr() });
+    toast('第 ' + s['镜号'] + ' 镜候选图生成失败');
+  }).then(function(){ delete state.busy[id]; refreshAll(); });
+}
+var cbShotId = '';
+function openCandPanel(id){
+  var s = shotById(id);
+  if(!s || !Array.isArray(s._imgCand) || !s._imgCand.length){ toast('没有待挑选的候选图'); return; }
+  cbShotId = id;
+  var ar = String(cfg.imgRatio || '9:16').replace(':', '/');
+  var grid = s._imgCand.map(function(u, i){
+    return '<div style="flex:1 1 0;min-width:150px;text-align:center">' +
+      '<div class="media" style="aspect-ratio:'+ar+'"><img src="'+esc(u)+'" referrerpolicy="no-referrer"></div>' +
+      '<button class="btn sm" style="margin-top:6px;width:100%" data-cbact="pick" data-i="'+i+'">✓ 选 ' + String.fromCharCode(65+i) + '</button>' +
+      '</div>';
+  }).join('');
+  $('cbTitle').textContent = '第 ' + s['镜号'] + ' 镜 · ' + s._imgCand.length + ' 版候选（A/B 选优）';
+  $('cbMsg').innerHTML = '<div style="display:flex;gap:10px;flex-wrap:wrap">' + grid + '</div>' +
+    '<div class="hint" style="margin-top:10px">选中的一版会成为本镜当前图，其余候选连同旧图自动进入版本历史（⇄ 上一版可随时切回）。若本镜已有视频，换图后需重新生成视频。</div>';
+  $('cbBox').classList.add('on'); $('cbMask').classList.add('on');
+}
+function closeCandPanel(){ $('cbBox').classList.remove('on'); $('cbMask').classList.remove('on'); cbShotId = ''; }
+function pickCand(i){
+  var id = cbShotId; if(!id) return;
+  var s = shotById(id);
+  if(!s || !Array.isArray(s._imgCand) || !s._imgCand[i]){ closeCandPanel(); return; }
+  var url = s._imgCand[i];
+  var oldUrl = s['图片URL'] || '';
+  var obj = { 图片URL:url, 图片状态:'已完成', 错误信息:'', 更新时间:nowStr() };
+  if(oldUrl && oldUrl !== url){
+    pushImgHist(s, oldUrl);
+    obj._imgHist = s._imgHist;
+    markImageChanged(s);
+    if(s['视频URL'] || s['口型视频URL']) obj._imgNewer = true;
+  }
+  s._imgCand = [];
+  closeCandPanel();
+  patchShot(id, obj);
+  toast('已选 ' + String.fromCharCode(65 + i) + ' 版为第 ' + s['镜号'] + ' 镜图片');
+}
+function discardCand(){
+  var id = cbShotId, s = id ? shotById(id) : null;
+  closeCandPanel();
+  if(s){ s._imgCand = []; toast('已放弃候选图，可点「A/B 选优」重新生成'); refreshAll(); }
+}
 /* --- 视频：agnes-video-2.5-flash keyframe --- */
 function buildVideoBody(s){
   /* v2.7：运镜/机位经受控词表映射为英文镜头语言，画面仍用中文描述，提升视频动态的确定性 */
@@ -2423,24 +2545,41 @@ function fetchAudioBuf(url){
     })
     .catch(function(){ return null; });
 }
-/* 生成一镜配音：角色音色 + 性格风格 + 本镜情绪 → 音频 → 时长回写镜头（音画同步） */
+/* 生成一镜配音：角色音色 + 性格风格 + 本镜情绪 → 音频 → 时长回写镜头（音画同步）
+   v2.9：台词按 cue 结构化消费——
+   ① 「说话角色」留空时自动取第一个对白 cue 的说话人，用对应角色音色；
+   ② 每句 cue 的【情绪】逐句注入 TTS 风格指令；
+   ③ 送给 TTS 的文本剥掉「角色名：」前缀（音色已区分说话人，不能把名字念出来），
+      多句用换行连接，天然形成句间停顿。 */
 function genAudio(id){
   var s = shotById(id);
   if(!s) return Promise.resolve();
   if(!cfg.ttsKey){ toast('请先在设置里填小米 TTS API Key'); openDrawer(); return Promise.resolve(); }
   var text = String(s['台词旁白'] || '').trim();
   if(!text){ toast('这一镜还没写台词 / 旁白'); return Promise.resolve(); }
+  var cues = parseCues(text);
   var speaker = String(s['说话角色'] || '').trim();
+  if(!speaker){
+    for(var ci=0; ci<cues.length; ci++){
+      if(cues[ci].type === 'dlg' && cues[ci].speaker && cues[ci].speaker !== '旁白'){ speaker = cues[ci].speaker; break; }
+    }
+  }
   var role = speaker ? assetByName(speaker, '角色') : null;
   var voice = (role && role['TTS音色']) || (speaker ? cfg.ttsVoice : cfg.ttsNarr);
   var style = (role && role['TTS风格']) ? String(role['TTS风格']) : '';
   if(role && role['性格语气']) style = (style ? style + '；' : '') + '角色性格：' + role['性格语气'];
   if(String(s['角色情绪'] || '').trim()) style = (style ? style + '；' : '') + '本镜情绪：' + String(s['角色情绪']).trim();
   if(role && role['语速']) style = (style ? style + '；' : '') + '语速' + role['语速'];
+  var emoBits = [];
+  cues.forEach(function(c, i){
+    if(c.emotion) emoBits.push('第' + (i + 1) + '句' + (c.speaker && c.speaker !== '旁白' ? '（' + c.speaker + '）' : '') + '用「' + c.emotion + '」的语气念');
+  });
+  if(emoBits.length) style = (style ? style + '；' : '') + '逐句情绪：' + emoBits.join('，');
+  var ttsText = cues.length ? cues.map(function(c){ return c.text; }).join('\n') : text;
   state.busy[id] = true;
   return patchShot(id, { 配音状态:'生成中', 错误信息:'', 更新时间:nowStr() })
     .then(function(){
-      return apiPostTts(cfg.ttsBase.replace(/\/+$/,'') + '/chat/completions', cfg.ttsKey, buildTtsBody(text, voice, style));
+      return apiPostTts(cfg.ttsBase.replace(/\/+$/,'') + '/chat/completions', cfg.ttsKey, buildTtsBody(ttsText, voice, style));
     })
     .then(function(r){
       var j = parseJsonSafe(r.text);
@@ -2540,6 +2679,128 @@ function testTts(){
     });
 }
 
+/* ================= v2.9：台词逐句 cue 结构化 =================
+   「台词旁白」仍是唯一落库字段（向后兼容，老项目零迁移）；cue 是它的结构化视图，
+   文本序列化约定（一行一句）：
+     【情绪】角色名：台词        → 对白（dlg）
+     【情绪】角色名(OS)：台词    → 画外音（off screen）
+     【情绪】角色名(VO)：台词    → 内心独白（voice over）
+     【情绪】旁白：台词 / 纯文本 → 旁白（narr）
+   消费方：① 导出字幕逐句拆条（时间按各句字数占比分配）
+          ② 配音按句断句 + 每句情绪注入 TTS 风格 + 说话人留空时自动取第一个对白的角色音色
+          ③ 质检：一镜多说话人告警、超长句断句提示 */
+function parseCues(text){
+  var raw = String(text || '').trim();
+  if(!raw) return [];
+  var cues = [];
+  raw.split(/\r?\n/).forEach(function(ln){
+    ln = ln.trim();
+    if(!ln) return;
+    var m = ln.match(/^【([^【】]{1,16})】\s*/);
+    var emo = m ? m[1] : '';
+    if(m) ln = ln.slice(m[0].length);
+    var sp = ln.match(/^([^【】：:（）()]{1,12}?)(?:\((OS|VO)\)|（(OS|VO)）)?\s*[：:]\s*(.+)$/);
+    if(sp && sp[4] && sp[1].trim()){
+      var speaker = sp[1].trim();
+      var tag = (sp[2] || sp[3] || '').toLowerCase();
+      cues.push({ speaker:speaker, type:(speaker === '旁白' ? 'narr' : (tag || 'dlg')), emotion:emo, text:sp[4].trim() });
+    } else {
+      cues.push({ speaker:'旁白', type:'narr', emotion:emo, text:ln });
+    }
+  });
+  /* 整段无换行、无说话人前缀的纯文本：自动按句号等标点拆成多条旁白 cue，方便字幕逐句 */
+  if(cues.length === 1 && cues[0].type === 'narr' && !cues[0].emotion && cues[0].text.length > 22){
+    var segs = cues[0].text.split(/([。！？；])/), buf = '', parts = [];
+    for(var i=0;i<segs.length;i++){
+      buf += segs[i];
+      if(/^[。！？；]$/.test(segs[i]) || i === segs.length - 1){ if(buf.trim()) parts.push(buf.trim()); buf = ''; }
+    }
+    if(parts.length > 1) cues = parts.map(function(x){ return { speaker:'旁白', type:'narr', emotion:'', text:x }; });
+  }
+  return cues;
+}
+function fmtCues(cues){
+  return (cues || []).map(function(c){
+    var t = String(c.type || '').toLowerCase();
+    var head = '';
+    if(c.emotion) head += '【' + c.emotion + '】';
+    if(t === 'narr' && (!c.speaker || c.speaker === '旁白')){
+      if(c.emotion) head += '旁白：';
+    } else {
+      head += (c.speaker || '旁白') + (t === 'os' ? '(OS)' : (t === 'vo' ? '(VO)' : '')) + '：';
+    }
+    return head + String(c.text || '').trim();
+  }).filter(function(x){ return x; }).join('\n');
+}
+/* 一句 cue 的预计念白秒数（中文按字，英文/数字按 2 字符 1 字折算），保底 0.6 秒 */
+function cueEst(c, rate){
+  var t = String(c.text || '');
+  var cn = (t.match(/[\u4e00-\u9fa5]/g) || []).length;
+  var other = (t.match(/[A-Za-z0-9]/g) || []).length / 2;
+  return Math.max(0.6, (cn + other) / (num(rate) || 4.5));
+}
+/* 字幕里一条 cue 的说话人前缀 */
+function cuePrefix(c){
+  var t = String(c.type || '').toLowerCase();
+  if(t === 'dlg') return c.speaker + '：';
+  if(t === 'os') return c.speaker + '(OS)：';
+  if(t === 'vo') return c.speaker + '(VO)：';
+  return '';
+}
+
+/* ---------- 逐句 cue 编辑器 ---------- */
+var cueShotId = '';
+function cueRowHtml(c){
+  var t = c.type || 'narr';
+  var opts = [['dlg','对白'],['narr','旁白'],['os','OS 画外'],['vo','VO 内心']].map(function(o){
+    return '<option value="' + o[0] + '"' + (t === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+  }).join('');
+  return '<div class="cue-row" style="display:grid;grid-template-columns:110px 100px 110px 1fr 34px;gap:6px;align-items:center;margin-bottom:6px">' +
+    '<input class="inp" data-cf="spk" list="cueRoleList" value="' + esc(c.speaker === '旁白' ? '' : (c.speaker || '')) + '" placeholder="说话人">' +
+    '<select class="inp" data-cf="type">' + opts + '</select>' +
+    '<input class="inp" data-cf="emo" value="' + esc(c.emotion || '') + '" placeholder="情绪，如：强忍眼泪">' +
+    '<input class="inp" data-cf="txt" value="' + esc(c.text || '') + '" placeholder="这一句的台词">' +
+    '<button class="btn gh sm" data-cact="delrow" title="删除这一句">✕</button>' +
+    '</div>';
+}
+function openCueBox(id){
+  var s = shotById(id);
+  if(!s){ toast('找不到这一镜'); return; }
+  cueShotId = id;
+  var roles = [];
+  state.assets.forEach(function(a){ if(a['类型'] === '角色' && a['名称']) roles.push(String(a['名称']).trim()); });
+  var cues = parseCues(s['台词旁白']);
+  if(!cues.length) cues = [{ speaker:'', type:'dlg', emotion:'', text:'' }];
+  $('cueTitle').textContent = '第 ' + s['镜号'] + ' 镜 · 台词逐句编辑（' + cues.length + ' 句）';
+  $('cueMsg').innerHTML =
+    '<div class="hint" style="margin-bottom:8px">一行一句。<b>说话人</b>留空 = 旁白；<b>类型</b>：对白 / 旁白 / OS 画外音 / VO 内心独白；<b>情绪</b>会逐句注入配音，并影响质检的时长估算。保存后以 <b>【情绪】角色名(OS)：台词</b> 格式回写「台词 / 旁白」字段，导出字幕逐句拆条、配音按句断句。</div>' +
+    '<datalist id="cueRoleList">' + roles.map(function(r){ return '<option value="' + esc(r) + '">'; }).join('') + '</datalist>' +
+    '<div id="cueRows">' + cues.map(cueRowHtml).join('') + '</div>';
+  $('cueBox').classList.add('on'); $('cueMask').classList.add('on');
+}
+function closeCueBox(){ $('cueBox').classList.remove('on'); $('cueMask').classList.remove('on'); cueShotId = ''; }
+function collectCues(){
+  var box = $('cueRows');
+  if(!box) return [];
+  var rows = box.querySelectorAll('.cue-row'), out = [];
+  for(var i=0;i<rows.length;i++){
+    var get = function(f){ var el = rows[i].querySelector('[data-cf="' + f + '"]'); return el ? String(el.value || '').trim() : ''; };
+    var txt = get('txt');
+    if(!txt) continue;
+    out.push({ speaker:get('spk') || '旁白', type:get('type') || 'narr', emotion:get('emo'), text:txt });
+  }
+  return out;
+}
+function saveCueBox(){
+  var id = cueShotId;
+  if(!id) return;
+  var cues = collectCues();
+  if(!cues.length){ toast('至少保留一句台词'); return; }
+  closeCueBox();
+  patchShot(id, { 台词旁白:fmtCues(cues), 更新时间:nowStr() });
+  toast('已保存 ' + cues.length + ' 句台词（逐句结构化）');
+}
+
 /* ================= 字幕 / 整轨配音导出 ================= */
 function srtTime(t){
   var h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
@@ -2555,21 +2816,40 @@ function shotDur(s){
 }
 function exportSrt(){
   if(!state.shots.length){ toast('还没有分镜'); return; }
-  var t = 0, out = [], n = 0;
+  var rate = num(cfg.cnRate) || 4.5;
+  var t = 0, out = [], n = 0, cueTotal = 0;
   state.shots.forEach(function(s){
     var d = shotDur(s), text = String(s['台词旁白'] || '').trim();
     if(text){
-      n++;
-      out.push(String(n));
-      out.push(srtTime(t) + ' --> ' + srtTime(t + d));
-      out.push(text);
-      out.push('');
+      /* v2.9：逐句 cue 拆条——一句一条字幕，时间按各句预计语速占比在本镜时长内分配 */
+      var cues = (cfg.srtCue !== false) ? parseCues(text) : [];
+      if(cues.length <= 1){
+        n++;
+        out.push(String(n));
+        out.push(srtTime(t) + ' --> ' + srtTime(t + d));
+        out.push(text);
+        out.push('');
+      } else {
+        var ests = cues.map(function(c){ return cueEst(c, rate); });
+        var sum = 0; ests.forEach(function(e){ sum += e; });
+        var ct = t;
+        cues.forEach(function(c, i){
+          var cd = sum > 0 ? d * ests[i] / sum : d / cues.length;
+          if(i === cues.length - 1) cd = t + d - ct;   /* 尾句兜到镜末，避免累计误差留缝 */
+          n++; cueTotal++;
+          out.push(String(n));
+          out.push(srtTime(ct) + ' --> ' + srtTime(ct + cd));
+          out.push(cuePrefix(c) + c.text);
+          out.push('');
+          ct += cd;
+        });
+      }
     }
     t += d;
   });
   if(!n){ toast('没有任何台词，无法生成字幕'); return; }
   download('分镜字幕.srt', out.join('\n'), 'text/plain;charset=utf-8');
-  toast('字幕已导出，共 ' + n + ' 条');
+  toast('字幕已导出，共 ' + n + ' 条' + (cueTotal > n ? '（按逐句 cue 拆分）' : ''));
 }
 function encodeWav(buffer){
   var sr = buffer.sampleRate, len = buffer.length, bytes = 44 + len*2;
@@ -3091,6 +3371,19 @@ function auditShots(){
         issues.push({ lv:'info', id:id, no:no, act:'dur', sec:Math.min(12, Math.max(4, Math.ceil(need + 0.5))),
           text:'台词只需约 ' + need.toFixed(1) + ' 秒，镜头给了 ' + d.toFixed(1) + ' 秒，成片会拖 ' + (d - need).toFixed(1) + ' 秒' });
       }
+    }
+    /* 2b. v2.9：逐句 cue 质检 —— 一镜多说话人 / 超长句断句 */
+    if(line){
+      var qc = parseCues(line), spks = {}, longHit = false;
+      qc.forEach(function(c){
+        if(c.speaker && c.speaker !== '旁白') spks[c.speaker] = 1;
+        if(!longHit && (c.text.match(/[\u4e00-\u9fa5]/g) || []).length > 20) longHit = true;
+      });
+      var spkNames = Object.keys(spks);
+      if(spkNames.length > 1)
+        issues.push({ lv:'warn', id:id, no:no, text:'一镜里出现了 ' + spkNames.length + ' 个说话人（' + spkNames.join('、') + '），配音只有一种音色会读串。建议拆成多镜，或点「逐句编辑」只保留一个说话人' });
+      if(longHit)
+        issues.push({ lv:'info', id:id, no:no, text:'有一句超过 20 字的长台词，字幕一行放不下、配音也容易赶。建议在「逐句编辑」里断句或删减' });
     }
     /* 3. 一致性资产缺口 */
     splitNames(s['出场角色']).forEach(function(n){
@@ -4369,6 +4662,9 @@ function bind(){
         break;
       }
       case 'rollimg': rollbackImg(id); break;
+      case 'imgcand': genImageCand(id); break;
+      case 'pickcand': openCandPanel(id); break;
+      case 'cueedit': openCueBox(id); break;
       case 'delasset': {
         var da = null;
         for(var ai=0; ai<state.assets.length; ai++){ if(state.assets[ai]._id === id) da = state.assets[ai]; }
@@ -4565,6 +4861,36 @@ function bind(){
     if($('pmVid')) $('pmVid').value = '';
   });
   $('pmMask').addEventListener('click', closePromptBox);
+
+  /* v2.9：候选图 A/B 选优弹窗 */
+  $('cbClose').addEventListener('click', closeCandPanel);
+  $('cbMask').addEventListener('click', closeCandPanel);
+  $('cbAllNo').addEventListener('click', discardCand);
+  $('cbMsg').addEventListener('click', function(ev){
+    var b = ev.target;
+    if(b && b.getAttribute && b.getAttribute('data-cbact') === 'pick') pickCand(num(b.getAttribute('data-i')));
+  });
+
+  /* v2.9：台词逐句 cue 编辑弹窗 */
+  $('cueSave').addEventListener('click', saveCueBox);
+  $('cueClose').addEventListener('click', closeCueBox);
+  $('cueMask').addEventListener('click', closeCueBox);
+  $('cueAdd').addEventListener('click', function(){
+    var box = $('cueRows');
+    if(!box) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = cueRowHtml({ speaker:'', type:'dlg', emotion:'', text:'' });
+    box.appendChild(tmp.firstChild);
+    var inputs = box.querySelectorAll('.cue-row:last-child input[data-cf="txt"]');
+    if(inputs.length) inputs[0].focus();
+  });
+  $('cueMsg').addEventListener('click', function(ev){
+    var b = ev.target;
+    if(b && b.getAttribute && b.getAttribute('data-cact') === 'delrow'){
+      var row = b.parentNode;
+      if(row && row.parentNode) row.parentNode.removeChild(row);
+    }
+  });
 
   /* 质检报告弹窗 */
   $('qaClose').addEventListener('click', closeQa);
