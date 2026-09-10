@@ -567,6 +567,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <div class="fld" data-page-node-id="ZPhA1qeq1QU4DhqwY63NDq"><label data-page-node-id="mUai2OeKxgpllm5oRHWHWi">视频分辨率</label><input class="inp" id="cf_vidSize" value="720P" readonly data-page-node-id="a6aMdhmFud3sENkvnOfnRL"></div>
     </div>
     <div class="fld"><label>生图候选数（点分镜卡「A/B 选优」一次生成多版，挑最满意的一版）</label><select class="inp" id="cf_imgN"><option value="1">1（不启用 A/B，单图最快）</option><option value="2">2 版（A/B 对比，推荐）</option><option value="3">3 版（三选一，费用×3）</option></select></div>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_batchCand" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>批量生图 / 长篇流水线也按候选数生成（v2.10：批量时不出面板，候选存着，跑完逐镜点「选图(N)」挑，费用×候选数）</span>
+    </label>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
       <option value="6">6（一致性最强，角色多时才用，个别接口可能报错）</option></select></div>
@@ -630,6 +634,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_ttsSync" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>配音完成后<b>自动把镜头时长对齐到语音长度</b>（音画同步的关键，会限制在 4–12 秒内）</span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_cueTts" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>逐句配音（v2.10：每句 cue 按<b>自己说话人的角色音色</b>分别合成再拼接，解决「一镜多说话人单音色读串」；代价是每句一次请求，且成品落本机为 wav，体积远大于 mp3）</span>
     </label>
     <button class="btn gh sm" id="btnTestTts">测试 TTS 连通性</button>
     <div class="result" id="testTtsResult"></div>
@@ -937,8 +945,10 @@ var DEFAULT_CFG = {
      让整部剧从第一镜到最后一镜保持同一视觉调性，而不是各镜自由发挥。 */
   globalStyle:'',
   /* v2.9：imgN = 「A/B 选优」一次生成的候选图数（2~3，1=不启用）；
-     srtCue = 导出字幕时按逐句 cue 拆条（说话人/情绪/断句结构化） */
-  imgN:1, srtCue:true
+     srtCue = 导出字幕时按逐句 cue 拆条（说话人/情绪/断句结构化）
+     v2.10：batchCand = 批量生图/流水线也按候选数生成（静默存候选，跑完逐镜挑）；
+     cueTts = 逐句 TTS（每句按自己的角色音色合成后拼接，解决一镜多说话人） */
+  imgN:1, srtCue:true, batchCand:false, cueTts:false
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1030,7 +1040,7 @@ function costEstimateTxt(list, opts){
   var imgs = 0, vids = 0, secs = 0, auds = 0, lips = 0;
   list.forEach(function(s){
     var is = s['图片状态'] || '未生成', vs = s['视频状态'] || '未生成';
-    if(opts.img && (is === '未生成' || is === '失败')) imgs++;
+    if(opts.img && (is === '未生成' || is === '失败')) imgs += (num(opts.imgN) || 1);
     if(opts.vid && (vs === '未生成' || vs === '失败') && s['图片URL']){ vids++; secs += Math.min(12, Math.max(4, num(s['时长秒']) || 5)); }
     if(opts.audio && String(s['台词旁白'] || '').trim() && (s['配音状态'] || '未生成') !== '已完成') auds++;
     if(opts.lip && (s['口型风险'] || lipRiskOf(s)) === '高' && s['视频URL']) lips++;
@@ -1793,6 +1803,8 @@ function fillSettings(){
   if($('cf_globalStyle')) $('cf_globalStyle').value = cfg.globalStyle || '';
   if($('cf_imgN')) $('cf_imgN').value = String(Math.min(3, Math.max(1, num(cfg.imgN) || 1)));
   if($('cf_srtCue')) $('cf_srtCue').checked = cfg.srtCue !== false;
+  if($('cf_batchCand')) $('cf_batchCand').checked = !!cfg.batchCand;
+  if($('cf_cueTts')) $('cf_cueTts').checked = !!cfg.cueTts;
   if($('cf_ttsKey')) $('cf_ttsKey').value = cfg.ttsKey;
   if($('cf_ttsBase')) $('cf_ttsBase').value = cfg.ttsBase;
   if($('cf_ttsModel')) $('cf_ttsModel').value = cfg.ttsModel;
@@ -1854,6 +1866,8 @@ function readSettings(){
   if($('cf_globalStyle')) cfg.globalStyle = $('cf_globalStyle').value.trim();
   if($('cf_imgN')) cfg.imgN = Math.min(3, Math.max(1, num($('cf_imgN').value) || 1));
   if($('cf_srtCue')) cfg.srtCue = !!$('cf_srtCue').checked;
+  if($('cf_batchCand')) cfg.batchCand = !!$('cf_batchCand').checked;
+  if($('cf_cueTts')) cfg.cueTts = !!$('cf_cueTts').checked;
   if($('cf_ttsKey')) cfg.ttsKey = $('cf_ttsKey').value.trim();
   if($('cf_ttsBase')) cfg.ttsBase = ($('cf_ttsBase').value.trim() || 'https://api.xiaomimimo.com/v1').replace(/\/+$/,'');
   if($('cf_ttsModel')) cfg.ttsModel = $('cf_ttsModel').value;
@@ -2258,10 +2272,10 @@ function markImageChanged(s){
    一次并发生成 N 版候选图（N 在设置里配，2~3），弹出面板并排对比，
    点「选它」才落到本镜当前图；没被选中的候选与当前图都会进入 _imgHist 版本历史，
    与 v2.7 的 ⇄ 回退共用同一套历史，绝不静默覆盖任何一张已经花钱生成的图。 */
-function genImageCand(id){
+function genImageCand(id, silent, nOverride){
   var s = shotById(id); if(!s) return Promise.resolve();
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
-  var n = Math.min(3, Math.max(2, num(cfg.imgN) || 2));
+  var n = Math.min(3, Math.max(2, num(nOverride) || num(cfg.imgN) || 2));
   state.busy[id] = true;
   patchShot(id, { 图片状态:'生成中', 错误信息:'', 更新时间:nowStr() });
   var jobs = [];
@@ -2291,12 +2305,19 @@ function genImageCand(id){
     cur._imgCand = urls;
     patchShot(id, { 图片状态: cur['图片URL'] ? '已完成' : '未生成', 错误信息:'', 更新时间:nowStr() });
     bumpUse('usedImg', urls.length);
+    /* v2.10：批量/流水线静默模式 —— 不弹面板打断跑批，候选存着，跑完在镜卡「选图(N)」逐镜挑 */
+    if(silent) return;
     openCandPanel(id);
   }).catch(function(e){
     console.error(e);
     patchShot(id, { 图片状态:'失败', 错误信息:guessCorsMsg(e).slice(0,300), 更新时间:nowStr() });
     toast('第 ' + s['镜号'] + ' 镜候选图生成失败');
   }).then(function(){ delete state.busy[id]; refreshAll(); });
+}
+/* 生图统一入口：批量/流水线按设置决定是否走候选（静默），单镜按钮永远走单图 */
+function genShotImage(id){
+  var n = Math.min(3, Math.max(1, num(cfg.imgN) || 1));
+  return (cfg.batchCand && n > 1) ? genImageCand(id, true, n) : genImage(id);
 }
 var cbShotId = '';
 function openCandPanel(id){
@@ -2545,6 +2566,128 @@ function fetchAudioBuf(url){
     })
     .catch(function(){ return null; });
 }
+/* ---------- v2.10：cue 级 TTS（逐句各自音色，解决「一镜多说话人读串」） ---------- */
+/* 每一句 cue 单独决定音色与风格：对白用该角色卡的音色，旁白用旁白音色，
+   OS/VO 用同一角色的音色但加画外 / 内心独白的演法提示。 */
+function cueVoiceStyle(cue, s){
+  var t = String(cue.type || '').toLowerCase();
+  var spk = (t === 'narr') ? '' : (cue.speaker || '');
+  var isNarr = !spk || spk === '旁白';
+  var role = isNarr ? null : assetByName(spk, '角色');
+  var voice = (role && role['TTS音色']) || (isNarr ? cfg.ttsNarr : cfg.ttsVoice);
+  var style = (role && role['TTS风格']) ? String(role['TTS风格']) : '';
+  if(role && role['性格语气']) style = (style ? style + '；' : '') + '角色性格：' + role['性格语气'];
+  if(role && role['语速']) style = (style ? style + '；' : '') + '语速' + role['语速'];
+  if(t === 'os') style = (style ? style + '；' : '') + '这是画外音（OS）：人在画面外说话，像隔着一点距离，音量自然';
+  if(t === 'vo') style = (style ? style + '；' : '') + '这是内心独白（VO）：贴近麦克风的轻声自语，不要字正腔圆地念';
+  if(cue.emotion) style = (style ? style + '；' : '') + '本句情绪：' + cue.emotion;
+  else if(String(s['角色情绪'] || '').trim()) style = (style ? style + '；' : '') + '本镜情绪：' + String(s['角色情绪']).trim();
+  return { voice:voice, style:style };
+}
+/* 拼接多段音频：句间插入短静音，避免两句黏在一起 */
+function concatAudioBufs(bufs, gapSec){
+  var list = (bufs || []).filter(function(b){ return !!b && b.length > 0; });
+  if(!list.length) return null;
+  var ctx = audioCtx();
+  if(!ctx) return list.length === 1 ? list[0] : null;
+  var sr = list[0].sampleRate, ch = list[0].numberOfChannels;
+  var gapLen = Math.max(0, Math.round((gapSec || 0) * sr));
+  var total = 0, i;
+  for(i=0;i<list.length;i++) total += list[i].length + (i ? gapLen : 0);
+  var out = ctx.createBuffer(ch, total, sr);
+  for(var c=0;c<ch;c++){
+    var dst = out.getChannelData(c), off = 0;
+    for(i=0;i<list.length;i++){
+      if(i) off += gapLen;
+      var src = list[i].getChannelData(Math.min(c, list[i].numberOfChannels - 1));
+      for(var k=0;k<list[i].length;k++) dst[off + k] = src[k];
+      off += list[i].length;
+    }
+  }
+  return out;
+}
+/* 降到 24k 采样率再落盘：逐句配音是 wav，体积比 mp3 大得多，必须瘦身 */
+function resampleBuf(buf, sr){
+  if(!buf || buf.sampleRate <= sr) return Promise.resolve(buf);
+  try{
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if(!OC) return Promise.resolve(buf);
+    var oc = new OC(buf.numberOfChannels, Math.ceil(buf.duration * sr), sr);
+    var src = oc.createBufferSource();
+    src.buffer = buf; src.connect(oc.destination); src.start();
+    return Promise.resolve(oc.startRendering()).then(function(b){ return b || buf; }, function(){ return buf; });
+  }catch(e){ return Promise.resolve(buf); }
+}
+/* ArrayBuffer → base64（分块拼接，避免大数组 apply 爆栈） */
+function abToB64(ab){
+  var bytes = new Uint8Array(ab), CH = 0x8000, bin = '';
+  for(var i=0;i<bytes.length;i += CH){
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(bin);
+}
+/* 逐句合成 + 拼接：一镜里林小满说一句、旁白接一句、陈老师再回一句，
+   各自用自己的音色念出来，而不是一个音色从头念到尾 */
+function genAudioCue(id){
+  var s = shotById(id);
+  if(!s) return Promise.resolve();
+  if(!cfg.ttsKey){ toast('请先在设置里填小米 TTS API Key'); openDrawer(); return Promise.resolve(); }
+  var text = String(s['台词旁白'] || '').trim();
+  if(!text){ toast('这一镜还没写台词 / 旁白'); return Promise.resolve(); }
+  var cues = parseCues(text);
+  if(cues.length < 2){ return genAudio(id); }
+  state.busy[id] = true;
+  return patchShot(id, { 配音状态:'生成中', 错误信息:'', 更新时间:nowStr() })
+    .then(function(){
+      /* 串行逐句请求：不并发，避免瞬间打满 TTS 配额 */
+      var chain = Promise.resolve([]);
+      cues.forEach(function(c, idx){
+        chain = chain.then(function(acc){
+          var vs = cueVoiceStyle(c, s);
+          return apiPostTts(cfg.ttsBase.replace(/\/+$/,'') + '/chat/completions', cfg.ttsKey, buildTtsBody(c.text, vs.voice, vs.style))
+            .then(function(r){
+              var j = parseJsonSafe(r.text);
+              if(r.status >= 400){
+                var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,160);
+                throw new Error('第 ' + (idx + 1) + ' 句 HTTP ' + r.status + ' ' + msg);
+              }
+              var b64 = pickAudioB64(j), url = pickAudioUrl(j);
+              if(b64) return decodeAudioBuf(b64).then(function(b){ if(b) acc.push(b); return acc; });
+              if(url) return fetchAudioBuf(url).then(function(b){ if(b) acc.push(b); return acc; });
+              throw new Error('第 ' + (idx + 1) + ' 句没取到音频数据');
+            });
+        });
+      });
+      return chain;
+    })
+    .then(function(bufs){
+      if(!bufs.length) throw new Error('逐句配音没有取到任何音频');
+      bumpUse('usedTts', bufs.length);
+      return concatAudioBufs(bufs, 0.12);
+    })
+    .then(function(out){
+      if(!out) throw new Error('逐句音频拼接失败（浏览器不支持音频解码时无法拼接）');
+      return resampleBuf(out, 24000);
+    })
+    .then(function(out){
+      var ab = encodeWav(out);
+      var b64 = abToB64(ab);
+      var dur = out.duration;
+      if(!audSave(id, b64, 'audio/wav', dur)) throw new Error('本机音频存储已满：逐句配音存的是 wav，先导出整轨配音再清理');
+      var eff = (cfg.ttsSync && dur > 0) ? Math.min(12, Math.max(4, Math.ceil(dur))) : dur;
+      var patch = { 音频URL:'local', 音频时长:eff, 配音状态:'已完成', 错误信息:'', 更新时间:nowStr() };
+      if(cfg.ttsSync && dur > 0) patch['时长秒'] = eff;
+      patchShot(id, patch);
+      toast('第 ' + s['镜号'] + ' 镜逐句配音完成（' + cues.length + ' 句 / ' + dur.toFixed(1) + ' 秒）');
+    })
+    .catch(function(e){
+      console.error(e);
+      patchShot(id, { 配音状态:'失败', 错误信息:guessCorsMsg(e).slice(0,300), 更新时间:nowStr() });
+      toast('第 ' + s['镜号'] + ' 镜逐句配音失败');
+    })
+    .then(function(){ delete state.busy[id]; refreshAll(); });
+}
+
 /* 生成一镜配音：角色音色 + 性格风格 + 本镜情绪 → 音频 → 时长回写镜头（音画同步）
    v2.9：台词按 cue 结构化消费——
    ① 「说话角色」留空时自动取第一个对白 cue 的说话人，用对应角色音色；
@@ -2558,6 +2701,8 @@ function genAudio(id){
   var text = String(s['台词旁白'] || '').trim();
   if(!text){ toast('这一镜还没写台词 / 旁白'); return Promise.resolve(); }
   var cues = parseCues(text);
+  /* v2.10：开了「逐句配音」且本镜有多句 → 每句按各自说话人的音色分别合成再拼接 */
+  if(cfg.cueTts && cues.length > 1) return genAudioCue(id);
   var speaker = String(s['说话角色'] || '').trim();
   if(!speaker){
     for(var ci=0; ci<cues.length; ci++){
@@ -3381,7 +3526,7 @@ function auditShots(){
       });
       var spkNames = Object.keys(spks);
       if(spkNames.length > 1)
-        issues.push({ lv:'warn', id:id, no:no, text:'一镜里出现了 ' + spkNames.length + ' 个说话人（' + spkNames.join('、') + '），配音只有一种音色会读串。建议拆成多镜，或点「逐句编辑」只保留一个说话人' });
+        issues.push({ lv:'warn', id:id, no:no, text:'一镜里出现了 ' + spkNames.length + ' 个说话人（' + spkNames.join('、') + '），单音色配音会读串。建议：拆成多镜，或在设置里开「逐句配音」让每句按各自角色的音色合成' });
       if(longHit)
         issues.push({ lv:'info', id:id, no:no, text:'有一句超过 20 字的长台词，字幕一行放不下、配音也容易赶。建议在「逐句编辑」里断句或删减' });
     }
@@ -3660,21 +3805,29 @@ function batch(kind){
   });
   if(!list.length){ toast(kind === 'img' ? '没有待生成图片的镜头' : '没有待生成视频的镜头'); return; }
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
-  var est = costEstimateTxt(list, kind === 'img' ? { img:1 } : { vid:1 });
+  /* v2.10：批量也可按候选数生成（静默，不弹面板打断跑批） */
+  var n = Math.min(3, Math.max(1, num(cfg.imgN) || 1));
+  var multi = (kind === 'img') && !!cfg.batchCand && n > 1;
+  var est = costEstimateTxt(list, kind === 'img' ? { img:1, imgN: (multi ? n : 1) } : { vid:1 });
   var conc = Math.max(1, Math.min(8, num(cfg.conc) || 1));
-  askConfirm((est || ('共 ' + list.length + ' 个镜头。')) + '（并发 ' + conc + ' 路' +
+  askConfirm((est || ('共 ' + list.length + ' 个镜头。')) +
+    (multi ? '每镜 ' + n + ' 版候选（跑完在镜卡点「选图(' + n + ')」逐镜挑）' : '') +
+    '（并发 ' + conc + ' 路' +
     (num(cfg.retry) > 0 ? '，失败自动重试 ' + num(cfg.retry) + ' 次' : '') + '）确定开始批量生成？', '开始')
     .then(function(ok){
       if(!ok) return;
       toast('开始批量处理 ' + list.length + ' 个镜头（并发 ' + conc + '）…');
       state.stopBatch = false;
       runPool(list, function(s){
-        if(kind === 'img') return genImage(s._id);
+        if(kind === 'img') return genShotImage(s._id);
         if(!s['图片URL']) return Promise.resolve();
         return genVideo(s._id);
       }, function(done, total){
         toast('批量进度 ' + done + '/' + total);
-      }).then(function(){ toast('批量任务已全部完成'); });
+      }).then(function(){
+        var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
+        toast(pend ? ('批量完成：' + pend + ' 个镜头的候选图待挑选，点镜卡「选图(N)」') : '批量任务已全部完成');
+      });
     });
 }
 function retryFailed(){
@@ -3829,10 +3982,14 @@ function buildSplitSys(n, sec, style){
     '4) shot_size 必须是「远景/全景/中景/近景/特写/大特写」之一，按叙事节奏分布，不要连续多镜同景别；' +
     '5) speaker 写这句台词谁说的，必须是 characters 里的名字之一；纯旁白或无人说话填「旁白」；' +
     '6) emotion 写这一镜人物情绪与表演（8-16 字中文），会同时喂给画面和配音；' +
+    '10) line 必须写成逐句结构化格式（系统会按它拆字幕、分角色配音）：一句一行，多句用 \\n 分隔；' +
+        '对白写「角色名：台词」，旁白写「旁白：台词」或直接写正文，画外音写「角色名(OS)：台词」，内心独白写「角色名(VO)：台词」；' +
+        '需要情绪时在最前面加「【情绪】」，如「【强忍眼泪】林小满：老师，我真不是故意的。」；' +
+        '单句尽量不超过 20 字，太长了就断成两句（换行），不要把一整段塞进一个 line；' +
     '7) 重要：承载台词的镜头尽量用「过肩、侧脸、背身、听者反应、手部或物件特写、远景」，尽量少用正面口部特写 —— AI 视频对不上嘴型；' +
     '8) lighting 写这一镜的光影 / 时间 / 天气（6-16 字中文，如「黄昏暖侧光，雨后微湿」「深夜，冷白顶光」），同一时段同一地点的镜头要保持一致，会同时喂给画面和视频；' +
     '9) 只输出严格 JSON 数组，不要解释文字，不要代码块围栏。格式：' +
-    '[{"shot":1,"location":"场景名","characters":["角色名"],"shot_size":"中景","speaker":"角色名或旁白","emotion":"紧张，攥紧书包带","scene":"中文画面描述","prompt":"英文图像生成提示词","camera":"运镜","line":"台词或旁白","lighting":"黄昏暖侧光","seconds":' + sec + '}]';
+    '[{"shot":1,"location":"场景名","characters":["角色名"],"shot_size":"中景","speaker":"角色名或旁白","emotion":"紧张，攥紧书包带","scene":"中文画面描述","prompt":"英文图像生成提示词","camera":"运镜","line":"【强忍眼泪】林小满：老师，我真不是故意的。\\n旁白：走廊尽头传来脚步声。","lighting":"黄昏暖侧光","seconds":' + sec + '}]';
 }
 /* 章节剧本化（对标火宝 script_rewriter）：小说正文 → 对白化、强钩子、紧凑节奏的短剧剧本。
    改写结果存 c.adapted，拆镜优先用它；「用原文」随时可还原。 */
@@ -3845,8 +4002,9 @@ function adaptChapter(c){
     '3) 台词口语化、带情绪与潜台词，人物名必须与原文名字完全一致' +
     (g.roles.length ? '（已确定角色名单：' + g.roles.join('、') + '，不得新增同义称呼）' : '') + '；' +
     '4) 保留原章节全部关键情节与因果，不得改动设定、不得提前揭晓伏笔；' +
-    '5) 场景切换时用「【场景】」单独一行标注地点；' +
-    '6) 只输出改写后的纯文本剧本，不要解释、不要标题前缀、不要代码块。';
+    '5) 场景切换时用「【场景】」单独一行标注地点；6) 台词写成可逐句解析的格式：对白写「角色名：台词」，旁白直接写，' +
+    '画外音写「角色名(OS)：台词」，内心独白写「角色名(VO)：台词」，一句一行、单句不超过 20 字（长了就断成两句）；' +
+    '7) 只输出改写后的纯文本剧本，不要解释、不要标题前缀、不要代码块。';
   toast('「' + c.title + '」剧本化中…');
   return apiPost(cfg.textBase.replace(/\/+$/, '') + '/chat/completions', cfg.textKey, {
     model: cfg.textModel,
@@ -3922,7 +4080,7 @@ function pipeStepList(list, kind){
     if(kind === 'img'){
       if(cur['图片状态'] === '已完成' || cur['图片状态'] === '生成中') return nx();
       pipeTip('  生图 ' + i + '/' + list.length + '（第 ' + cur['镜号'] + ' 镜）');
-      return genImage(s._id).then(function(){ return wait(400); }).then(nx);
+      return genShotImage(s._id).then(function(){ return wait(400); }).then(nx);
     }
     if(kind === 'audio'){
       if(cur['配音状态'] === '已完成' || cur['配音状态'] === '生成中') return nx();
