@@ -571,6 +571,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input type="checkbox" id="cf_batchCand" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>批量生图 / 长篇流水线也按候选数生成（v2.10：批量时不出面板，候选存着，跑完逐镜点「选图(N)」挑，费用×候选数）</span>
     </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_imgScore" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>候选图<b>自动技术评分</b>（v2.11：在 A/B 选优面板里给每张候选算清晰度 / 曝光 / 饱和度得分并标「推荐」，先帮你滤掉糊片和废片，再凭审美挑；跨域取不到像素时自动跳过，不影响选图）</span>
+    </label>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
       <option value="6">6（一致性最强，角色多时才用，个别接口可能报错）</option></select></div>
@@ -637,7 +641,11 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_cueTts" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>逐句配音（v2.10：每句 cue 按<b>自己说话人的角色音色</b>分别合成再拼接，解决「一镜多说话人单音色读串」；代价是每句一次请求，且成品落本机为 wav，体积远大于 mp3）</span>
+      <span>逐句配音（v2.10：每句 cue 按<b>自己说话人的角色音色</b>分别合成再拼接，解决「一镜多说话人单音色读串」；代价是每句一次请求）</span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_ttsZip" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>逐句配音拼好后<b>压成压缩格式再存本机</b>（v2.11：webm/opus，体积约为 wav 的 1/10，能多存十倍的配音；浏览器不支持时自动退回 wav）</span>
     </label>
     <button class="btn gh sm" id="btnTestTts">测试 TTS 连通性</button>
     <div class="result" id="testTtsResult"></div>
@@ -709,7 +717,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input type="checkbox" id="cf_subBg" style="width:18px;height:18px;flex:0 0 auto"><span>半透明黑底（背景乱时更好读，对标 MoneyPrinterTurbo 字幕底）</span>
     </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
-      <input type="checkbox" id="cf_srtCue" style="width:18px;height:18px;flex:0 0 auto"><span>逐句字幕（v2.9：台词按说话人/断句拆成多条字幕，时间按各句字数占比分配；对白带「角色名：」前缀）</span>
+      <input type="checkbox" id="cf_srtCue" style="width:18px;height:18px;flex:0 0 auto"><span>逐句字幕（v2.9：台词按说话人/断句拆成多条字幕，对白带「角色名：」前缀）</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
+      <input type="checkbox" id="cf_cueAlign" style="width:18px;height:18px;flex:0 0 auto"><span>用配音真实句长对齐（v2.11：跑过逐句配音的镜头，字幕按每句实际念了多少秒切分，嘴型与字幕严丝合缝；没配音的镜头仍按字数估算）</span>
     </label>
     <div class="hint" style="margin-top:6px">颜色用 ASS 的 <b>BGR</b> 顺序：白色 = <code>FFFFFF</code>，黄色 = <code>00FFFF</code>。改完重新导出合成包即可，不影响的 .srt 本身。</div>
 
@@ -948,7 +959,11 @@ var DEFAULT_CFG = {
      srtCue = 导出字幕时按逐句 cue 拆条（说话人/情绪/断句结构化）
      v2.10：batchCand = 批量生图/流水线也按候选数生成（静默存候选，跑完逐镜挑）；
      cueTts = 逐句 TTS（每句按自己的角色音色合成后拼接，解决一镜多说话人） */
-  imgN:1, srtCue:true, batchCand:false, cueTts:false
+  imgN:1, srtCue:true, batchCand:false, cueTts:false,
+  /* v2.11：imgScore = A/B 选优面板给候选图算技术分（清晰度/曝光/饱和度）；
+     ttsZip  = 逐句配音压成 webm/opus 再存本机（体积约 wav 的 1/10）；
+     cueAlign= 导出字幕时，跑过逐句配音的镜头按每句真实音频时长切分（字幕与口型对齐） */
+  imgScore:true, ttsZip:true, cueAlign:true
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1143,7 +1158,11 @@ function addShotObj(obj){
 /* 清掉本机缓存的音频（base64 很大，删分镜 / 清空 / 导入后必须释放） */
 function purgeAud(ids){
   if(ids){
-    ids.forEach(function(id){ delete AUD[id]; try{ localStorage.removeItem(audKey(id)); }catch(e){} });
+    ids.forEach(function(id){
+      delete AUD[id];
+      cueDurClear(id);                                  /* v2.11：连每句时长账本一起清 */
+      try{ localStorage.removeItem(audKey(id)); }catch(e){}
+    });
     return;
   }
   Object.keys(AUD).forEach(function(k){ delete AUD[k]; });
@@ -1803,6 +1822,9 @@ function fillSettings(){
   if($('cf_globalStyle')) $('cf_globalStyle').value = cfg.globalStyle || '';
   if($('cf_imgN')) $('cf_imgN').value = String(Math.min(3, Math.max(1, num(cfg.imgN) || 1)));
   if($('cf_srtCue')) $('cf_srtCue').checked = cfg.srtCue !== false;
+  if($('cf_imgScore')) $('cf_imgScore').checked = cfg.imgScore !== false;
+  if($('cf_ttsZip')) $('cf_ttsZip').checked = cfg.ttsZip !== false;
+  if($('cf_cueAlign')) $('cf_cueAlign').checked = cfg.cueAlign !== false;
   if($('cf_batchCand')) $('cf_batchCand').checked = !!cfg.batchCand;
   if($('cf_cueTts')) $('cf_cueTts').checked = !!cfg.cueTts;
   if($('cf_ttsKey')) $('cf_ttsKey').value = cfg.ttsKey;
@@ -1866,6 +1888,9 @@ function readSettings(){
   if($('cf_globalStyle')) cfg.globalStyle = $('cf_globalStyle').value.trim();
   if($('cf_imgN')) cfg.imgN = Math.min(3, Math.max(1, num($('cf_imgN').value) || 1));
   if($('cf_srtCue')) cfg.srtCue = !!$('cf_srtCue').checked;
+  if($('cf_imgScore')) cfg.imgScore = !!$('cf_imgScore').checked;
+  if($('cf_ttsZip')) cfg.ttsZip = !!$('cf_ttsZip').checked;
+  if($('cf_cueAlign')) cfg.cueAlign = !!$('cf_cueAlign').checked;
   if($('cf_batchCand')) cfg.batchCand = !!$('cf_batchCand').checked;
   if($('cf_cueTts')) cfg.cueTts = !!$('cf_cueTts').checked;
   if($('cf_ttsKey')) cfg.ttsKey = $('cf_ttsKey').value.trim();
@@ -2328,6 +2353,8 @@ function openCandPanel(id){
   var grid = s._imgCand.map(function(u, i){
     return '<div style="flex:1 1 0;min-width:150px;text-align:center">' +
       '<div class="media" style="aspect-ratio:'+ar+'"><img src="'+esc(u)+'" referrerpolicy="no-referrer"></div>' +
+      '<div class="cscore" data-ci="'+i+'" style="font-size:12px;margin-top:5px;min-height:34px;line-height:1.4;color:var(--tx2)">' +
+        (cfg.imgScore === false ? '' : '评分中…') + '</div>' +
       '<button class="btn sm" style="margin-top:6px;width:100%" data-cbact="pick" data-i="'+i+'">✓ 选 ' + String.fromCharCode(65+i) + '</button>' +
       '</div>';
   }).join('');
@@ -2335,8 +2362,97 @@ function openCandPanel(id){
   $('cbMsg').innerHTML = '<div style="display:flex;gap:10px;flex-wrap:wrap">' + grid + '</div>' +
     '<div class="hint" style="margin-top:10px">选中的一版会成为本镜当前图，其余候选连同旧图自动进入版本历史（⇄ 上一版可随时切回）。若本镜已有视频，换图后需重新生成视频。</div>';
   $('cbBox').classList.add('on'); $('cbMask').classList.add('on');
+  runCandScore(id);
 }
 function closeCandPanel(){ $('cbBox').classList.remove('on'); $('cbMask').classList.remove('on'); cbShotId = ''; }
+/* v2.11：候选图技术评分——只评客观技术项（糊 / 暗 / 灰 / 死白），审美留给人。
+   打分与点评都是纯函数（scoreImgStats），便于离线单测；取像素失败（跨域）时静默显示「—」。 */
+function scoreImgStats(st){
+  var s = 0, tags = [];
+  var sh = Math.min(1, Math.max(0, num(st.sharp)));          /* 已经归一化到 0–1 的梯度能量 */
+  s += 40 * sh;
+  if(sh < 0.12) tags.push('偏糊'); else if(sh > 0.5) tags.push('锐利');
+  var b = num(st.bright), bs = Math.max(0, 1 - Math.abs(b - 0.47) / 0.33);
+  s += 25 * bs;
+  if(b < 0.2) tags.push('偏暗'); else if(b > 0.78) tags.push('偏亮/过曝');
+  var cs = Math.min(1, num(st.contrast) / 0.28);
+  s += 20 * cs;
+  if(num(st.contrast) < 0.08) tags.push('发灰');
+  var ss = Math.min(1, num(st.sat) / 0.35);
+  s += 15 * ss;
+  if(num(st.sat) < 0.06) tags.push('色彩寡淡');
+  return { score: Math.round(Math.min(100, Math.max(0, s))), tags: tags };
+}
+/* RGBA 像素统计：亮度均值 / 亮度标准差（对比度）/ 平均饱和度 / 归一化梯度能量（清晰度代理） */
+function imgStatsFromData(d, w, h){
+  var n = w * h, i, g = new Float32Array(n);
+  var sum = 0;
+  for(i = 0; i < n; i++){
+    var o = i * 4;
+    g[i] = (0.299 * d[o] + 0.587 * d[o+1] + 0.114 * d[o+2]) / 255;
+    sum += g[i];
+  }
+  var mean = sum / n, vsum = 0, satsum = 0, grad = 0, gn = 0;
+  for(i = 0; i < n; i++){
+    var q = i * 4;
+    var d1 = g[i] - mean; vsum += d1 * d1;
+    var mx = Math.max(d[q], d[q+1], d[q+2]), mn = Math.min(d[q], d[q+1], d[q+2]);
+    satsum += mx > 0 ? (mx - mn) / mx : 0;
+    var x = i % w, y = (i - x) / w;
+    if(x + 1 < w){ grad += Math.abs(g[i] - g[i+1]); gn++; }
+    if(y + 1 < h){ grad += Math.abs(g[i] - g[i+w]); gn++; }
+  }
+  return {
+    bright: mean,
+    contrast: Math.sqrt(vsum / n),
+    sat: satsum / n,
+    sharp: Math.min(1, (gn ? grad / gn : 0) / 0.06)     /* 6% 平均梯度视为满分清晰度 */
+  };
+}
+/* 加载一张候选图并算分（跨域取不到像素时返回 null，调用方显示「—」即可） */
+function scoreCandidate(url){
+  return new Promise(function(resolve){
+    if(!url || !/^(https?:|data:image)/.test(url)) return resolve(null);
+    var img = new Image();
+    if(/^https?:/.test(url)) img.crossOrigin = 'anonymous';
+    img.onload = function(){
+      try{
+        var W = 96, H = Math.max(1, Math.round(W * (img.naturalHeight || 1) / (img.naturalWidth || 1)));
+        var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        var cx = cv.getContext('2d'); if(!cx) return resolve(null);
+        cx.drawImage(img, 0, 0, W, H);
+        var d = cx.getImageData(0, 0, W, H).data;
+        resolve(scoreImgStats(imgStatsFromData(d, W, H)));
+      }catch(e){ resolve(null); }        /* 跨域图 getImageData 会抛 SecurityError */
+    };
+    img.onerror = function(){ resolve(null); };
+    img.src = url;
+  });
+}
+/* 面板打开后异步算分：写回每张的分数与点评，并给最高分打「推荐」 */
+function runCandScore(id){
+  var s = shotById(id);
+  if(!s || !Array.isArray(s._imgCand) || cfg.imgScore === false) return;
+  var urls = s._imgCand.slice();
+  Promise.all(urls.map(scoreCandidate)).then(function(rs){
+    if(cbShotId !== id) return;                                  /* 面板已切走就不写 DOM */
+    var best = -1, bi = -1;
+    rs.forEach(function(r, i){ if(r && r.score > best){ best = r.score; bi = i; } });
+    rs.forEach(function(r, i){
+      var box = $('cbMsg'); if(!box) return;
+      var el = box.querySelector('.cscore[data-ci="' + i + '"]');
+      if(!el) return;
+      if(!r){ el.innerHTML = '<span style="opacity:.55">—（取不到像素，未评分）</span>'; return; }
+      var rec = (rs.length > 1 && i === bi);
+      var col = r.score >= 70 ? '#4ade80' : (r.score >= 45 ? '#fbbf24' : '#f87171');
+      el.innerHTML = '<b style="color:' + col + ';font-size:14px">' + r.score + '</b> 分' +
+        '<div style="opacity:.8">' + esc(r.tags.length ? r.tags.join('、') : '清晰度 / 曝光 / 色彩均正常') + '</div>' +
+        (rec ? '<div style="color:#4ade80;font-weight:600">★ 推荐</div>' : '');
+      var btn = box.querySelector('[data-cbact="pick"][data-i="' + i + '"]');
+      if(btn && rec) btn.textContent = '✓ 选 ' + String.fromCharCode(65 + i) + '（推荐）';
+    });
+  }).catch(function(){});
+}
 function pickCand(i){
   var id = cbShotId; if(!id) return;
   var s = shotById(id);
@@ -2537,6 +2653,26 @@ function audSave(id, b64, mime, dur){
   try{ localStorage.setItem(audKey(id), JSON.stringify({ b64:b64, mime:mime, dur:dur })); return true; }
   catch(e){ toast('本机音频存储已满，请导出整轨配音后删除部分分镜配音'); return false; }
 }
+/* v2.11：逐句配音的「每句真实时长」本地账本——只有它才能让字幕与口型严丝合缝。
+   与 AUD 一样只存本机（下划线字段不落资料库），删镜时一并清掉。 */
+var CUE_DUR = {};
+function cueDurKey(id){ return LS + 'cuedur_' + id; }
+function cueDurLoad(id){
+  if(CUE_DUR[id]) return CUE_DUR[id];
+  try{
+    var raw = localStorage.getItem(cueDurKey(id));
+    if(raw){ var a = JSON.parse(raw); if(Array.isArray(a) && a.length){ CUE_DUR[id] = a; return a; } }
+  }catch(e){}
+  return null;
+}
+function cueDurSave(id, arr){
+  CUE_DUR[id] = arr;
+  try{ localStorage.setItem(cueDurKey(id), JSON.stringify(arr)); }catch(e){}
+}
+function cueDurClear(id){
+  delete CUE_DUR[id];
+  try{ localStorage.removeItem(cueDurKey(id)); }catch(e){}
+}
 var _actx = null;
 function audioCtx(){
   if(!_actx){ try{ _actx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ _actx = null; } }
@@ -2618,6 +2754,47 @@ function resampleBuf(buf, sr){
     return Promise.resolve(oc.startRendering()).then(function(b){ return b || buf; }, function(){ return buf; });
   }catch(e){ return Promise.resolve(buf); }
 }
+/* v2.11：把拼好的 PCM 压成 webm/opus 再存本机——wav 一分钟约 2.8MB，opus 只有零点几 MB，
+   本机 localStorage 只有几 MB，不压缩存不了几镜。浏览器不支持 MediaRecorder 时返回 null，调用方自动退回 wav。 */
+function encodeCompressed(buffer){
+  return new Promise(function(resolve){
+    var done = false;
+    function fin(v){ if(!done){ done = true; resolve(v); } }
+    setTimeout(function(){ fin(null); }, (buffer.duration || 0) * 1000 + 8000);   /* 兜底超时：编码卡住也不能把流程吊死 */
+    try{
+      var MR = window.MediaRecorder;
+      if(!MR || !MR.isTypeSupported) return fin(null);
+      var mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+        .filter(function(m){ try{ return MR.isTypeSupported(m); }catch(e){ return false; } })[0];
+      if(!mime) return fin(null);
+      var ctx = audioCtx(); if(!ctx) return fin(null);
+      if(ctx.state === 'suspended' && ctx.resume){ try{ ctx.resume(); }catch(e){} }
+      var dest = ctx.createMediaStreamDestination();
+      var src = ctx.createBufferSource();
+      src.buffer = buffer; src.connect(dest);
+      var rec = new MR(dest.stream, { mimeType: mime });
+      var chunks = [];
+      rec.ondataavailable = function(e){ if(e.data && e.data.size) chunks.push(e.data); };
+      rec.onerror = function(){ fin(null); };
+      rec.onstop = function(){
+        if(!chunks.length) return fin(null);
+        try{
+          var fr = new FileReader();
+          fr.onload = function(){
+            var s = String(fr.result || '');
+            var b64 = s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : '';
+            fin(b64 ? { b64: b64, mime: mime } : null);
+          };
+          fr.onerror = function(){ fin(null); };
+          fr.readAsDataURL(new Blob(chunks, { type: mime }));
+        }catch(e){ fin(null); }
+      };
+      rec.start();
+      src.start();
+      src.onended = function(){ setTimeout(function(){ try{ rec.stop(); }catch(e){ fin(null); } }, 150); };
+    }catch(e){ fin(null); }
+  });
+}
 /* ArrayBuffer → base64（分块拼接，避免大数组 apply 爆栈） */
 function abToB64(ab){
   var bytes = new Uint8Array(ab), CH = 0x8000, bin = '';
@@ -2636,6 +2813,7 @@ function genAudioCue(id){
   if(!text){ toast('这一镜还没写台词 / 旁白'); return Promise.resolve(); }
   var cues = parseCues(text);
   if(cues.length < 2){ return genAudio(id); }
+  var durs = [];                       /* v2.11：每句的真实音频时长，供字幕对齐用 */
   state.busy[id] = true;
   return patchShot(id, { 配音状态:'生成中', 错误信息:'', 更新时间:nowStr() })
     .then(function(){
@@ -2663,22 +2841,32 @@ function genAudioCue(id){
     .then(function(bufs){
       if(!bufs.length) throw new Error('逐句配音没有取到任何音频');
       bumpUse('usedTts', bufs.length);
-      return concatAudioBufs(bufs, 0.12);
+      var gap = 0.12;
+      /* 句间那 0.12 秒静音归给前一句，这样各句时长之和正好等于整段时长，字幕不会累积漂移 */
+      durs = bufs.map(function(b, i){ return b.duration + (i < bufs.length - 1 ? gap : 0); });
+      return concatAudioBufs(bufs, gap);
     })
     .then(function(out){
       if(!out) throw new Error('逐句音频拼接失败（浏览器不支持音频解码时无法拼接）');
       return resampleBuf(out, 24000);
     })
     .then(function(out){
-      var ab = encodeWav(out);
-      var b64 = abToB64(ab);
+      /* v2.11：优先压成 webm/opus 存本机，体积约为 wav 的 1/10；不支持则退回 wav */
+      if(cfg.ttsZip !== false) return encodeCompressed(out).then(function(z){ return { out:out, zip:z }; });
+      return { out:out, zip:null };
+    })
+    .then(function(r){
+      var out = r.out, b64, mime;
+      if(r.zip){ b64 = r.zip.b64; mime = r.zip.mime; }
+      else { b64 = abToB64(encodeWav(out)); mime = 'audio/wav'; }
       var dur = out.duration;
-      if(!audSave(id, b64, 'audio/wav', dur)) throw new Error('本机音频存储已满：逐句配音存的是 wav，先导出整轨配音再清理');
+      if(!audSave(id, b64, mime, dur)) throw new Error('本机音频存储已满：先导出整轨配音再清理，或到设置里开启「逐句配音压成压缩格式」');
+      if(durs.length === cues.length) cueDurSave(id, durs);
       var eff = (cfg.ttsSync && dur > 0) ? Math.min(12, Math.max(4, Math.ceil(dur))) : dur;
       var patch = { 音频URL:'local', 音频时长:eff, 配音状态:'已完成', 错误信息:'', 更新时间:nowStr() };
       if(cfg.ttsSync && dur > 0) patch['时长秒'] = eff;
       patchShot(id, patch);
-      toast('第 ' + s['镜号'] + ' 镜逐句配音完成（' + cues.length + ' 句 / ' + dur.toFixed(1) + ' 秒）');
+      toast('第 ' + s['镜号'] + ' 镜逐句配音完成（' + cues.length + ' 句 / ' + dur.toFixed(1) + ' 秒' + (r.zip ? '，已压缩存储' : '') + '）');
     })
     .catch(function(e){
       console.error(e);
@@ -2962,7 +3150,7 @@ function shotDur(s){
 function exportSrt(){
   if(!state.shots.length){ toast('还没有分镜'); return; }
   var rate = num(cfg.cnRate) || 4.5;
-  var t = 0, out = [], n = 0, cueTotal = 0;
+  var t = 0, out = [], n = 0, cueTotal = 0, alignN = 0;
   state.shots.forEach(function(s){
     var d = shotDur(s), text = String(s['台词旁白'] || '').trim();
     if(text){
@@ -2975,7 +3163,11 @@ function exportSrt(){
         out.push(text);
         out.push('');
       } else {
-        var ests = cues.map(function(c){ return cueEst(c, rate); });
+        /* v2.11：跑过逐句配音的镜头用每句的真实音频时长切分，字幕与口型严丝合缝；
+           没配音或句数对不上（台词改过）时自动退回按字数估算，不会算错时间轴 */
+        var real = (cfg.cueAlign !== false) ? cueDurLoad(s._id) : null;
+        var ests = (real && real.length === cues.length) ? real.slice() : cues.map(function(c){ return cueEst(c, rate); });
+        if(real && real.length === cues.length) alignN++;
         var sum = 0; ests.forEach(function(e){ sum += e; });
         var ct = t;
         cues.forEach(function(c, i){
@@ -2994,7 +3186,8 @@ function exportSrt(){
   });
   if(!n){ toast('没有任何台词，无法生成字幕'); return; }
   download('分镜字幕.srt', out.join('\n'), 'text/plain;charset=utf-8');
-  toast('字幕已导出，共 ' + n + ' 条' + (cueTotal > n ? '（按逐句 cue 拆分）' : ''));
+  toast('字幕已导出，共 ' + n + ' 条' + (cueTotal > n ? '（按逐句 cue 拆分）' : '') +
+    (alignN ? '，其中 ' + alignN + ' 镜按配音真实句长对齐' : ''));
 }
 function encodeWav(buffer){
   var sr = buffer.sampleRate, len = buffer.length, bytes = 44 + len*2;
