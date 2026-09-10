@@ -527,14 +527,11 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <div class="prog" id="progBox" data-page-node-id="5lHWV5FBMtzDdCug256vM9"></div>
         <div class="tl" id="timeline" style="margin-top:16px" data-page-node-id="c7GEYzh8aqDGOSM6rbBaQZ"></div>
         <div class="tools" data-page-node-id="WEFlrVUQmA6dEwRGum6xHb">
-          <button class="btn gh" id="btnExpMd" data-page-node-id="XMdhsEjS348EkALVPV73tT">导出分镜脚本 .md</button>
-          <button class="btn gh" id="btnExpCsv" data-page-node-id="7uZlBLg7HXm7HBGRNhK31G">导出视频清单 .csv</button>
-          <button class="btn gh" id="btnExpJson" data-page-node-id="i9Hp1BonYN5jKnHg5gTG9X">导出全量 .json</button>
-          <button class="btn gh" id="btnExpSrt">导出字幕 .srt</button>
-          <button class="btn gh" id="btnExpAudio">导出整轨配音 .wav</button>
-          <button class="btn gh" id="btnFfCmd" title="浏览器里没有 mp3 编码器，用本机 FFmpeg 一条命令转成 mp3">复制 mp3 转码命令</button>
-          <button class="btn" id="btnExpRender">一键合成包（FFmpeg 脚本，出成片）</button>
-          <button class="btn gh" id="btnExpFcp">导出剪辑时间线 .fcpxml</button>
+          <!-- v2.15：导出类按钮全部集中到「导出中心」，工具区只留入口 + 生成类操作 -->
+          <button class="btn" id="btnOpenExport">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+            导出中心（字幕 / 配音 / 脚本 / 成片 / 备份）
+          </button>
           <button class="btn gh" id="btnBatchAudio">批量生成全部配音</button>
         </div>
         <div class="hint" style="margin-top:10px" data-page-node-id="vo7mV5unQ1zQubHUSgiRg2"><b>两条出片路线：</b>①「一键合成包」导出 FFmpeg 脚本，配合字幕 + 整轨配音直接合出带字幕、带 BGM 的 <b>成片.mp4</b>（脚本直接读取各镜的公网 URL，需本机装有 <a href="https://ffmpeg.org" target="_blank" rel="noopener">FFmpeg</a>）；② 时间线路线：导出「剪辑时间线 .fcpxml」，先跑一次合成脚本把各镜落盘成 seg_N.mp4，再导入 Premiere / 达芬奇 / Final Cut，镜头顺序、时长、台词都已排好；③ 手动路线：把各镜视频按顺序拖进剪映 / PR，再对齐整轨配音与字幕（都按每镜实际音频时长排时间轴，对齐 0 点即可音画同步）。</div>
@@ -595,7 +592,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_imgSubj" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>再把<b>人物主体占比</b>计入评分（v2.14：用肤色像素比例近似估计人在画面里占多大，挑掉「人物小得快看不见」和「怼脸贴满画框」两头的废片；<b>只是像素统计、不是人脸检测</b>，古装/暗调/非人物镜头会偏低，仅作提示）</span>
+      <span>再把<b>人物主体占比</b>计入评分（v2.15：取「肤色像素 ∪ 显著性前景」的较大者近似人在画面里占多大，挑掉「人物小得快看不见」和「怼脸贴满画框」两头的废片；<b>只是像素统计、不是人脸检测</b>——暗调、古装、强色偏靠显著性兜底，不会像只看肤色那样误报空镜，仅作提示）</span>
     </label>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
@@ -793,6 +790,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   <div class="bbar-h">
     <b id="bbarT">批量处理</b>
     <span id="bbarC">准备中…</span>
+    <button class="btn gh sm" id="bbarPause">暂停</button>
     <button class="btn gh sm" id="bbarStop">停止</button>
   </div>
   <div class="bbar-track"><i id="bbarFill"></i></div>
@@ -829,6 +827,47 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   <div class="dlg-m" id="qaMsg" style="max-height:60vh;overflow:auto"></div>
   <div class="dlg-f">
     <button class="btn gh" id="qaClose">关闭</button>
+  </div>
+</div>
+
+<!-- v2.15：导出中心——把原先散落在工具区的一排导出按钮集中到一处，按用途分组。
+     注意 id 前缀用 exp*（expBox/expMask/expClose）——ex* 已被「AI 提取结果弹窗」占用，不能撞。 -->
+<div class="dlgmask" id="expMask"></div>
+<div class="dialog" id="expBox" style="max-width:760px">
+  <div class="dlg-t">导出中心</div>
+  <div class="dlg-m" style="max-height:66vh;overflow:auto">
+    <div class="hint" style="margin-bottom:14px">所有导出、合成与备份集中在这里，功能与按钮与之前完全一致，只是不再挤占工具区。</div>
+
+    <div class="sec-t">① 出片</div>
+    <div class="tools" style="margin-bottom:16px">
+      <button class="btn" id="btnExpRender">一键合成包（FFmpeg 脚本，出成片）</button>
+      <button class="btn gh" id="btnExpFcp">导出剪辑时间线 .fcpxml</button>
+    </div>
+
+    <div class="sec-t">② 字幕与音频</div>
+    <div class="tools" style="margin-bottom:16px">
+      <button class="btn gh" id="btnExpSrt">导出字幕 .srt</button>
+      <button class="btn gh" id="btnExpAudio">导出整轨配音 .wav</button>
+      <button class="btn gh" id="btnFfCmd" title="浏览器里没有 mp3 编码器，用本机 FFmpeg 一条命令转成 mp3">复制 mp3 转码命令</button>
+    </div>
+
+    <div class="sec-t">③ 数据与脚本</div>
+    <div class="tools" style="margin-bottom:16px">
+      <button class="btn gh" id="btnExpMd">导出分镜脚本 .md</button>
+      <button class="btn gh" id="btnExpCsv">导出视频清单 .csv</button>
+      <button class="btn gh" id="btnExpJson">导出全量 .json</button>
+    </div>
+
+    <div class="sec-t">④ 备份与恢复</div>
+    <div class="tools">
+      <button class="btn gh" id="btnExBackup">导出 JSON 备份</button>
+      <button class="btn gh" id="btnExImport">导入恢复</button>
+      <button class="btn gh" id="btnExClear">清空全部数据</button>
+    </div>
+    <div class="hint" style="margin-top:10px">备份按钮与首页「今天要处理」区里的是同一套逻辑；导入恢复支持上千条数据，没有条数上限。清空数据会二次确认。</div>
+  </div>
+  <div class="dlg-f">
+    <button class="btn gh" id="expClose">关闭</button>
   </div>
 </div>
 
@@ -1060,6 +1099,8 @@ function batchBarOpen(title){
   _bbFail = 0;
   var b = $('bbar'); if(!b) return;
   clearTimeout(_bbTimer);
+  state.batchPause = false;                     /* v2.15：新任务重置暂停状态 */
+  if($('bbarPause')) $('bbarPause').textContent = '暂停';
   $('bbarT').textContent = title || '批量处理';
   $('bbarMsg').textContent = '';
   $('bbarFill').style.width = '0%';
@@ -1074,8 +1115,20 @@ function batchBarStep(done, total){
 }
 function batchBarMsg(t){ var el = $('bbarMsg'); if(el) el.textContent = t || ''; }
 function batchBarFail(){ _bbFail++; }
+/* v2.15：暂停 / 继续——暂停后不再取新任务，正在跑的这几项跑完就停在那儿，点「继续」接着跑。
+   注意「续跑」的另一半是天然支持的：批量入口本来就按「未生成 / 失败」筛选，
+   所以中途关页面也没关系，重新点一次批量就是接着跑未完成的。 */
+function toggleBatchPause(){
+  state.batchPause = !state.batchPause;
+  var btn = $('bbarPause');
+  if(btn) btn.textContent = state.batchPause ? '继续' : '暂停';
+  batchBarMsg(state.batchPause ? '已暂停（正在跑的这几项会跑完），点「继续」接着跑' : '已继续');
+  toast(state.batchPause ? '已暂停' : '已继续');
+}
 function batchBarClose(msg){
   var b = $('bbar'); if(!b) return;
+  state.batchPause = false;
+  if($('bbarPause')) $('bbarPause').textContent = '暂停';
   $('bbarFill').style.width = '100%';
   batchBarMsg(msg || '');
   clearTimeout(_bbTimer);
@@ -1102,12 +1155,24 @@ function runPool(list, worker, onOne){
     /* v2.14：onOne 多带一个 item，好让调用方在每项完成时统计失败数 */
     return run().then(function(){ done++; if(onOne) onOne(done, total, item); });
   }
+  /* v2.15：暂停时不再取新任务——等 state.batchPause 解除（或收到停止）再继续取下一个 */
+  function waitResume(){
+    if(!state.batchPause) return Promise.resolve();
+    return new Promise(function(res){
+      var t = setInterval(function(){
+        if(!state.batchPause || state.stopBatch){ clearInterval(t); res(); }
+      }, 250);
+    });
+  }
   var workers = [];
   for(var k = 0; k < Math.min(conc, total); k++){
     workers.push((function worker(){
-      if(i >= total) return Promise.resolve();
-      var item = list[i++];
-      return one(item).then(worker);
+      if(state.stopBatch || i >= total) return Promise.resolve();
+      return waitResume().then(function(){
+        if(state.stopBatch || i >= total) return Promise.resolve();
+        var item = list[i++];
+        return one(item).then(worker);
+      });
     })());
   }
   return Promise.all(workers);
@@ -2494,25 +2559,58 @@ function imgStatsFromData(d, w, h){
     sharp: Math.min(1, (gn ? grad / gn : 0) / 0.06),     /* 6% 平均梯度视为满分清晰度 */
     hist: histFromData(d, w, h),                         /* v2.12：顺带出色彩直方图，用于一致性比对 */
     safe: safeAreaStats(d, w, h),                        /* v2.13：顺带出构图安全区统计 */
-    skin: skinRatio(d, w, h)                             /* v2.14：顺带出肤色像素占比，用于主体占比评分 */
+    subj: subjRatio(d, w, h)                             /* v2.15：顺带出主体占比（肤色∪显著性），用于主体评分 */
   };
 }
-/* v2.14：肤色像素占比——免模型地近似「画面里人物占多大」。
-   用经典 YCbCr 肤色区间（Kovac 规则）：Y>60、77≤Cb≤127、133≤Cr≤173。
-   边界要说清楚：这是颜色统计、不是人脸检测。古装/暗光/强色偏/非人物空镜都会偏低，
-   所以只用来提示「人物是不是小得看不见 / 是不是怼脸贴满」，不替用户决定。 */
+/* 肤色判定：经典 YCbCr 区间（Kovac 规则）——Y>60、77≤Cb≤127、133≤Cr≤173。
+   强信号：命中基本就是人的皮肤。弱点是暗光 / 古装大面积覆体 / 强色偏时会漏。 */
+function isSkin(R, G, B){
+  var Y  =  0.299 * R + 0.587 * G + 0.114 * B;
+  if(Y < 60) return false;
+  var Cb = 128 - 0.168736 * R - 0.331264 * G + 0.5 * B;
+  var Cr = 128 + 0.5 * R - 0.418688 * G - 0.081312 * B;
+  return Cb >= 77 && Cb <= 127 && Cr >= 133 && Cr <= 173;
+}
 function skinRatio(d, w, h){
   var n = w * h, i, o, hit = 0;
   for(i = 0; i < n; i++){
     o = i * 4;
-    var R = d[o], G = d[o+1], B = d[o+2];
-    var Y  =  0.299 * R + 0.587 * G + 0.114 * B;
-    if(Y < 60) continue;
-    var Cb = 128 - 0.168736 * R - 0.331264 * G + 0.5 * B;
-    var Cr = 128 + 0.5 * R - 0.418688 * G - 0.081312 * B;
-    if(Cb >= 77 && Cb <= 127 && Cr >= 133 && Cr <= 173) hit++;
+    if(isSkin(d[o], d[o+1], d[o+2])) hit++;
   }
   return n ? hit / n : 0;
+}
+/* v2.15：主体占比 = 肤色占比 ∪ 显著性占比（取较大者，显著性打 0.6 折）。
+   为什么要改：v2.14 只用肤色，暗调夜戏 / 古装厚衣 / 强色偏一律被打成「看不到人物」的假报警。
+   显著性用「亮度偏离全图均值 + 边缘强度」找前景，对人物不依赖肤色，代价是风景空镜也会有一点分——
+   所以它只是兜底（打 0.6 折后取 max），真正判「空镜」仍然靠两者都极低。
+   依然是像素统计、不是人脸检测，只作提示不替用户决定。 */
+function subjRatio(d, w, h){
+  var n = w * h, i, o, x, y;
+  if(!n) return { skin: 0, sal: 0, subj: 0 };
+  var g = new Float32Array(n), mean = 0;
+  for(i = 0; i < n; i++){
+    o = i * 4;
+    g[i] = (0.299 * d[o] + 0.587 * d[o+1] + 0.114 * d[o+2]) / 255;
+    mean += g[i];
+  }
+  mean /= n;
+  var grad = new Float32Array(n), gsum = 0;
+  for(i = 0; i < n; i++){
+    x = i % w; y = (i - x) / w;
+    var a = 0;
+    if(x + 1 < w) a += Math.abs(g[i] - g[i+1]);
+    if(y + 1 < h) a += Math.abs(g[i] - g[i+w]);
+    grad[i] = a; gsum += a;
+  }
+  var gavg = gsum / n || 1e-6;
+  var skinHit = 0, salHit = 0;
+  for(i = 0; i < n; i++){
+    o = i * 4;
+    if(isSkin(d[o], d[o+1], d[o+2])) skinHit++;
+    if(Math.abs(g[i] - mean) > 0.12 || grad[i] > gavg * 1.5) salHit++;
+  }
+  var sk = skinHit / n, sa = salHit / n;
+  return { skin: sk, sal: sa, subj: Math.max(sk, sa * 0.6) };
 }
 /* 主体占比 → 0–100 分：竖屏人物剧的舒适区间大致是 5%–40% 画面，两头都扣分 */
 function subjScore(r){
@@ -2689,7 +2787,8 @@ function scoreCandidate(url){
         var st = imgStatsFromData(d, W, H);
         var r = scoreImgStats(st);
         r.safe = (cfg.imgSafe !== false && st.safe) ? safeScore(st.safe) : null;   /* v2.13 构图分 */
-        r.subj = (cfg.imgSubj !== false) ? subjScore(st.skin) : null;              /* v2.14 主体占比分 */
+        /* v2.15：主体占比改取「肤色 ∪ 显著性」，不再单靠肤色，暗调/古装不再误报空镜 */
+        r.subj = (cfg.imgSubj !== false && st.subj) ? subjScore(st.subj.subj) : null;
         resolve(r);
       }catch(e){ resolve(null); }        /* 跨域图 getImageData 会抛 SecurityError */
     };
@@ -3443,6 +3542,21 @@ function saveCueBox(){
   closeCueBox();
   patchShot(id, { 台词旁白:fmtCues(cues), 更新时间:nowStr() });
   toast('已保存 ' + cues.length + ' 句台词（逐句结构化）');
+}
+
+/* ================= v2.15：导出中心 =================
+   原先导出按钮散在「④ 成片与导出」工具区一排（md/csv/json/srt/整轨/转码/合成包/fcpxml），
+   屏幕小的时候要横着找。这里集中成一个面板，按 出片 / 字幕音频 / 数据脚本 / 备份 分组。
+   面板里的按钮沿用原来的 id 与事件绑定，所以行为零变化；备份三项转发到首页那套逻辑，避免重复实现。 */
+function openExportPanel(){
+  var b = $('expBox'), m = $('expMask');
+  if(!b) return;
+  b.classList.add('on'); if(m) m.classList.add('on');
+}
+function closeExportPanel(){
+  var b = $('expBox'), m = $('expMask');
+  if(b) b.classList.remove('on');
+  if(m) m.classList.remove('on');
 }
 
 /* ================= v2.14：mp3 转码命令（FFmpeg 兜底） =================
@@ -5498,6 +5612,14 @@ function bind(){
   if($('btnExpSrt')) $('btnExpSrt').addEventListener('click', exportSrt);
   if($('btnExpAudio')) $('btnExpAudio').addEventListener('click', exportAudioTrack);
   if($('btnFfCmd')) $('btnFfCmd').addEventListener('click', copyFfmpegCmd);
+  /* v2.15：导出中心开关，以及备份/清空的转发（复用首页那套同一逻辑，不重复实现） */
+  if($('btnOpenExport')) $('btnOpenExport').addEventListener('click', openExportPanel);
+  if($('expClose')) $('expClose').addEventListener('click', closeExportPanel);
+  if($('expMask')) $('expMask').addEventListener('click', closeExportPanel);
+  /* 备份 / 导入 / 清空都会弹确认框，先把导出中心收起来，避免两层弹窗叠在一起 */
+  if($('btnExBackup')) $('btnExBackup').addEventListener('click', function(){ closeExportPanel(); if($('btnExport')) $('btnExport').click(); });
+  if($('btnExImport')) $('btnExImport').addEventListener('click', function(){ closeExportPanel(); if($('fileJson')) $('fileJson').click(); });
+  if($('btnExClear')) $('btnExClear').addEventListener('click', function(){ closeExportPanel(); if($('btnClear')) $('btnClear').click(); });
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
   if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
@@ -5592,12 +5714,15 @@ function bind(){
   });
   $('pmMask').addEventListener('click', closePromptBox);
 
-  /* v2.14：批量进度条的「停止」按钮 */
+  /* v2.14：批量进度条的「停止」按钮；v2.15 增加「暂停 / 继续」 */
   $('bbarStop').addEventListener('click', function(){
     state.stopBatch = true;
-    batchBarMsg('已请求停止，正在跑的这几个会跑完…');
+    state.batchPause = false;
+    if($('bbarPause')) $('bbarPause').textContent = '暂停';
+    batchBarMsg('已请求停止，正在跑的这几个会跑完；未完成的重新点一次批量即可续跑…');
     toast('已请求停止');
   });
+  $('bbarPause').addEventListener('click', toggleBatchPause);
 
   /* v2.9：候选图 A/B 选优弹窗 */
   $('cbClose').addEventListener('click', closeCandPanel);
