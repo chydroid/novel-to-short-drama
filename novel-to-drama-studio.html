@@ -575,6 +575,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input type="checkbox" id="cf_imgScore" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>候选图<b>自动技术评分</b>（v2.11：在 A/B 选优面板里给每张候选算清晰度 / 曝光 / 饱和度得分并标「推荐」，先帮你滤掉糊片和废片，再凭审美挑；跨域取不到像素时自动跳过，不影响选图）</span>
     </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin:-4px 0 12px 26px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_imgCons" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>并把<b>与全剧色调的一致性</b>计入评分（v2.12：拿候选图的色彩直方图和本剧已定稿镜头的平均色调比对，占综合分 25%，帮你挑出「看着像同一部剧」的那版）</span>
+    </label>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
       <option value="6">6（一致性最强，角色多时才用，个别接口可能报错）</option></select></div>
@@ -647,6 +651,8 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input type="checkbox" id="cf_ttsZip" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>逐句配音拼好后<b>压成压缩格式再存本机</b>（v2.11：webm/opus，体积约为 wav 的 1/10，能多存十倍的配音；浏览器不支持时自动退回 wav）</span>
     </label>
+    <div class="fld" style="max-width:320px"><label>逐句配音并发路数（v2.12：多句同时合成，结果仍按句序拼接）</label><select class="inp" id="cf_ttsConc">
+      <option value="1">1（串行，最省配额）</option><option value="2">2（推荐，速度翻倍）</option><option value="3">3（最快，注意 TTS 限流）</option></select></div>
     <button class="btn gh sm" id="btnTestTts">测试 TTS 连通性</button>
     <div class="result" id="testTtsResult"></div>
 
@@ -698,6 +704,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <div class="fld"><label>&nbsp;</label><div class="hint" style="padding-top:8px">转场与运镜在 FFmpeg 合成时生效</div></div>
     </div>
     <div class="hint">导出「整轨配音 .wav」时会自动把 BGM 循环铺底、按音量混合并做首尾淡入淡出；一键合成脚本里也会带上这条 BGM。</div>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_trackZip" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>整轨配音导出<b>压缩版</b>（v2.12：.webm/opus，体积约为 wav 的 1/10，方便传给剪映或网盘；默认关——压缩要实时录制，耗时≈成片总长，浏览器不支持时仍给 wav）</span>
+    </label>
 
     <div class="sec-t">字幕样式（烧录进成片时生效）</div>
     <div class="row3">
@@ -963,7 +973,11 @@ var DEFAULT_CFG = {
   /* v2.11：imgScore = A/B 选优面板给候选图算技术分（清晰度/曝光/饱和度）；
      ttsZip  = 逐句配音压成 webm/opus 再存本机（体积约 wav 的 1/10）；
      cueAlign= 导出字幕时，跑过逐句配音的镜头按每句真实音频时长切分（字幕与口型对齐） */
-  imgScore:true, ttsZip:true, cueAlign:true
+  imgScore:true, ttsZip:true, cueAlign:true,
+  /* v2.12：imgCons  = 候选图评分里计入「与全剧色调一致性」（占 25%）；
+     ttsConc = 逐句配音的并发路数（1~3，2 为默认，结果仍按句序拼接）；
+     trackZip= 整轨配音导出压缩版 webm/opus（默认关，需实时录制，耗时≈音频总长） */
+  imgCons:true, ttsConc:2, trackZip:false
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1825,6 +1839,9 @@ function fillSettings(){
   if($('cf_imgScore')) $('cf_imgScore').checked = cfg.imgScore !== false;
   if($('cf_ttsZip')) $('cf_ttsZip').checked = cfg.ttsZip !== false;
   if($('cf_cueAlign')) $('cf_cueAlign').checked = cfg.cueAlign !== false;
+  if($('cf_imgCons')) $('cf_imgCons').checked = cfg.imgCons !== false;
+  if($('cf_ttsConc')) $('cf_ttsConc').value = String(Math.min(3, Math.max(1, num(cfg.ttsConc) || 2)));
+  if($('cf_trackZip')) $('cf_trackZip').checked = !!cfg.trackZip;
   if($('cf_batchCand')) $('cf_batchCand').checked = !!cfg.batchCand;
   if($('cf_cueTts')) $('cf_cueTts').checked = !!cfg.cueTts;
   if($('cf_ttsKey')) $('cf_ttsKey').value = cfg.ttsKey;
@@ -1891,6 +1908,9 @@ function readSettings(){
   if($('cf_imgScore')) cfg.imgScore = !!$('cf_imgScore').checked;
   if($('cf_ttsZip')) cfg.ttsZip = !!$('cf_ttsZip').checked;
   if($('cf_cueAlign')) cfg.cueAlign = !!$('cf_cueAlign').checked;
+  if($('cf_imgCons')) cfg.imgCons = !!$('cf_imgCons').checked;
+  if($('cf_ttsConc')) cfg.ttsConc = Math.min(3, Math.max(1, num($('cf_ttsConc').value) || 2));
+  if($('cf_trackZip')) cfg.trackZip = !!$('cf_trackZip').checked;
   if($('cf_batchCand')) cfg.batchCand = !!$('cf_batchCand').checked;
   if($('cf_cueTts')) cfg.cueTts = !!$('cf_cueTts').checked;
   if($('cf_ttsKey')) cfg.ttsKey = $('cf_ttsKey').value.trim();
@@ -2406,8 +2426,77 @@ function imgStatsFromData(d, w, h){
     bright: mean,
     contrast: Math.sqrt(vsum / n),
     sat: satsum / n,
-    sharp: Math.min(1, (gn ? grad / gn : 0) / 0.06)     /* 6% 平均梯度视为满分清晰度 */
+    sharp: Math.min(1, (gn ? grad / gn : 0) / 0.06),     /* 6% 平均梯度视为满分清晰度 */
+    hist: histFromData(d, w, h)                          /* v2.12：顺带出色彩直方图，用于一致性比对 */
   };
+}
+/* v2.12：色彩直方图（RGB 各量化 4 级 = 64 桶，归一化）——判断两张图「像不像同一部剧」的廉价代理。
+   真·语义一致性要 CLIP 之类的模型，纯前端做不到；色调分布是最接近的可算维度。 */
+function histFromData(d, w, h){
+  var n = w * h, i, H = new Float32Array(64);
+  for(i = 0; i < n; i++){
+    var o = i * 4;
+    H[((d[o] >> 6) << 4) | ((d[o+1] >> 6) << 2) | (d[o+2] >> 6)]++;
+  }
+  for(i = 0; i < 64; i++) H[i] /= n;
+  return H;
+}
+/* 直方图交集相似度：1 = 色调分布完全一致，0 = 毫无重叠 */
+function histSim(a, b){
+  if(!a || !b || a.length !== b.length) return null;
+  var s = 0;
+  for(var i = 0; i < a.length; i++) s += Math.min(a[i], b[i]);
+  return Math.max(0, Math.min(1, s));
+}
+/* 交集值实测多落在 0.25–0.8，线性拉伸成 0–100 分 */
+function consScore(sim){
+  if(sim == null) return null;
+  return Math.round(Math.max(0, Math.min(1, (sim - 0.25) / 0.55)) * 100);
+}
+/* 技术分 + 一致性分 → 综合分（一致性占 25%）；没有基准时就是纯技术分，行为与 v2.11 一致 */
+function candFinal(tech, cons){
+  if(cons == null) return { score: tech.score, tags: tech.tags, cons: null };
+  var s = Math.round(tech.score * 0.75 + cons * 0.25);
+  var tags = tech.tags.slice();
+  if(cons >= 70) tags.push('调性一致');
+  else if(cons < 45) tags.push('与全剧色调有偏差');
+  return { score: Math.min(100, s), tags: tags, cons: cons };
+}
+/* 本剧基准色调：取最近定稿的若干张镜头图，各算直方图后求平均（跨域取不到像素的自动跳过） */
+function dramaBaseHist(excludeId){
+  var urls = [];
+  state.shots.forEach(function(x){
+    if(excludeId && x._id === excludeId) return;
+    var u = String(x['图片URL'] || '').trim();
+    if(u && /^(https?:|data:image)/.test(u)) urls.push(u);
+  });
+  if(urls.length > 8) urls = urls.slice(-8);            /* 只要最近的 8 张，避免拉一大堆图 */
+  if(!urls.length) return Promise.resolve(null);
+  return Promise.all(urls.map(histOfUrl)).then(function(hs){
+    var ok = hs.filter(function(h){ return !!h; });
+    if(!ok.length) return null;
+    var avg = new Float32Array(64), i;
+    ok.forEach(function(h){ for(i = 0; i < 64; i++) avg[i] += h[i]; });
+    for(i = 0; i < 64; i++) avg[i] /= ok.length;
+    return avg;
+  }).catch(function(){ return null; });
+}
+function histOfUrl(url){
+  return new Promise(function(resolve){
+    var img = new Image();
+    if(/^https?:/.test(url)) img.crossOrigin = 'anonymous';
+    img.onload = function(){
+      try{
+        var W = 64, H = Math.max(1, Math.round(W * (img.naturalHeight || 1) / (img.naturalWidth || 1)));
+        var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        var cx = cv.getContext('2d'); if(!cx) return resolve(null);
+        cx.drawImage(img, 0, 0, W, H);
+        resolve(histFromData(cx.getImageData(0, 0, W, H).data, W, H));
+      }catch(e){ resolve(null); }
+    };
+    img.onerror = function(){ resolve(null); };
+    img.src = url;
+  });
 }
 /* 加载一张候选图并算分（跨域取不到像素时返回 null，调用方显示「—」即可） */
 function scoreCandidate(url){
@@ -2434,8 +2523,18 @@ function runCandScore(id){
   var s = shotById(id);
   if(!s || !Array.isArray(s._imgCand) || cfg.imgScore === false) return;
   var urls = s._imgCand.slice();
-  Promise.all(urls.map(scoreCandidate)).then(function(rs){
+  /* v2.12：一致性维度需要本剧基准色调；关掉或取不到基准时，综合分就等于纯技术分 */
+  var wantCons = cfg.imgCons !== false;
+  Promise.all([
+    Promise.all(urls.map(scoreCandidate)),
+    wantCons ? dramaBaseHist(id) : Promise.resolve(null)
+  ]).then(function(pair){
     if(cbShotId !== id) return;                                  /* 面板已切走就不写 DOM */
+    var base = pair[1];
+    var rs = pair[0].map(function(t){
+      if(!t) return null;
+      return candFinal(t, (base && t.hist) ? consScore(histSim(t.hist, base)) : null);
+    });
     var best = -1, bi = -1;
     rs.forEach(function(r, i){ if(r && r.score > best){ best = r.score; bi = i; } });
     rs.forEach(function(r, i){
@@ -2446,6 +2545,7 @@ function runCandScore(id){
       var rec = (rs.length > 1 && i === bi);
       var col = r.score >= 70 ? '#4ade80' : (r.score >= 45 ? '#fbbf24' : '#f87171');
       el.innerHTML = '<b style="color:' + col + ';font-size:14px">' + r.score + '</b> 分' +
+        (r.cons != null ? '<span style="opacity:.7"> · 一致性 ' + r.cons + '</span>' : '') +
         '<div style="opacity:.8">' + esc(r.tags.length ? r.tags.join('、') : '清晰度 / 曝光 / 色彩均正常') + '</div>' +
         (rec ? '<div style="color:#4ade80;font-weight:600">★ 推荐</div>' : '');
       var btn = box.querySelector('[data-cbact="pick"][data-i="' + i + '"]');
@@ -2817,26 +2917,36 @@ function genAudioCue(id){
   state.busy[id] = true;
   return patchShot(id, { 配音状态:'生成中', 错误信息:'', 更新时间:nowStr() })
     .then(function(){
-      /* 串行逐句请求：不并发，避免瞬间打满 TTS 配额 */
-      var chain = Promise.resolve([]);
-      cues.forEach(function(c, idx){
-        chain = chain.then(function(acc){
-          var vs = cueVoiceStyle(c, s);
-          return apiPostTts(cfg.ttsBase.replace(/\/+$/,'') + '/chat/completions', cfg.ttsKey, buildTtsBody(c.text, vs.voice, vs.style))
-            .then(function(r){
-              var j = parseJsonSafe(r.text);
-              if(r.status >= 400){
-                var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,160);
-                throw new Error('第 ' + (idx + 1) + ' 句 HTTP ' + r.status + ' ' + msg);
-              }
-              var b64 = pickAudioB64(j), url = pickAudioUrl(j);
-              if(b64) return decodeAudioBuf(b64).then(function(b){ if(b) acc.push(b); return acc; });
-              if(url) return fetchAudioBuf(url).then(function(b){ if(b) acc.push(b); return acc; });
-              throw new Error('第 ' + (idx + 1) + ' 句没取到音频数据');
-            });
-        });
+      /* v2.12：可控并发（设置 1–3 路，默认 2）——结果按句序下标回填，拼接顺序不会乱 */
+      var conc = Math.max(1, Math.min(3, num(cfg.ttsConc) || 2));
+      var results = new Array(cues.length), cursor = 0;
+      function synth(idx){
+        var c = cues[idx];
+        var vs = cueVoiceStyle(c, s);
+        return apiPostTts(cfg.ttsBase.replace(/\/+$/,'') + '/chat/completions', cfg.ttsKey, buildTtsBody(c.text, vs.voice, vs.style))
+          .then(function(r){
+            var j = parseJsonSafe(r.text);
+            if(r.status >= 400){
+              var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,160);
+              throw new Error('第 ' + (idx + 1) + ' 句 HTTP ' + r.status + ' ' + msg);
+            }
+            var b64 = pickAudioB64(j), url = pickAudioUrl(j);
+            if(b64) return decodeAudioBuf(b64);
+            if(url) return fetchAudioBuf(url);
+            throw new Error('第 ' + (idx + 1) + ' 句没取到音频数据');
+          })
+          .then(function(b){ if(b) results[idx] = b; });
+      }
+      function worker(){
+        if(cursor >= cues.length) return Promise.resolve();
+        var idx = cursor++;
+        return synth(idx).then(worker);
+      }
+      var ws = [];
+      for(var k = 0; k < Math.min(conc, cues.length); k++) ws.push(worker());
+      return Promise.all(ws).then(function(){
+        return results.filter(function(b){ return !!b; });      /* 缺句的镜仍按顺序拼，不会串位 */
       });
-      return chain;
     })
     .then(function(bufs){
       if(!bufs.length) throw new Error('逐句配音没有取到任何音频');
@@ -3204,6 +3314,12 @@ function encodeWav(buffer){
   }
   return ab;
 }
+/* base64 → ArrayBuffer（导出压缩音频时用） */
+function b64ToAb(b64){
+  var bin = atob(b64), arr = new Uint8Array(bin.length);
+  for(var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr.buffer;
+}
 function downloadBlob(name, ab, mime){
   var b = new Blob([ab], { type: mime });
   var u = URL.createObjectURL(b), a = document.createElement('a');
@@ -3263,8 +3379,22 @@ function exportAudioTrack(){
       off += d.length;
     });
     return mixBgm(out).then(function(mix){
+      var tail = '，总长 ' + fmtSec(Math.round(total)) + (cfg.bgmUrl && num(cfg.bgmVol) > 0 ? '（含 BGM）' : '');
+      /* v2.12：可选导出压缩版（webm/opus，体积约 wav 的 1/10）。压缩需实时录制，耗时≈音频总长，故默认关 */
+      if(cfg.trackZip){
+        toast('整轨已合成，正在压缩（耗时≈成片长度）…');
+        return encodeCompressed(mix).then(function(z){
+          if(z && z.b64){
+            downloadBlob('整轨配音.webm', b64ToAb(z.b64), z.mime);
+            toast('整轨配音已导出（压缩版）' + tail);
+          }else{
+            downloadBlob('整轨配音.wav', encodeWav(mix), 'audio/wav');
+            toast('浏览器不支持压缩，已改存 wav' + tail);
+          }
+        });
+      }
       downloadBlob('整轨配音.wav', encodeWav(mix), 'audio/wav');
-      toast('整轨配音已导出，总长 ' + fmtSec(Math.round(total)) + (cfg.bgmUrl && num(cfg.bgmVol) > 0 ? '（含 BGM）' : ''));
+      toast('整轨配音已导出' + tail);
     });
   }).catch(function(e){ console.error(e); toast('合成失败：' + (e.message||e)); });
 }
