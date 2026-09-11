@@ -5753,16 +5753,29 @@ function moveShot(id, dir){
   pushUndo();
   var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
   renumber(arr);
-  var p = db(), chain = Promise.resolve();
-  arr.forEach(function(s){
-    chain = chain.then(function(){
+  var p = db();
+  /* v2.33：改 runSerial——原来是 `arr.reduce(chain...)`（一条失败整链断，后面的镜号全不重排），
+     而 catch 里只 `console.error`，收尾照样 toast「已移动，镜号已重排」：
+     镜号其实已经乱了却报成功，用户要过很久才会发现顺序不对。 */
+  var rep = null;
+  runSerial(arr.map(function(s){
+    return function(){
       state.shots = state.shots.map(function(x){ return x._id === s._id ? Object.assign({}, x, { 镜号: s['镜号'] }) : x; });
-      return p ? p.updateRecord({ databaseId: DB_ID, recordId: s._id, properties: toProps({ 镜号: s['镜号'] }) }) : Promise.resolve();
-    });
-  });
-  chain.catch(function(e){ console.error(e); }).then(function(){
+      return p ? p.updateRecord({ databaseId: DB_ID, recordId: s._id, properties: toProps({ 镜号: s['镜号'] }) }) : null;
+    };
+  }), { label: '重排镜号' }).then(function(r){
+    rep = r;
     if(!hasCloud()) localSave(state.shots);
-    refreshAll(); toast('已移动，镜号已重排');
+    /* 只有真失败才重新拉云端（成功的常见路径不多花一次请求） */
+    if(rep.fail) return loadShots();
+  }).then(function(){
+    refreshAll();
+    if(rep && rep.fail){
+      setSync('off');
+      toast('移动未完成：镜号重排 ' + rep.ok + ' 条成功、' + rep.fail + ' 条失败（已按云端实际状态刷新，可再移一次）');
+    }else{
+      toast('已移动，镜号已重排');
+    }
   });
 }
 function dupShot(id){
@@ -5775,13 +5788,23 @@ function dupShot(id){
   o['图片状态'] = '未生成'; o['视频状态'] = '未生成'; o['配音状态'] = '未生成';
   o['图片URL'] = ''; o['视频URL'] = ''; o['音频URL'] = ''; o['任务ID'] = ''; o['满意锁定'] = '否';
   o['更新时间'] = nowStr();
-  var after = arr.filter(function(x){ return num(x['镜号']) >= o['镜号']; })
-    .map(function(x){
-      var n = num(x['镜号']) + 1;
-      state.shots = state.shots.map(function(y){ return y._id === x._id ? Object.assign({}, y, { 镜号: n }) : y; });
-      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps({ 镜号: n }) }) : Promise.resolve();
-    });
-  Promise.all(after).catch(function(){}).then(function(){
+  /* v2.33：改 runSerial 串行 + 失败可见——原来是 `Promise.all` 配一个空 catch：
+     ① 几十条 updateRecord 并发轰接口（容易撞限流，且顺序无保证）；
+     ② catch 是空的，重排失败**完全静默**，照样提示「已复制该镜」，结果镜号直接重复。
+     现在重排有一条失败就**取消复制**：镜号乱了比少一镜更难收拾。 */
+  var pend = arr.filter(function(x){ return num(x['镜号']) >= o['镜号']; })
+    .map(function(x){ return { id: x._id, no: num(x['镜号']) + 1 }; });
+  runSerial(pend.map(function(it){
+    return function(){
+      state.shots = state.shots.map(function(y){ return y._id === it.id ? Object.assign({}, y, { 镜号: it.no }) : y; });
+      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: it.id, properties: toProps({ 镜号: it.no }) }) : null;
+    };
+  }), { label: '重排镜号' }).then(function(r){
+    if(r.fail){
+      setSync('off');
+      toast('镜号重排失败 ' + r.fail + ' 条，已取消复制（镜号重复更难收拾，请刷新后重试）');
+      return;
+    }
     addShotObj(o);
     if(!hasCloud()) localSave(state.shots);
     toast('已复制该镜（生成状态已重置）');
@@ -5793,13 +5816,21 @@ function insertShotAfter(id){
   pushUndo();
   renumber(arr);
   var no = idx >= 0 ? idx + 2 : arr.length + 1;
-  var after = arr.filter(function(x){ return num(x['镜号']) >= no; })
-    .map(function(x){
-      var n = num(x['镜号']) + 1;
-      state.shots = state.shots.map(function(y){ return y._id === x._id ? Object.assign({}, y, { 镜号: n }) : y; });
-      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps({ 镜号: n }) }) : Promise.resolve();
-    });
-  Promise.all(after).catch(function(){}).then(function(){
+  /* v2.33：同 dupShot——原来是「并发写 + 空 catch」，重排失败完全静默；
+     现在串行 + 失败可见，重排没成功就不插这一镜（否则镜号重复）。 */
+  var pend = arr.filter(function(x){ return num(x['镜号']) >= no; })
+    .map(function(x){ return { id: x._id, no: num(x['镜号']) + 1 }; });
+  runSerial(pend.map(function(it){
+    return function(){
+      state.shots = state.shots.map(function(y){ return y._id === it.id ? Object.assign({}, y, { 镜号: it.no }) : y; });
+      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: it.id, properties: toProps({ 镜号: it.no }) }) : null;
+    };
+  }), { label: '重排镜号' }).then(function(r){
+    if(r.fail){
+      setSync('off');
+      toast('镜号重排失败 ' + r.fail + ' 条，已取消插入（镜号重复更难收拾，请刷新后重试）');
+      return;
+    }
     addShotObj({ 镜号:no, 画面描述:'', 英文提示词:'', 运镜:'', 台词旁白:'', 时长秒:num($('shotSec') ? $('shotSec').value : 0) || 5,
       出场角色:'', 场景:'', 景别:'中景', 说话角色:'', 角色情绪:'',
       图片状态:'未生成', 视频状态:'未生成', 配音状态:'未生成', 满意锁定:'否',
