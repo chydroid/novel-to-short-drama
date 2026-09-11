@@ -1044,7 +1044,9 @@ var state = {
   syncMsg: '',      // v2.31：同步条上的临时进度文案
   serialTag: '',    // v2.32：正在跑的批量任务名（有值才显示「停止」）
   stopSerial: '',   // v2.32：已请求停止的任务名
-  poolFail: 0       // v2.35：本轮 runPool 里彻底失败的项数（worker 吞错时也能记上）
+  poolFail: 0,      // v2.35：本轮 runPool 里彻底失败的项数（worker 吞错时也能记上）
+  lastBatchBad: 0,  // v2.36：上一次 batchRun 的失败条数（流水线靠它对账，别把失败当完成）
+  pipeBad: 0        // v2.36：本轮流水线累计失败数
 };
 var cfg = {};
 var pollers = {};   // shotId -> intervalId
@@ -4256,7 +4258,17 @@ function resumePipeline(){
     });
 }
 function runResumeStep(steps, i){
-  if(i >= steps.length) return Promise.resolve(0);
+  if(i === 0) state.pipeBad = 0;
+  if(i >= steps.length){
+    /* v2.36：流水线收尾必须把各段的失败汇总说出来——原来这里直接 return 0，
+       而每段的 batchRun 只吐自己的 toast，「补图全失败 → 出视频没图可跑 → 配音照跑」
+       整条下来用户仍以为一切正常。 */
+    if(state.pipeBad){
+      setSync('off');
+      toast('流水线跑完，但有 ' + state.pipeBad + ' 个任务失败（看镜卡里的错误信息；修好后点一次续跑，只会补没成的）');
+    }
+    return Promise.resolve(0);
+  }
   var k = steps[i];
   var r = (k === 'lip') ? { k: 'lip', list: lipTodoShots() } : leftShotList(k);
   if(!r || !r.list.length){
@@ -4274,6 +4286,7 @@ function runResumeStep(steps, i){
   }
   toast('流水线第 ' + (i + 1) + ' 段：' + batchLeftName(k) + '（' + r.list.length + ' 个）');
   return batchRun(k, r.list, { resume:true }).then(function(left){
+    state.pipeBad += num(state.lastBatchBad);      /* v2.36：段内失败累到流水线账上 */
     renderToday();
     /* 这一段被暂停/停止（left > 0）→ 整条流水线就停在这，别硬着头皮跑下一段 */
     if(left){ toast('流水线已暂停在第 ' + (i + 1) + ' 段（' + batchLeftName(k) + ' 还剩 ' + left + ' 个），修好后再点一次即可继续'); return left; }
@@ -6851,6 +6864,7 @@ function batchRun(kind, list, opts){
   var n = Math.min(3, Math.max(1, num(cfg.imgN) || 1));
   var multi = isImg && !!cfg.batchCand && n > 1;
   state.stopBatch = false;
+  state.lastBatchBad = 0;              /* v2.36：本段失败数，流水线收尾靠它对账 */
   /* v2.19：统一在入口做预检——续跑路径也会经过这里，所以三处入口都不用各写一遍 */
   var pf = preflightShots(list, kind);
   list = pf.run;
@@ -6885,6 +6899,7 @@ function batchRun(kind, list, opts){
     list.forEach(function(s){ inIds[s._id] = 1; });
     /* v2.35：同上，按 id 取当前对象再数失败——原来恒为 0，全失败也报「批量任务已全部完成」 */
     var bad = state.shots.filter(function(s){ return inIds[s._id] && s[stKey] === '失败'; }).length;
+    state.lastBatchBad = bad;          /* v2.36：交给流水线对账（原来流水线看不到失败） */
     var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
     var tail = (bad ? '，失败 ' + bad + ' 条' + ((isAud || isLip) ? '（可点「重试失败」）' : '') : '') +
       (skipN ? '，跳过 ' + skipN + ' 个（' + skipTxt + '）' : '') +
@@ -7237,6 +7252,21 @@ function pipeStepList(list, kind){
 function shotsOfChapter(c){
   return state.shots.filter(function(s){ return String(s['章节'] || '') === c.title; });
 }
+/* v2.36：这一章还剩多少「该做没做」的项——章节算不算完成，不看有没有抛错、只看事实。
+   只有勾了对应步骤的类型才计入（用户没勾视频，就不能因为没视频说这章没完成）。
+   返回 -1 表示连分镜都没拆出来（拆镜本身失败了）。 */
+function chapterLeft(c, opt){
+  var sh = shotsOfChapter(c);
+  if(!sh.length) return -1;
+  var t = 0;
+  sh.forEach(function(s){
+    if(opt.doImg && (s['图片状态'] || '未生成') !== '已完成') t++;
+    if(opt.doVid && (s['视频状态'] || '未生成') !== '已完成') t++;
+    if(opt.doAudio && String(s['台词旁白'] || '').trim() && (s['配音状态'] || '未生成') !== '已完成') t++;
+    if(opt.doLip && (s['口型风险'] || lipRiskOf(s)) === '高' && s['视频URL'] && (s['口型状态'] || '不需要') !== '已完成') t++;
+  });
+  return t;
+}
 /* 只给还没有描述的设定卡补全（长篇时不重复花钱重写已有设定） */
 function fillNewAssets(){
   var need = state.assets.filter(function(a){
@@ -7246,21 +7276,34 @@ function fillNewAssets(){
   return aiAnchorsQuiet(need).then(function(){ return need.length; });
 }
 function runChapterLoop(list){
-  var i = 0, total = list.length, opt = state.pipeOpts;
+  var i = 0, total = list.length, opt = state.pipeOpts, badN = 0;
   function step(){
     if(state.pipe.stop){ finishPipe('已暂停，下次点「开始流水线」可从第 ' + (i + 1) + ' 章继续'); return Promise.resolve(); }
-    if(i >= total){ finishPipe('全部完成：本批 ' + total + ' 章已跑完'); return Promise.resolve(); }
+    if(i >= total){
+      /* v2.36：收尾要按「实际有没有做完」说话——原来无论多少章卡住都报「全部完成」 */
+      finishPipe(badN ? ('本批 ' + total + ' 章跑完，其中 ' + badN + ' 章未完成（章节列表里已标出还差什么，' +
+                         '再点一次「开始流水线」只会重跑这些）')
+                      : ('全部完成：本批 ' + total + ' 章已跑完'));
+      return Promise.resolve();
+    }
     var c = list[i];
     c.st = '进行中'; saveChapters(); renderChapters(); setPipeBar(i / total);
     pipeTip('第 ' + (i + 1) + '/' + total + ' 章 · ' + c.title + (opt.doAdapt && !c.adapted ? ' · 剧本化中…' : ' · 拆镜中…'));
     return Promise.resolve()
       .then(function(){ return (opt.doAdapt && !c.adapted) ? adaptChapter(c) : null; })
-      .then(function(){ return splitChapter(c, opt.shots); })
+      .then(function(){
+        /* v2.36：这一章已经有分镜就别再拆一遍。splitChapter 是无条件「续号追加」，
+           重跑「部分完成」的章（补图 / 补视频）时若无脑再拆一次，这一章的分镜会直接翻倍。
+           返回 null 表示「跳过拆镜」，后面按事实汇报。 */
+        if(shotsOfChapter(c).length) return null;
+        return splitChapter(c, opt.shots);
+      })
       .then(function(cnt){
         return loadShots().then(function(){ return loadAssets().then(function(){ return cnt; }); });
       })
       .then(function(cnt){
-        pipeTip('第 ' + (i + 1) + '/' + total + ' 章 · 拆出 ' + cnt + ' 镜 · 同步设定卡…');
+        pipeTip('第 ' + (i + 1) + '/' + total + ' 章 · ' + c.title +
+          (cnt === null ? ' · 已有分镜，跳过拆镜 · 同步设定卡…' : (' · 拆出 ' + cnt + ' 镜 · 同步设定卡…')));
         /* v2.32：必须等它真的写完——原来这里同步返回，紧接着的 fillNewAssets（AI 补全描述）
            跑在 addRecord 之前，新建的角色卡/场景卡拿不到描述就直接进生图，一致性全崩 */
         return syncAssetsFromShots();
@@ -7292,13 +7335,23 @@ function runChapterLoop(list){
         return pipeStepList(shotsOfChapter(c), 'lip');
       })
       .then(function(){
-        c.st = '完成'; i++;
+        /* v2.36：章节标不标「完成」按事实对账——本章所有步骤（拆镜 / 设定卡 / 设定图 / 分镜图 /
+           配音 / 视频 / 口型）内部都是「吞错型」，几乎不会走到下面的 catch，
+           所以原来无论这一章实际做成了什么，都会被打上「完成」；而 runPipeline 的筛选条件是
+           `c.st !== '完成'`，于是**失败章永远被跳过、那一章再也没人跑**，用户却看到「全部完成」。 */
+        i++;
+        var left = chapterLeft(c, opt);
+        if(left < 0){ badN++; c.st = '失败：没拆出分镜'; }
+        else if(left){ badN++; c.st = '部分完成：还剩 ' + left + ' 项'; }
+        else c.st = '完成';
         saveChapters(); renderChapters(); setPipeBar(i / total);
+        if(left !== 0) pipeTip('第 ' + i + '/' + total + ' 章 · ' + c.title + ' · ' + c.st);
         refreshAll();
         return step();
       })
       .catch(function(e){
         console.error(e);
+        badN++;
         c.st = '失败：' + String(e && e.message ? e.message : e).slice(0, 40);
         i++; saveChapters(); renderChapters(); setPipeBar(i / total); refreshAll();
         return step();
