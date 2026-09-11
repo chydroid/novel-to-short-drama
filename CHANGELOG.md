@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格记录。
 
+## [v2.27] - 2026-09-11
+
+### Fixed
+- **确认弹窗点「取消」也会照样改数据（重要）**：`askConfirm` 返回的是 **Promise**，但 v2.25 的「批量选最高分」与 v2.26 的「一键自动修复 / 只补时长」把它当布尔做否定判断（`if(!askConfirm(...)) return`）——Promise 恒为真、取反恒为假，于是**用户在确认框点「取消」，操作仍然执行并写入数据**。现改为 `askConfirm(...).then(function(ok){ if(ok){ ... } })`；并把执行体抽成 `autoPickRun(list)` / `applyHealthFix(plan)`，落库那一半不再和确认弹窗耦合，便于单测。测试新增回归守卫：全文件不得再出现该误用写法，且「取消」时两个入口都不得落库（`_askOkVal=false` 断言）。
+
+### Added
+- **体检明细可点跳 + 就地修复**：体检明细从「只读清单」升级为可操作——每条问题右侧加「去改」按钮，点一下**关掉弹窗、切到生成页、展开并滚动到那一镜**（复用新抽出的 `locateShot()`，与原「去修第一个」「剩余镜定位」同一套定位逻辑）；明细顶部给「一键自动修复(N)」「只补时长」两个快捷动作，修完**或取消都自动重列清单**（`fixHealthAuto()` 新增可选 `after` 回调），方便一条条核对还剩什么。
+- **章节推断改为双向（承前 → 承后）**：`healthFixables()` 补章节时，优先「承前」取该镜之前最近的非空章节；若它前面一条章节都没有（比如前导镜头群），则「承后」承接其后最近的非空章节（预扫一张后缀表）。整片都没章节才留给人。
+
+### Changed
+- `fixHealthAuto(kinds, after)` 增加第二个可选参数；`hjump` / `leftjump` 改用 `locateShot()`，去掉三处重复的「setView + scrollIntoView」代码。
+
 ## [v2.26] - 2026-09-11
 
 ### Added

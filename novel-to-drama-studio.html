@@ -1842,6 +1842,16 @@ function viewShots(list, mode, expr){
 }
 function filteredShots(){ return viewShots(state.shots, state.filter, cfg.filterExpr); }
 function shotById(id){ for(var i=0;i<state.shots.length;i++){ if(state.shots[i]._id === id) return state.shots[i]; } return null; }
+/* v2.27：把「切到生成页 → 展开该镜 → 滚动到它」抽成一处（体检「去修第一个」/ 体检明细逐条「去改」/ 剩余镜定位 共用） */
+function locateShot(s){
+  if(!s) return;
+  state.expanded[s._id] = true;
+  setView('gen');
+  setTimeout(function(){
+    var el = document.querySelector('.gen[data-id="' + s._id + '"]');
+    if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
+  }, 80);
+}
 function charStr(v){
   if(Array.isArray(v)) return v.map(function(x){ return String(x).trim(); }).filter(Boolean).join(', ');
   return v ? String(v).trim() : '';
@@ -3344,7 +3354,14 @@ function commitBestCand(s, i){
 function autoPickAllCand(){
   var list = state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; });
   if(!list.length){ toast('没有待挑选的候选图'); return; }
-  if(!askConfirm('对 ' + list.length + ' 个镜头的候选图，按技术评分（清晰度 / 曝光 / 一致性 / 构图 / 主体）自动选最高分的一版？\n评分取不到像素的镜头会跳过，交回你手动选。', '批量选最高分')) return;
+  /* v2.27 修 bug：askConfirm 返回的是 Promise，不能拿它当布尔做否定判断（恒为假），
+     否则用户在确认框点「取消」也照样开跑。必须在 .then 里判 ok。 */
+  askConfirm('对 ' + list.length + ' 个镜头的候选图，按技术评分（清晰度 / 曝光 / 一致性 / 构图 / 主体）自动选最高分的一版？\n评分取不到像素的镜头会跳过，交回你手动选。', '批量选最高分')
+    .then(function(ok){ if(ok) autoPickRun(list); });
+}
+/* v2.27：批量选最高分的执行体（不含确认），单拎出来便于测试与复用 */
+function autoPickRun(list){
+  if(!list || !list.length){ toast('没有待挑选的候选图'); return; }
   batchBarOpen('批量选最高分（共 ' + list.length + ' 镜）');
   var done = 0, picked = 0, skipped = 0;
   function step(i){
@@ -6173,18 +6190,31 @@ function healthSummary(issues){
   });
   return { count: arr.length, byType: c, order: order };
 }
-/* 体检明细：不导出时也能在页面上扫一眼（对话框内滚动，最多列 200 条） */
+/* 体检明细：不导出时也能在页面上扫一眼（对话框内滚动，最多列 200 条）
+   v2.27：从「只读清单」升级为可操作——每条带「去改」直接跳到那一镜；
+   顶部给「一键自动修复(N)」「只补时长」两个就地动作，修完/取消都自动重列，方便复查还剩什么。 */
 function showHealthBox(){
   var iss = shotHealth(state.shots);
   if(!iss.length){ toast('没有发现关键字段缺失，数据挺完整'); return; }
+  var fixSum = healthFixSummary();
+  var quick = fixSum.total
+    ? '<div class="tools" style="margin:0 0 10px;gap:8px">' +
+        '<button class="btn sm" data-act="hfixallbox">一键自动修复(' + fixSum.total + ')</button>' +
+        '<button class="btn gh sm" data-act="hfixdurbox">只补时长</button>' +
+        '<span class="hint" style="margin:0">可自动推定：' + esc(fixSum.txt) + '</span>' +
+      '</div>'
+    : '';
   var rows = iss.slice(0, 200).map(function(x){
     var hard = x.issues.some(function(t){ return HEALTH_HARD[t]; });
-    return '<div style="padding:5px 0;border-bottom:1px solid var(--line)">第 <b>' + x.no + '</b> 镜：' +
-      '<span style="color:' + (hard ? '#B45309' : 'var(--tx2)') + '">' + esc(x.issues.join('、')) + '</span></div>';
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">' +
+      '<span style="flex:1">第 <b>' + x.no + '</b> 镜：' +
+      '<span style="color:' + (hard ? '#B45309' : 'var(--tx2)') + '">' + esc(x.issues.join('、')) + '</span></span>' +
+      '<button class="btn gh sm" data-act="hfixone" data-id="' + esc(x.id) + '">去改</button></div>';
   }).join('');
   var more = iss.length > 200 ? '<div style="margin-top:8px;color:var(--tx3)">只显示前 200 条，完整清单请点「导出报告」。</div>' : '';
   $('dlgTitle').textContent = '关键字段体检（' + iss.length + ' 个镜头）';
-  $('dlgMsg').innerHTML = '<div style="max-height:52vh;overflow:auto;text-align:left">' + rows + more + '</div>';
+  $('dlgMsg').innerHTML = quick + '<div style="max-height:52vh;overflow:auto;text-align:left">' + rows + more + '</div>' +
+    '<div class="hint" style="text-align:left;margin-top:8px">点每条的「去改」可直接跳到那一镜；改完再点「查看明细」复查。</div>';
   $('dlgNo').style.display = 'none';
   $('dlgYes').textContent = '知道了'; $('dlgYes').className = 'btn';
   $('dlgYes').style.display = '';
@@ -6231,18 +6261,30 @@ function estShotDurFromText(s){
 /* v2.26：把「能靠本地规则确定推出的」缺料项挑出来——只做有确定依据的推断，猜不出的（缺画面描述 /
    无生图提示词）一律留给人，绝不瞎填。三类：
    ① 没时长 + 有台词 → 按台词字数估（estShotDurFromText，与字幕同一语速口径）
-   ② 没章节 → 承前：取该镜之前最近的一个非空章节（按全片顺序，与页面筛选无关）
+   ② 没章节 → 先「承前」取该镜之前最近的非空章节；若它前面一条都没有（前导缺章节），再「承后」
+      取其后最近的非空章节（v2.27 双向）。首尾都找不到才留给人（整片都没章节）。
    ③ 有台词没角色 + 该镜「出场角色」恰好 1 人 → 只能是他，直接填
    kinds 可只取其中几类（如 ['dur'] 就是 v2.25 的「只补时长」）。 */
 function healthFixables(kinds){
   kinds = kinds || ['dur', 'chap', 'role'];
   var want = {};
   kinds.forEach(function(k){ want[k] = 1; });
-  var out = { dur: [], chap: [], role: [] }, prevChap = '';
-  state.shots.forEach(function(s){
+  var shots = state.shots, n = shots.length, out = { dur: [], chap: [], role: [] };
+  /* 预扫「承后」表：nextChap[i] = 第 i 镜之后最近的一个非空章节（没有则为空） */
+  var nextChap = new Array(n), nxt = '';
+  for(var i = n - 1; i >= 0; i--){
+    nextChap[i] = nxt;
+    var ci = String(shots[i]['章节'] || '').trim();
+    if(ci) nxt = ci;
+  }
+  var prevChap = '';
+  shots.forEach(function(s, idx){
     var c = String(s['章节'] || '').trim();
-    /* 章节先记后判会把「自己」当成前一个，所以先判承接、再更新 prevChap */
-    if(want.chap && !c && prevChap) out.chap.push({ s: s, val: prevChap });
+    /* 章节先判承接、再更新 prevChap，否则会把自己当成「前一个」 */
+    if(want.chap && !c){
+      var take = prevChap || nextChap[idx];
+      if(take) out.chap.push({ s: s, val: take });
+    }
     if(c) prevChap = c;
     if(want.dur && !(num(s['时长秒']) > 0)){
       var d = estShotDurFromText(s);
@@ -6264,15 +6306,27 @@ function healthFixSummary(kinds){
   if(p.role.length) parts.push('角色 ' + p.role.length);
   return { total: p.dur.length + p.chap.length + p.role.length, txt: parts.join('、') };
 }
+/* v2.27：真正落库那一半单独抽出来——好测（不碰确认弹窗）、也好被别处复用 */
+function applyHealthFix(plan){
+  var t = nowStr();
+  plan.dur.forEach(function(x){ patchShot(x.s._id, { 时长秒: x.val, 更新时间: t }); });
+  plan.chap.forEach(function(x){ patchShot(x.s._id, { 章节: x.val, 更新时间: t }); });
+  plan.role.forEach(function(x){ patchShot(x.s._id, { 说话角色: x.val, 更新时间: t }); });
+  return plan.dur.length + plan.chap.length + plan.role.length;
+}
 /* v2.26：一键自动修复——一次确认把上面三类能推定的项批量写入（patchShot 落库），修完分类汇报。
-   缺画面描述 / 无生图提示词 无法本地推定，会明确告诉用户还得手补。 */
-function fixHealthAuto(kinds){
+   缺画面描述 / 无生图提示词 无法本地推定，会明确告诉用户还得手补。
+   v2.27 修 bug：askConfirm 返回的是 Promise，原来把它当布尔做否定判断（恒为假），
+   用户在确认框点「取消」也照样改数据。现改为在 .then 里判 ok。
+   after：可选回调，确认/取消后都会调用（体检明细里用它重列清单）。 */
+function fixHealthAuto(kinds, after){
   var plan = healthFixables(kinds);
   var total = plan.dur.length + plan.chap.length + plan.role.length;
   if(!total){
     toast(kinds && kinds.length === 1 && kinds[0] === 'dur'
       ? '没有「既没时长、又有台词」的镜头可自动补（空镜不会动）'
       : '没有可自动修复的项（缺画面描述 / 无生图提示词 只能人工补）');
+    if(after) after();
     return;
   }
   var parts = [];
@@ -6281,15 +6335,17 @@ function fixHealthAuto(kinds){
   if(plan.role.length) parts.push('补说话角色 ' + plan.role.length + ' 个');
   var msg = '将自动修复 ' + total + ' 项：' + parts.join('、') + '。\n' +
     '规则：时长按台词字数估算（语速 ' + (num(cfg.cnRate) || 4.5) + ' 字/秒，4–12 秒）；' +
-    '章节取该镜之前最近的非空章节；说话角色仅在出场角色恰为 1 人时填入。\n' +
+    '章节先取该镜之前最近的非空章节、前面没有就承接其后最近的非空章节；' +
+    '说话角色仅在出场角色恰为 1 人时填入。\n' +
     '缺画面描述 / 无生图提示词 无法本地推定，会留给你手动补。';
-  if(!askConfirm(msg, '一键自动修复')) return;
-  var t = nowStr();
-  plan.dur.forEach(function(x){ patchShot(x.s._id, { 时长秒: x.val, 更新时间: t }); });
-  plan.chap.forEach(function(x){ patchShot(x.s._id, { 章节: x.val, 更新时间: t }); });
-  plan.role.forEach(function(x){ patchShot(x.s._id, { 说话角色: x.val, 更新时间: t }); });
-  toast('已自动修复 ' + total + ' 项（' + parts.join('、') + '）');
-  renderToday();
+  askConfirm(msg, '一键自动修复').then(function(ok){
+    if(ok){
+      applyHealthFix(plan);
+      toast('已自动修复 ' + total + ' 项（' + parts.join('、') + '）');
+      renderToday();
+    }
+    if(after) after();
+  });
 }
 /* v2.25 的细粒度入口：只补时长，等价于自动修复的一个子集（保留给「先补时长看看」的场景） */
 function fixDurationsAuto(){ fixHealthAuto(['dur']); }
@@ -7440,12 +7496,7 @@ function bind(){
         if($('filterSel')) $('filterSel').value = want;
         var firstNo = (lf && lf.ids && lf.ids.length) ? lf.ids[0] : 0, fs = null;
         state.shots.forEach(function(x){ if(num(x['镜号']) === num(firstNo)) fs = x; });
-        if(fs) state.expanded[fs._id] = true;
-        setView('gen');   /* 内部会 renderGenList，带上刚设好的筛选 */
-        if(fs) setTimeout(function(){
-          var el = document.querySelector('.gen[data-id="' + fs._id + '"]');
-          if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
-        }, 80);
+        if(fs) locateShot(fs); else setView('gen');   /* renderGenList 带上刚设好的筛选 */
         toast('已筛出剩余' + batchLeftName(lk) + '镜头（' + ((lf && lf.ids) ? lf.ids.length : 0) + ' 个），点批量按钮即可续跑');
         break;
       }
@@ -7463,16 +7514,22 @@ function bind(){
         if(!hh.length){ toast('已经没有硬性缺料的镜头了'); break; }
         state.filter = 'all';
         if($('filterSel')) $('filterSel').value = 'all';
-        var hx = shotById(hh[0].id);
-        if(hx) state.expanded[hx._id] = true;
-        setView('gen');
-        if(hx) setTimeout(function(){
-          var el = document.querySelector('.gen[data-id="' + hx._id + '"]');
-          if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
-        }, 80);
+        locateShot(shotById(hh[0].id));
         toast('已定位到第 ' + hh[0].no + ' 镜（' + hh[0].issues.join('、') + '）');
         break;
       }
+      /* v2.27：体检明细里逐条「去改」——关掉明细、直接跳到那一镜 */
+      case 'hfixone': {
+        closeDlg(false);
+        var h1 = shotById(id);
+        if(!h1){ toast('没找到这一镜，可能已被删除'); break; }
+        locateShot(h1);
+        toast('已定位到第 ' + (h1['镜号'] || '') + ' 镜，改完可再点「查看明细」复查');
+        break;
+      }
+      /* v2.27：明细内就地修复——关明细 → 走确认 → 修完（或取消）自动重列明细，看得见还剩什么 */
+      case 'hfixallbox': closeDlg(false); fixHealthAuto(null, function(){ setTimeout(showHealthBox, 30); }); break;
+      case 'hfixdurbox': closeDlg(false); fixHealthAuto(['dur'], function(){ setTimeout(showHealthBox, 30); }); break;
       case 'rnguse': applyRangePreset(t.getAttribute('data-i')); break;      /* v2.20：套用镜号预设 */
       case 'rngdel': delRangePreset(t.getAttribute('data-i')); break;        /* v2.20：删除镜号预设 */
       case 'rngfilter': filterByRangePreset(t.getAttribute('data-i')); break;/* v2.22：按选区预设筛选生成页 */
