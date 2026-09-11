@@ -601,6 +601,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="costume">古装 / 年代（厚衣遮肤色，更依赖显著性）</option>
         <option value="anime">动画 / 二次元（平坦高饱和，放宽显著性阈值）</option>
       </select></div>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
+      <input type="checkbox" id="cf_genrePrompt" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
+      <span>并把<b>剧集画面类型</b>也写进生成提示词（v2.17：把「古装 / 动画 / 现代写实」提前告诉模型，避免古装被画成现代装、动画被画成实拍；选「自动」时不注入，填了<b>全局画风前缀</b>时也照常叠加）</span>
+    </label>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
       <option value="6">6（一致性最强，角色多时才用，个别接口可能报错）</option></select></div>
@@ -846,10 +850,17 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div class="hint" style="margin-bottom:14px">所有导出、合成与备份集中在这里，功能与按钮与之前完全一致，只是不再挤占工具区。</div>
 
     <div class="sec-t">★ 一键全导出</div>
+    <div class="fld" style="max-width:480px"><label>打包范围（v2.17：成套导出不必每次都导整本，可只出其中一部分）</label>
+      <select class="inp" id="expScope">
+        <option value="all">全部镜头（默认）</option>
+        <option value="done">仅已完成（有视频 / 口型视频）的镜头</option>
+        <option value="filter">跟随「③ 生成图 / 视频」页当前筛选</option>
+        <option value="chapter">仅「① 剧本拆镜」页勾选的章节</option>
+      </select></div>
     <div class="tools" style="margin-bottom:16px">
       <button class="btn" id="btnExpBundle">一键打包导出（.zip，字幕 + 脚本 + 清单 + 数据 + 转码命令）</button>
     </div>
-    <div class="hint" style="margin:-8px 0 16px">把下面 ① ② ③ 组里能导的东西一次打成一个压缩包；本机有配音时会问你要不要连整轨一起打进去。绝不丢内容，单个导出照旧可用。</div>
+    <div class="hint" style="margin:-8px 0 16px">把下面 ① ② ③ 组里能导的东西一次打成一个压缩包（字幕 / 脚本 / 清单 / 数据都会按上面的「打包范围」筛选，整轨配音也同步）；本机有配音时会问你要不要连整轨一起打进去。绝不丢内容，单个导出照旧可用。</div>
 
     <div class="sec-t">① 出片</div>
     <div class="tools" style="margin-bottom:16px">
@@ -1060,7 +1071,13 @@ var DEFAULT_CFG = {
   /* v2.13：imgSafe = 候选图评分里计入构图安全区（底部过挤 / 主体贴边被裁 / 重心偏离） */
   imgSafe:true,
   /* v2.14：imgSubj = 候选图评分里计入人物主体占比（肤色像素比例近似，免模型） */
-  imgSubj:true
+  imgSubj:true,
+  /* v2.16：genre = 剧集画面类型（auto/modern/costume/anime），按类型调评分阈值。
+     v2.17：补进 DEFAULT_CFG——loadCfg 只回填「已在 cfg 里的键」，之前漏了导致刷新后类型选择丢失。
+     genrePrompt = 是否把该画面类型也写进生成提示词（默认开，auto 本身无描述等同不注入）。 */
+  genre:'auto', genrePrompt:true,
+  /* v2.17：expScope = 一键打包的默认范围（all/done/filter/chapter），记住上次选择 */
+  expScope:'all'
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1182,8 +1199,14 @@ function batchLeftTip(){
   if(btn && btn.tagName === 'BUTTON'){
     btn.textContent = String(btn.textContent).replace(/（续跑 \d+）/, '') + '（续跑 ' + n + '）';
   }
+  renderToday();   /* v2.17：首页「现在要处理」也要出现这张续跑卡（refreshAll 在本函数之前已跑过） */
 }
-function runPool(list, worker, onOne){
+/* v2.17：把剩余镜号缩成「1, 3, 7 等」，太长就省略，首页卡片不至于被撑爆 */
+function leftNosPreview(ids, max){
+  var n = Math.max(1, num(max) || 6), arr = ids || [], head = arr.slice(0, n).join(', ');
+  return arr.length > n ? head + ' 等' : head;
+}
+function runPool(list, worker, onOne, opts){   /* v2.17：补回第 4 个参数 opts——v2.16 漏了形参，函数体里的 opts.kind 会抛 ReferenceError，收尾逻辑全废 */
   var conc = Math.max(1, Math.min(8, num(cfg.conc) || 1));
   var retryN = Math.max(0, Math.min(3, num(cfg.retry)));
   var total = list.length, done = 0, i = 0, stopped = false;
@@ -1668,6 +1691,15 @@ function renderToday(){
       '<span class="txt">还有 ' + pendingAssets.length + ' 张设定图没生成，先生成它们再出分镜图</span>' +
       '<button class="btn sm" data-act="goasset">去生成</button></div>';
   }
+  /* v2.17：上次批量没跑完的剩余进度——首页给一处可见入口，点「去续跑」直接跳到对应镜头 */
+  var left = batchLoadLeft();
+  if(left && left.ids && left.ids.length){
+    html += '<div class="todo" style="background:#EEF0FF;border-color:#DCD9FB">' +
+      '<span class="bad" style="color:#5B5BD6">续跑</span>' +
+      '<span class="txt">上次' + batchLeftName(left.kind) + '还剩 ' + left.ids.length + ' 个没跑完（第 ' + esc(leftNosPreview(left.ids)) + ' 镜）</span>' +
+      '<button class="btn sm" data-act="leftjump" data-kind="' + esc(left.kind || '') + '">去续跑</button>' +
+      '<button class="btn gh sm" data-act="leftclear">忽略</button></div>';
+  }
   if(!items.length && !html){
     box.innerHTML = '<div class="hint">' +
       (s.total ? '所有镜头都已推进到位了，可以去「成片与导出」收尾。' : '还没有分镜。到「剧本拆镜」粘贴小说，点「AI 一键拆镜」开始。') + '</div>';
@@ -2033,6 +2065,7 @@ function fillSettings(){
   if($('cf_imgSafe')) $('cf_imgSafe').checked = cfg.imgSafe !== false;
   if($('cf_imgSubj')) $('cf_imgSubj').checked = cfg.imgSubj !== false;
   if($('cf_genre')) $('cf_genre').value = GENRE_OPTS[cfg.genre] ? cfg.genre : 'auto';
+  if($('cf_genrePrompt')) $('cf_genrePrompt').checked = cfg.genrePrompt !== false;
   if($('cf_batchCand')) $('cf_batchCand').checked = !!cfg.batchCand;
   if($('cf_cueTts')) $('cf_cueTts').checked = !!cfg.cueTts;
   if($('cf_ttsKey')) $('cf_ttsKey').value = cfg.ttsKey;
@@ -2105,6 +2138,7 @@ function readSettings(){
   if($('cf_imgSafe')) cfg.imgSafe = !!$('cf_imgSafe').checked;
   if($('cf_imgSubj')) cfg.imgSubj = !!$('cf_imgSubj').checked;
   if($('cf_genre')) cfg.genre = GENRE_OPTS[$('cf_genre').value] ? $('cf_genre').value : 'auto';
+  if($('cf_genrePrompt')) cfg.genrePrompt = !!$('cf_genrePrompt').checked;
   if($('cf_batchCand')) cfg.batchCand = !!$('cf_batchCand').checked;
   if($('cf_cueTts')) cfg.cueTts = !!$('cf_cueTts').checked;
   if($('cf_ttsKey')) cfg.ttsKey = $('cf_ttsKey').value.trim();
@@ -2232,6 +2266,9 @@ function buildImageBody(s){
   var main = (s['英文提示词'] && String(s['英文提示词']).trim()) || (s['画面描述'] && String(s['画面描述']).trim()) || '';
   var parts = [];
   if(cfg.prefix) parts.push(cfg.prefix);
+  /* v2.17：把「剧集画面类型」前置给模型（auto 类型描述为空 → 不注入，行为与 v2.16 一致） */
+  var gEn = genrePromptOn() ? genreStyleEn() : '';
+  if(gEn) parts.push('Genre and visual style: ' + gEn + '.');
 
   /* 1. 参考图：逐张说明身份，模型才知道哪张是谁 */
   if(anc.urls.length){
@@ -2321,9 +2358,11 @@ function buildAssetBody(a, which){
       ? ', wide shot of the SAME empty location from the opposite camera angle, no people, identical furniture and layout, natural lighting, high detail'
       : ', wide establishing shot, completely empty location with no people, natural lighting, wide angle, clear spatial layout of furniture doors and windows, high detail';
   }
+  /* v2.17：设定图也带上剧集画面类型（角色卡画成古装/动画，后续分镜才有统一参考） */
+  var gEnA = genrePromptOn() ? genreStyleEn() : '';
   var body = {
     model: 'agnes-image-2.5-flash',
-    prompt: (cfg.prefix ? cfg.prefix + ' ' : '') + anchor + outfit + extra,
+    prompt: (cfg.prefix ? cfg.prefix + ' ' : '') + (gEnA ? gEnA + ' ' : '') + anchor + outfit + extra,
     size: '1K',
     ratio: isRole ? '3:4' : cfg.imgRatio,
     extra_body: { response_format: 'url' }
@@ -2647,17 +2686,30 @@ function skinRatio(d, w, h){
    为什么需要：古装厚衣几乎不露肤色、动画高饱和且光照平坦，两者都会让「主体占比」偏低而误报空镜；
    而现代都市真人剧肤色最可信，可以把更多权重给肤色。
    所有阈值都有内置默认值（= auto），不传 opt 时行为与 v2.15 完全一致。 */
+/* v2.17：除阈值外，再给每种类型配一段「画面类型」画风描述（cn 给视频/中文提示，en 给生图英文提示）。
+   auto 留空 = 不注入，行为与 v2.16 完全一致；其余类型把「这是古装 / 动画」提前告诉模型，
+   避免把古装人物画成现代装、把动画画成实拍——这是评分阈值管不到的另一半。 */
 var GENRE_OPTS = {
-  auto:    { salDev: 0.12, salGrad: 1.5, salW: 0.60, faint: 0.015, small: 0.040, huge: 0.62, loBand: 0.05, hiBand: 0.40, busyHi: 1.60, cutHi: 1.70, offHi: 0.42 },
-  modern:  { salDev: 0.13, salGrad: 1.6, salW: 0.50, faint: 0.015, small: 0.040, huge: 0.62, loBand: 0.05, hiBand: 0.42, busyHi: 1.60, cutHi: 1.70, offHi: 0.42 },
-  costume: { salDev: 0.10, salGrad: 1.3, salW: 0.85, faint: 0.010, small: 0.030, huge: 0.60, loBand: 0.04, hiBand: 0.38, busyHi: 1.75, cutHi: 1.85, offHi: 0.46 },
-  anime:   { salDev: 0.17, salGrad: 2.2, salW: 0.55, faint: 0.020, small: 0.050, huge: 0.68, loBand: 0.06, hiBand: 0.45, busyHi: 1.45, cutHi: 1.55, offHi: 0.40 }
+  auto:    { salDev: 0.12, salGrad: 1.5, salW: 0.60, faint: 0.015, small: 0.040, huge: 0.62, loBand: 0.05, hiBand: 0.40, busyHi: 1.60, cutHi: 1.70, offHi: 0.42, cn:'', en:'' },
+  modern:  { salDev: 0.13, salGrad: 1.6, salW: 0.50, faint: 0.015, small: 0.040, huge: 0.62, loBand: 0.05, hiBand: 0.42, busyHi: 1.60, cutHi: 1.70, offHi: 0.42,
+             cn:'现代都市写实剧，当代生活场景与真实服化道，自然光与实景质感',
+             en:'modern urban realistic drama, contemporary setting and costumes, natural daylight, true-to-life production design' },
+  costume: { salDev: 0.10, salGrad: 1.3, salW: 0.85, faint: 0.010, small: 0.030, huge: 0.60, loBand: 0.04, hiBand: 0.38, busyHi: 1.75, cutHi: 1.85, offHi: 0.46,
+             cn:'中国古装剧，东方古典美学，汉服与传统建筑陈设，柔和自然光',
+             en:'chinese period costume drama, eastern classical aesthetics, traditional hanfu robes and ancient architectural interior, soft natural light' },
+  anime:   { salDev: 0.17, salGrad: 2.2, salW: 0.55, faint: 0.020, small: 0.050, huge: 0.68, loBand: 0.06, hiBand: 0.45, busyHi: 1.45, cutHi: 1.55, offHi: 0.40,
+             cn:'日式二维动画番剧，赛璐璐平涂上色，干净线稿与细腻背景美术',
+             en:'japanese 2d anime series, cel-shaded flat coloring, clean line art, detailed anime background art' }
 };
 /* 取当前剧集类型对应的阈值（异常/缺省一律回落到 auto，保证不会因为脏配置算错分） */
 function genreOpts(){
   var g = (cfg && cfg.genre) || 'auto';
   return GENRE_OPTS[g] || GENRE_OPTS.auto;
 }
+/* v2.17：剧集画面类型写进生成提示词的总开关（默认开；auto 类型本身不带描述，等同不注入） */
+function genrePromptOn(){ return !(cfg && cfg.genrePrompt === false); }
+function genreStyleCn(){ var o = genreOpts(); return (o && o.cn) || ''; }
+function genreStyleEn(){ var o = genreOpts(); return (o && o.en) || ''; }
 /* v2.15：主体占比 = 肤色占比 ∪ 显著性占比（取较大者，显著性按 salW 打折）。
    为什么要改：v2.14 只用肤色，暗调夜戏 / 古装厚衣 / 强色偏一律被打成「看不到人物」的假报警。
    显著性用「亮度偏离全图均值 + 边缘强度」找前景，对人物不依赖肤色，代价是风景空镜也会有一点分——
@@ -2959,6 +3011,9 @@ function buildVideoBody(s){
   if(String(s['光影氛围'] || '').trim()) prompt += '，光影氛围：' + String(s['光影氛围']).trim();
   /* v2.8：项目级统一画风令牌——整剧固定同一视觉调性，防止镜头间风格漂移 */
   if(String(cfg.globalStyle || '').trim()) prompt += '，本剧统一画风：' + String(cfg.globalStyle).trim();
+  /* v2.17：把剧集画面类型也写进视频提示（auto 类型为空 → 不注入） */
+  var gCnV = genrePromptOn() ? genreStyleCn() : '';
+  if(gCnV) prompt += '，画面类型：' + gCnV;
   if(cfg.prefix) prompt = cfg.prefix + prompt;
   /* 视频提示词覆盖：在「查看提示词」里手动改过就用改后的 */
   if(String(s['视频提示词覆盖'] || '').trim()) prompt = String(s['视频提示词覆盖']).trim();
@@ -3480,10 +3535,12 @@ function batchAudio(){
           if(left){
             batchBarClose('已暂停：完成 ' + ok + ' 条' + (bad ? '，失败 ' + bad + ' 条' : ''), 'audio');
             toast('已暂停，还剩 ' + left + ' 条未完成（点批量按钮续跑）');
+            renderToday();   /* v2.17：首页续跑卡同步 */
             return;
           }
           batchBarClose('配音完成：成功 ' + ok + ' 条' + (bad ? '，失败 ' + bad + ' 条（可点「重试失败」）' : ''), 'audio');
           toast(bad ? ('配音完成，' + bad + ' 条失败') : ('配音全部完成，共 ' + ok + ' 条'));
+          renderToday();   /* v2.17：跑完则续跑卡同步消失 */
         });
     });
 }
@@ -3713,11 +3770,12 @@ function shotDur(s){
 }
 /* v2.16：把字幕生成抽成纯函数，「导出单个」与「一键打包」共用同一份逻辑，避免两处算出不同结果。
    返回 { text, n, cueTotal, alignN }，没有任何台词时返回 null。 */
-function buildSrtText(){
-  if(!state.shots.length) return null;
+function buildSrtText(scope){   /* v2.17：可选 scope 只导出指定范围；不传 = 全部镜头，行为与之前一致 */
+  var L = scope || state.shots;
+  if(!L.length) return null;
   var rate = num(cfg.cnRate) || 4.5;
   var t = 0, out = [], n = 0, cueTotal = 0, alignN = 0;
-  state.shots.forEach(function(s){
+  L.forEach(function(s){
     var d = shotDur(s), text = String(s['台词旁白'] || '').trim();
     if(text){
       /* v2.9：逐句 cue 拆条——一句一条字幕，时间按各句预计语速占比在本镜时长内分配 */
@@ -3811,8 +3869,8 @@ function mixBgm(out){
 }
 /* v2.16：把「按镜序拼整轨 + 混 BGM」抽成纯异步函数，供「导出整轨」与「一键打包」共用。
    返回 { mix, ab, sec, withBgm }；没有任何本机配音时返回 null。 */
-function buildTrackWav(){
-  var list = state.shots.slice().sort(function(a,b){ return num(a['镜号']) - num(b['镜号']); });
+function buildTrackWav(scope){   /* v2.17：可选 scope 只合成指定范围的整轨（与打包范围同源） */
+  var list = sortShots(scope || state.shots);
   var has = 0;
   list.forEach(function(s){ if(audLoad(s._id)) has++; });
   if(!has) return Promise.resolve(null);
@@ -3952,30 +4010,74 @@ function downloadZip(name, files){
   setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(u); }, 400);
   toast('已导出 ' + files.length + ' 个文件，共 ' + Math.max(1, Math.round(buf.length / 1024)) + ' KB');
 }
+/* v2.17：统一按镜号排序——字幕 / 清单 / 整轨的顺序口径只此一处，避免各处各排各的 */
+function sortShots(list){ return (list || []).slice().sort(function(a,b){ return num(a['镜号']) - num(b['镜号']); }); }
+function selectedChapterTitles(){
+  var out = {};
+  (state.chapters || []).forEach(function(c){ if(c.sel) out[String(c.title || '')] = 1; });
+  return out;
+}
+/* v2.17：一键打包的「范围」——把导出对象收窄到用户真正要用的那一部分。
+   filter 分支复用「生成图/视频」页的 filteredShots()，保证两处筛选口径一致； */
+function exportScopeShots(){
+  var sc = ($('expScope') && $('expScope').value) || 'all';
+  var list = sortShots(state.shots);
+  if(sc === 'done'){
+    return list.filter(function(s){ return !!(s['口型视频URL'] || s['视频URL'] || s['视频状态'] === '已完成'); });
+  }
+  if(sc === 'filter'){
+    var keep = {};
+    filteredShots().forEach(function(s){ keep[s._id] = 1; });
+    return list.filter(function(s){ return keep[s._id]; });
+  }
+  if(sc === 'chapter'){
+    var sel = selectedChapterTitles(), has = false, k;
+    for(k in sel){ has = true; break; }
+    if(!has) return list;   /* 一个章节都没勾 → 视为不限，避免导出空包 */
+    return list.filter(function(s){ return sel[String(s['章节'] || '')]; });
+  }
+  return list;
+}
+function scopeLabel(){
+  var sc = ($('expScope') && $('expScope').value) || 'all';
+  return { all:'全部镜头', done:'仅已完成镜头', filter:'跟随当前筛选', chapter:'仅勾选章节' }[sc] || '全部镜头';
+}
 /* 一键把所有能导的东西打成一个包：srt + md + csv + json + 转码命令（+ 可选整轨 wav）。
-   每个文件都是复用单独导出时的同一份内容（build* 系列纯函数），不会出现「单导和打包结果不一致」。 */
+   每个文件都是复用单独导出时的同一份内容（build* 系列纯函数），不会出现「单导和打包结果不一致」。
+   v2.17：全部按「打包范围」筛选，范围写进包内说明，避免拿到包不知道导的是哪一部分。 */
 function exportBundle(){
   if(!state.shots.length){ toast('还没有分镜，先导入小说拆镜'); return; }
+  var scope = exportScopeShots();
+  if(!scope.length){ toast('当前打包范围内没有镜头，换个范围再试'); return; }
   var files = [];
-  var srt = buildSrtText();
+  var srt = buildSrtText(scope);
   if(srt) files.push({ name: '分镜字幕.srt', data: srt.text });
-  files.push({ name: '分镜脚本.md', data: buildMdText() });
-  files.push({ name: '视频清单.csv', data: '\ufeff' + buildCsvText() });
+  files.push({ name: '分镜脚本.md', data: buildMdText(scope) });
+  files.push({ name: '视频清单.csv', data: '\ufeff' + buildCsvText(scope) });
   files.push({ name: '全量数据.json', data: JSON.stringify({
     exportedAt: nowStr(),
+    scope: scopeLabel(),
+    shotCount: scope.length,
     novel: ($('novel') && $('novel').value) || '',
-    assets: state.assets, shots: state.shots
+    assets: state.assets, shots: scope
   }, null, 2) });
   files.push({ name: '转码命令.txt', data: ffmpegMp3Cmd() });
+  files.push({ name: '打包说明.txt', data:
+    '导出时间：' + nowStr() + '\n' +
+    '打包范围：' + scopeLabel() + '\n' +
+    '包含镜头：' + scope.length + ' / ' + state.shots.length + ' 镜' +
+    (scope.length < state.shots.length ? '（第 ' + scope.map(function(s){ return s['镜号']; }).join(', ') + ' 镜）' : '（全部）') + '\n' +
+    '说明：字幕 / 脚本 / 清单 / 全量数据 / 整轨配音均只含上述范围内的镜头；' +
+    '如需整本导出，把「打包范围」改回「全部镜头」再打一次。\n' });
   var hasAud = false;
-  state.shots.forEach(function(s){ if(audLoad(s._id)) hasAud = true; });
+  scope.forEach(function(s){ if(audLoad(s._id)) hasAud = true; });
   var name = '短剧工作台导出包_' + nowStr().replace(/[: ]/g,'-') + '.zip';
   if(!hasAud){ downloadZip(name, files); return; }
-  askConfirm('本机有已生成的配音，是否把整轨配音（.wav）也打进包里？文件会大一些。', '一起打包', true)
+  askConfirm('本机有已生成的配音，是否把整轨配音（.wav）也打进包里？文件会大一些。（整轨只含上面所选范围内的镜头）', '一起打包', true)
     .then(function(withAud){
       if(!withAud){ downloadZip(name, files); return; }
       toast('正在合成整轨配音…');
-      buildTrackWav().then(function(r){
+      buildTrackWav(scope).then(function(r){
         if(r && r.ab) files.push({ name: '整轨配音.wav', data: new Uint8Array(r.ab) });
         else toast('没取到可用配音，包里跳过整轨');
         downloadZip(name, files);
@@ -4741,10 +4843,12 @@ function batch(kind){
         if(left){
           batchBarClose('已暂停：' + (list.length - left - bad) + ' / ' + list.length + tail, kind);
           toast('已暂停，还剩 ' + left + ' 个未完成（点批量按钮续跑）');
+          renderToday();   /* v2.17：首页续跑卡立刻出现，不用等手动刷新 */
           return;
         }
         batchBarClose('批量完成：' + (list.length - bad) + ' / ' + list.length + tail, kind);
         toast(pend ? ('批量完成：' + pend + ' 个镜头的候选图待挑选') : '批量任务已全部完成');
+        renderToday();   /* v2.17：跑完则续跑卡同步消失 */
       });
     });
 }
@@ -5536,7 +5640,8 @@ function restoreBackupAudio(data){
     if(o && o.b64) audSave(s._id, o.b64, o.mime || 'audio/mpeg', o.dur || num(s['音频时长']) || 0);
   });
 }
-function buildMdText(){
+function buildMdText(scope){
+  var L = scope || state.shots;
   var lines = ['# 分镜脚本', '', '> 导出时间：' + nowStr(), ''];
   if(state.assets.length){
     lines.push('## 角色与场景设定', '');
@@ -5546,7 +5651,7 @@ function buildMdText(){
     });
     lines.push('');
   }
-  state.shots.forEach(function(s){
+  L.forEach(function(s){
     lines.push('## 第 ' + s['镜号'] + ' 镜 · ' + (num(s['时长秒'])||5) + '秒 · ' + (s['景别']||'中景') +
       (s['章节'] ? '　〔' + s['章节'] + '〕' : ''));
     lines.push('- 画面：' + (s['画面描述'] || ''));
@@ -5570,9 +5675,10 @@ function exportMd(){
   download('分镜脚本_' + nowStr().replace(/[: ]/g,'-') + '.md', buildMdText(), 'text/markdown');
   toast('已导出分镜脚本');
 }
-function buildCsvText(){
+function buildCsvText(scope){
+  var L = scope || state.shots;
   var rows = [['镜号','章节','景别','光影氛围','画面描述','运镜','角色情绪','说话角色','台词旁白','语音秒','出场角色','场景','时长秒','图片URL','视频URL','口型视频URL','口型风险','图片状态','视频状态','配音状态','口型状态']];
-  state.shots.forEach(function(s){
+  L.forEach(function(s){
     rows.push([s['镜号'], s['章节']||'', s['景别']||'中景', s['光影氛围']||'', s['画面描述']||'', s['运镜']||'', s['角色情绪']||'', s['说话角色']||'',
                s['台词旁白']||'', num(s['音频时长'])>0 ? num(s['音频时长']).toFixed(2) : '', s['出场角色']||'', s['场景']||'',
                num(s['时长秒'])||5, s['图片URL']||'', s['视频URL']||'', s['口型视频URL']||'',
@@ -5717,6 +5823,25 @@ function bind(){
         setTimeout(function(){ if(kind === 'img') genImage(id); else if(kind === 'audio') genAudio(id); else genVideo(id); }, 60);
         break;
       }
+      /* v2.17：首页「去续跑」——切到对应筛选、展开并滚动到第一个剩余镜头 */
+      case 'leftjump': {
+        var lk = t.getAttribute('data-kind');
+        var lf = batchLoadLeft();
+        var want = lk === 'img' ? 'noimg' : (lk === 'vid' ? 'novid' : 'all');
+        state.filter = want;
+        if($('filterSel')) $('filterSel').value = want;
+        var firstNo = (lf && lf.ids && lf.ids.length) ? lf.ids[0] : 0, fs = null;
+        state.shots.forEach(function(x){ if(num(x['镜号']) === num(firstNo)) fs = x; });
+        if(fs) state.expanded[fs._id] = true;
+        setView('gen');   /* 内部会 renderGenList，带上刚设好的筛选 */
+        if(fs) setTimeout(function(){
+          var el = document.querySelector('.gen[data-id="' + fs._id + '"]');
+          if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
+        }, 80);
+        toast('已筛出剩余' + batchLeftName(lk) + '镜头（' + ((lf && lf.ids) ? lf.ids.length : 0) + ' 个），点批量按钮即可续跑');
+        break;
+      }
+      case 'leftclear': batchClearLeft(); renderToday(); toast('已忽略上次的剩余记录'); break;
       case 'del': {
         var ds = shotById(id);
         askConfirm('确定删除第 ' + (ds ? ds['镜号'] : '') + ' 镜？删除后可用「撤销」恢复。', '删除', true)
@@ -5859,6 +5984,11 @@ function bind(){
   if($('btnExImport')) $('btnExImport').addEventListener('click', function(){ closeExportPanel(); if($('fileJson')) $('fileJson').click(); });
   if($('btnExClear')) $('btnExClear').addEventListener('click', function(){ closeExportPanel(); if($('btnClear')) $('btnClear').click(); });
   if($('btnExpBundle')) $('btnExpBundle').addEventListener('click', exportBundle);
+  /* v2.17：打包范围记住上次选择（默认全部），免得每次都重选 */
+  if($('expScope')){
+    $('expScope').value = cfg.expScope || 'all';
+    $('expScope').addEventListener('change', function(){ cfg.expScope = this.value; saveCfg(); });
+  }
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
   if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
