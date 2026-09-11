@@ -1533,8 +1533,10 @@ function localSave(list){
   try{ localStorage.setItem(LS+'shots', JSON.stringify(list)); }
   catch(e){ toast('本地存储写入失败，数据量可能过大，建议导出备份后清理'); }
 }
-function setSync(mode){
+/* v2.31：msg 是「正在进行的第几步」这类临时文案，只在本条链路跑完前显示 */
+function setSync(mode, msg){
   state.syncing = (mode === 'busy'); state.online = (mode !== 'off');
+  state.syncMsg = msg || '';
   renderSync();
 }
 function loadPage(cursor, acc, guard){
@@ -1645,11 +1647,18 @@ function bulkPatch(updates){
    此前这些地方都是 `ids.reduce(chain...)`：一条失败整链断掉，后面的全不执行，
    而且要么没有 catch（unhandled rejection、UI 不刷新）、要么 catch 里只 console.error
    （静默半成功，用户以为都成了）。现在统一：跑完 + 汇总 {ok, fail, errs}，由调用方决定提示与收尾。
-   jobs: [function(){ return Promise }]（返回 undefined 也算成功，兼容 `p ? ... : null` 的写法）。 */
-function runSerial(jobs){
-  var ok = 0, errs = [], chain = Promise.resolve();
+   jobs: [function(){ return Promise }]（返回 undefined 也算成功，兼容 `p ? ... : null` 的写法）。
+   opts（v2.31）：{ label:'清空分镜', min:8 }——条数 >= min 时同步条上显示「label 3/20」，
+   免得几十条的活儿只有个转圈，看着像卡死。默认 min=8，不想显示进度就不传 label。 */
+function runSerial(jobs, opts){
+  opts = opts || {};
+  var ok = 0, errs = [], done = 0, chain = Promise.resolve();
+  var total = (jobs || []).length;
+  var label = opts.label || '', min = opts.min || 8;
   (jobs || []).forEach(function(job){
+    var idx = ++done;
     chain = chain.then(function(){
+      if(label && total >= min) setSync('busy', label + ' ' + idx + '/' + total);
       return Promise.resolve().then(job).then(function(){ ok++; },
         function(e){ console.error(e); errs.push(e); });
     });
@@ -1711,17 +1720,20 @@ function delShot(id){
     .then(function(){ refreshAll(); toast('已删除'); })
     .catch(function(e){ console.error(e); setSync('off'); toast('删除失败：' + (e && e.message ? e.message : e)); });
 }
-function clearAllShots(){
+function clearAllShots(skipUndo){
   var shotIds = state.shots.map(function(s){ return s._id; });
+  if(!shotIds.length) return Promise.resolve();
+  /* v2.31：清空的后悔药——原来只有本地不落盘的内存快照，且压根没在这里入栈。
+     skipUndo 给覆盖导入用：它自己已经存过一张，这里再存一次就变成「撤销要按两下」。 */
+  if(!skipUndo) pushUndo();
   if(!hasCloud()){ purgeAud(shotIds); state.shots = []; localSave([]); refreshAll(); return Promise.resolve(); }
   var p = db();
-  if(!shotIds.length) return Promise.resolve();
   setSync('busy');
   var rep = null;
   /* v2.30：逐条独立 catch——原来一条失败整链断（后面的都不删），且既不刷新也不提示 */
   return runSerial(shotIds.map(function(id){
     return function(){ return p.deleteRecord({ databaseId: DB_ID, recordId: id }); };
-  })).then(function(r){
+  }), { label: '清空分镜' }).then(function(r){
     rep = r;
     if(!r.fail) purgeAud(shotIds);   /* 有失败就先留着：没删掉的镜头仍要用到它的音频 */
     return loadShots();
@@ -1774,7 +1786,7 @@ function addAsset(obj){
   return db().addRecord({ databaseId: ASSET_DB_ID, properties: toProps(obj) })
     .then(function(){ return loadAssets(); })
     .then(function(){ refreshAll(); })
-    .catch(function(e){ console.error(e); setSync('off'); toast('新增失败'); });
+    .catch(function(e){ console.error(e); setSync('off'); toast('新增失败：' + (e && e.message ? e.message : e)); });
 }
 function delAsset(id){
   if(!hasCloud()){
@@ -1785,7 +1797,9 @@ function delAsset(id){
   return db().deleteRecord({ databaseId: ASSET_DB_ID, recordId: id })
     .then(function(){ return loadAssets(); })
     .then(function(){ refreshAll(); })
-    .catch(function(){ toast('删除失败'); });
+    /* v2.31：原来 catch 里只有一句 toast('删除失败')——既不打日志也不说原因，
+       卡没删掉但界面看着像删了（loadAssets 没跑，列表没跟云端对齐）。 */
+    .catch(function(e){ console.error(e); setSync('off'); toast('删除失败：' + (e && e.message ? e.message : e)); });
 }
 
 /* ---------------- 计算层 ---------------- */
@@ -1977,13 +1991,23 @@ function syncAssetsFromShots(){
   });
   if(!todo.length) return 0;
   if(hasCloud()){
-    todo.reduce(function(chain, a){
-      return chain.then(function(){
+    /* v2.31：改 runSerial——原来是一条 addRecord 失败整链断（后面的设定卡全不建）、
+       既没有 catch（unhandled rejection）也不提示，而外面照样按 todo.length 报「已提取 N 张」。
+       现在跑完汇总，只在真失败时补一条更正提示（成功就不重复打扰，沿用调用方的提示）。 */
+    setSync('busy');
+    runSerial(todo.map(function(a){
+      return function(){
         return db().addRecord({ databaseId: ASSET_DB_ID, properties: toProps(
           Object.assign({ 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, a)
         )});
+      };
+    }), { label: '补设定卡' })
+      .then(function(r){ return loadAssets().then(function(){ return r; }); })
+      .then(function(r){
+        refreshAll();
+        if(r.fail){ setSync('off'); toast('设定卡只补上 ' + r.ok + ' 张，' + r.fail + ' 张写入失败（可再点一次提取）'); }
+        else setSync('ok');
       });
-    }, Promise.resolve()).then(function(){ return loadAssets(); }).then(function(){ refreshAll(); });
   }else{
     todo.forEach(function(a){
       state.assets.push(Object.assign(
@@ -2000,7 +2024,9 @@ function renderSync(){
   var d = $('syncDot'), t = $('syncTxt');
   if(!d || !t) return;
   d.className = 'dot' + (state.syncing ? ' busy' : (state.online ? '' : ' off'));
-  t.textContent = state.syncing ? '同步中…' : (state.online ? '已同步' : (state.hasCloud ? '离线模式' : '本地存储'));
+  /* v2.31：批量跑的时候把进度写在这里（清空 / 撤销 / 导入动辄几十条，原来只有个转圈，用户不知道是卡了还是在跑） */
+  t.textContent = state.syncing ? (state.syncMsg || '同步中…')
+    : (state.online ? '已同步' : (state.hasCloud ? '离线模式' : '本地存储'));
 }
 function renderToday(){
   var s = statOf();
@@ -2820,19 +2846,36 @@ function batchAssets(){
   if(!need1.length && !cfg.multiView){ toast('没有待生成的设定图'); return; }
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
   toast('开始生成设定图（这一步决定后面所有镜头的一致性）…');
+  /* v2.31：①同步条上给进度（十几张设定图跑很久，原来只有一句 toast，中途完全没反馈）；
+     ②末端补 catch——loadAssets 之类的失败会让整条链静默 reject，用户一直等到天荒地老。 */
+  var i1 = 0, t1 = need1.length;
   need1.reduce(function(chain, a){
-    return chain.then(function(){ return genAsset(a._id, 1); });
+    return chain.then(function(){
+      setSync('busy', '设定图 ' + (++i1) + '/' + t1);
+      return genAsset(a._id, 1);
+    });
   }, Promise.resolve()).then(function(){
     if(!cfg.multiView) return;
     return loadAssets().then(function(){
       var need2 = state.assets.filter(function(a){ return a['参考图URL'] && !a['参考图2']; });
       if(!need2.length) return;
       toast('主图完成，继续生成 ' + need2.length + ' 张副视图（面部特写 / 反打机位）…');
+      var i2 = 0, t2 = need2.length;
       return need2.reduce(function(c2, a){
-        return c2.then(function(){ return genAsset(a._id, 2); });
+        return c2.then(function(){
+          setSync('busy', '副视图 ' + (++i2) + '/' + t2);
+          return genAsset(a._id, 2);
+        });
       }, Promise.resolve());
     });
-  }).then(function(){ toast('设定图全部完成，现在可以去生成分镜图了'); });
+  }).then(function(){
+    setSync('ok');
+    toast('设定图全部完成，现在可以去生成分镜图了');
+  }).catch(function(e){
+    console.error(e);
+    setSync('off');
+    toast('设定图批量生成中断：' + (e && e.message ? e.message : e));
+  });
 }
 /* AI 批量补全设定描述（中文描述 + 英文锚点） */
 function aiAnchors(){
@@ -3463,6 +3506,7 @@ function autoPickAllCand(){
 /* v2.27：批量选最高分的执行体（不含确认），单拎出来便于测试与复用 */
 function autoPickRun(list){
   if(!list || !list.length){ toast('没有待挑选的候选图'); return; }
+  pushUndo();                     /* v2.31：批量选图也是「一键改几十镜」，给个后悔药 */
   batchBarOpen('批量选最高分（共 ' + list.length + ' 镜）');
   var done = 0, picked = 0, skipped = 0;
   /* v2.28：这里只收集「提交对象」，等全部评完再一次性 bulkPatch——
@@ -5523,18 +5567,63 @@ function assignRenderIdx(sortedList){
   return m;
 }
 function padSeg(n){ return ('00' + n).slice(-3); }
+/* v2.31：撤销快照持久化。原来撤销栈只活在内存里，刷新页面 / 误关标签页就全没了，
+   而「清空 / 覆盖导入 / 批量改」恰恰是最需要后悔药的操作。
+   快照是整表全量，不能照单全存（本机音频 base64 还占着大头），所以：
+   只落最近 UNDO_SAVE 条，总字符数过 UNDO_MAX 就从旧往新丢，写爆配额再逐条丢到能塞下为止。
+   UNDO_KEEP 是内存里保留的条数（比落盘的多，反正内存便宜）。 */
+var UNDO_KEEP = 20, UNDO_SAVE = 3, UNDO_MAX = 600000;
+function undoLsKey(){ return LS + 'undo'; }
+function saveUndo(){
+  try{
+    var arr = (state.undo || []).slice(-UNDO_SAVE), total = 0, cut = 0, i;
+    for(i = arr.length - 1; i >= 0; i--){          /* 从新往旧累加，超了就只留更近的那截 */
+      total += String(arr[i]).length;
+      if(total > UNDO_MAX){ cut = i + 1; break; }
+    }
+    if(cut) arr = arr.slice(cut);
+    while(arr.length){
+      try{ localStorage.setItem(undoLsKey(), JSON.stringify(arr)); return; }
+      catch(e){ arr.shift(); }                     /* 配额不够：丢掉最老的一张再来 */
+    }
+    try{ localStorage.removeItem(undoLsKey()); }catch(e){}
+  }catch(e){}
+}
+/* v2.31：跨刷新恢复快照有个前提——这份快照得还是「当前这份数据的上一版」。
+   换设备、别人改过、或者清空后另起了新数据，旧快照再恢复就是拿历史覆盖现状，
+   比没有撤销更糟。所以只在「最新快照的镜头数、镜头 id 与当前完全一致」时才恢复，否则直接丢掉。 */
+function loadUndo(){
+  try{
+    var v = JSON.parse(localStorage.getItem(undoLsKey()));
+    if(!Array.isArray(v)) return;
+    var arr = v.filter(function(x){ return typeof x === 'string'; }).slice(-UNDO_SAVE);
+    if(!arr.length) return;
+    var last = JSON.parse(arr[arr.length - 1]);
+    var ids = {};
+    state.shots.forEach(function(s){ ids[s._id] = 1; });
+    var lastIds = {};
+    last.forEach(function(x){ lastIds[x._id] = 1; });
+    var every = function(a, inB){ for(var k in a){ if(!inB[k]) return false; } return true; };
+    /* 只允许「纯删」或「纯增」两种偏离：快照 ⊇ 现状（清空过）/ 快照 ⊆ 现状（新增过）。
+       id 完全对不上说明数据已经换了一批（换设备、别人改过），一律作废。 */
+    if(every(ids, lastIds) || every(lastIds, ids)) state.undo = arr;
+    else{ try{ localStorage.removeItem(undoLsKey()); }catch(e){} }
+  }catch(e){}
+}
 function pushUndo(){
   try{
     state.undo = state.undo || [];
     state.undo.push(JSON.stringify(state.shots.map(function(s){
       var o = {}; for(var k in s){ if(k !== '_localOnly') o[k] = s[k]; } return o;
     })));
-    if(state.undo.length > 20) state.undo.shift();
+    if(state.undo.length > UNDO_KEEP) state.undo.shift();
+    saveUndo();                                    /* v2.31：顺手落盘，刷新后还能撤 */
   }catch(e){}
 }
 function undoShots(){
   if(!state.undo || !state.undo.length){ toast('没有可撤销的操作'); return; }
   var snap = JSON.parse(state.undo.pop());
+  saveUndo();                                    /* v2.31：弹掉一张就重新落盘，别让刷新后又冒出来 */
   var p = db(), byId = {}, snapIds = {};
   state.shots.forEach(function(s){ byId[s._id] = s; });
   snap.forEach(function(x){ snapIds[x._id] = true; });
@@ -5557,7 +5646,7 @@ function undoShots(){
     }
   });
   var rep = null;
-  runSerial(jobs)
+  runSerial(jobs, { label: '撤销' })
     .then(function(r){
       rep = r;
       state.shots = snap.map(function(x){ return Object.assign({}, x); });
@@ -6210,6 +6299,7 @@ function splitShots(){
     return arr;
   }).then(function(arr){
     var p = db();
+    pushUndo();                     /* v2.31：一次塞进来几十镜，可撤销 */
     if(!p){
       arr.forEach(function(it){
         state.shots.push(Object.assign({ _id: newId() }, splitShotObj(it, sec)));
@@ -6221,7 +6311,7 @@ function splitShots(){
     /* v2.30：改 runSerial，返回**实际成功条数**（原来固定返回 arr.length，失败也谎报「已写入 N 个」） */
     return runSerial(arr.map(function(it){
       return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(splitShotObj(it, sec)) }); };
-    })).then(function(r){
+    }), { label: '写入分镜' }).then(function(r){
       if(r.fail) toast('拆镜未完成：成功写入 ' + r.ok + ' 个、失败 ' + r.fail + ' 个');
       return r.ok;
     });
@@ -6488,6 +6578,7 @@ function applyHealthFix(plan){
   plan.dur.forEach(function(x){ ups.push({ id: x.s._id, obj: { 时长秒: x.val, 更新时间: t } }); });
   plan.chap.forEach(function(x){ ups.push({ id: x.s._id, obj: { 章节: x.val, 更新时间: t } }); });
   plan.role.forEach(function(x){ ups.push({ id: x.s._id, obj: { 说话角色: x.val, 更新时间: t } }); });
+  if(ups.length) pushUndo();      /* v2.31：体检一键修复会一次改掉几十镜，先存快照再写 */
   bulkPatch(ups);
   return ups.length;
 }
@@ -7385,7 +7476,9 @@ function batchAssetsQuiet(){
         return c2.then(function(){ return genAsset(a._id, 2); });
       }, Promise.resolve());
     });
-  }).then(function(){ return loadAssets(); });
+  }).then(function(){ return loadAssets(); })
+    /* v2.31：静默版更不能往外抛——流水线里一段 reject 会让整条链永远挂在「进行中」 */
+    .catch(function(e){ console.error(e); setSync('off'); });
 }
 
 /* ---------------- 示例数据 ---------------- */
@@ -7429,21 +7522,31 @@ function seedDemo(){
     return;
   }
   setSync('busy');
-  assets.reduce(function(chain, a){
-    return chain.then(function(){
+  /* v2.31：两段都改 runSerial——原来第一条 addRecord 失败整链断，示例只载入一半
+     （有角色卡没分镜，或有分镜没角色卡），外面还照样报「已载入示例」，用户以为齐了。
+     现在设定卡 / 分镜各自汇总，缺哪部分说清楚，且分镜段不会被设定卡段的失败连累。 */
+  runSerial(assets.map(function(a){
+    return function(){
       return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(Object.assign({ 参考图URL:'', 错误信息:'', 更新时间:nowStr() }, a)) });
-    });
-  }, Promise.resolve())
-  .then(function(){ return loadAssets(); })
-  .then(function(){
-    return demo.reduce(function(chain, d){
-      return chain.then(function(){
-        return p.addRecord({ databaseId: DB_ID, properties: toProps(Object.assign({}, shotBase, d)) });
-      });
-    }, Promise.resolve());
-  })
-  .then(function(){ return loadShots(); })
-    .then(function(){ refreshAll(); toast('已载入示例：2 张角色卡 + 1 张场景卡 + 4 个分镜'); })
+    };
+  }))
+    .then(function(ra){ return loadAssets().then(function(){ return ra; }); })
+    .then(function(ra){
+      return runSerial(demo.map(function(d){
+        return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(Object.assign({}, shotBase, d)) }); };
+      })).then(function(rs){ return { a: ra, s: rs }; });
+    })
+    .then(function(r){ return loadShots().then(function(){ return r; }); })
+    .then(function(r){
+      refreshAll();
+      if(!r.a.fail && !r.s.fail){
+        setSync('ok');
+        toast('已载入示例：2 张角色卡 + 1 张场景卡 + 4 个分镜');
+      }else{
+        setSync('off');
+        toast('示例只载入了一部分：设定卡 ' + r.a.ok + '/' + assets.length + '、分镜 ' + r.s.ok + '/' + demo.length + '（可再点一次「载入示例」补齐）');
+      }
+    })
     .catch(function(e){ console.error(e); toast('载入失败'); });
 }
 
@@ -7553,6 +7656,7 @@ function importJson(file){
   fr.readAsText(file);
 }
 function runImport(arr, data){
+    pushUndo();   /* v2.31：覆盖导入也能撤销（原来导入后旧数据就彻底没了） */
     purgeAud();   /* 导入会替换全部分镜 id，旧的本机音频全部作废，清掉释放空间 */
     var p = db();
     var build = function(it){
@@ -7596,18 +7700,18 @@ function runImport(arr, data){
     /* v2.30：两段批量 addRecord 都改 runSerial——原来一条失败整链断（后面的全不导入），
        收尾却照样报「导入完成，共 N 个」，实际只进来一部分。现在按**实际成功条数**汇报。 */
     var repA = null, repS = null;
-    clearAllShots()
+    clearAllShots(true)                       /* v2.31：快照已在 runImport 开头存过，别存两份 */
     .then(function(){ return clearAllAssets(); })
     .then(function(){
       return runSerial(incAssets.map(function(it){
         return function(){ return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(buildAsset(it)) }); };
-      }));
+      }), { label: '导入设定卡' });
     })
     .then(function(r){ repA = r; return loadAssets(); })
     .then(function(){
       return runSerial(arr.map(function(it){
         return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(build(it)) }); };
-      }));
+      }), { label: '导入分镜' });
     }).then(function(r){ repS = r; if(data.novel) $('novel').value = data.novel; })
       .then(function(){ localStorage.setItem(LS+'novel', $('novel').value); })
       .then(function(){ return loadShots(); })
@@ -8210,7 +8314,8 @@ function resetStuck(){
   });
   /* v2.29：镜头侧走 bulkPatch（一次落盘一次刷新），设定图侧通常只有几条，保持逐条 */
   var n = jobs.length ? bulkPatch(jobs) : 0;
-  ajobs.reduce(function(c, j){ return c.then(function(){ return patchAsset(j.id, j.o); }); }, Promise.resolve())
+  /* v2.31：设定卡侧也走 runSerial（原来一条失败整链断，后面的卡一直卡在「生成中」） */
+  runSerial(ajobs.map(function(j){ return function(){ return patchAsset(j.id, j.o); }; }))
     .then(function(){ if(ajobs.length && !n) refreshAll(); });
 }
 function init(){
@@ -8219,7 +8324,10 @@ function init(){
   try{ $('novel').value = localStorage.getItem(LS+'novel') || ''; }catch(e){}
   bind();
   refreshAll();
-  loadShots().then(function(){ return loadAssets(); }).then(function(){
+  loadShots().then(function(){
+    loadUndo();                        /* v2.31：镜头拉下来之后才能判断旧快照还作不作数 */
+    return loadAssets();
+  }).then(function(){
     restoreChapters();          /* 用已保存的小说正文重切章节，恢复勾选与进度 */
     refreshAll();
     if(!state.hasCloud) toast('当前是本地存储模式：数据只保存在这台设备的浏览器里');
