@@ -1640,6 +1640,22 @@ function bulkPatch(updates){
   });
   return n;
 }
+/* v2.30：串行执行一组云端写操作——每条**独立 catch**，失败不中断，跑完给出成功/失败数。
+   与 bulkPatch 是同一类问题的两面：bulkPatch 管「改」，这里管「增 / 删 / 撤销」这类结构性操作。
+   此前这些地方都是 `ids.reduce(chain...)`：一条失败整链断掉，后面的全不执行，
+   而且要么没有 catch（unhandled rejection、UI 不刷新）、要么 catch 里只 console.error
+   （静默半成功，用户以为都成了）。现在统一：跑完 + 汇总 {ok, fail, errs}，由调用方决定提示与收尾。
+   jobs: [function(){ return Promise }]（返回 undefined 也算成功，兼容 `p ? ... : null` 的写法）。 */
+function runSerial(jobs){
+  var ok = 0, errs = [], chain = Promise.resolve();
+  (jobs || []).forEach(function(job){
+    chain = chain.then(function(){
+      return Promise.resolve().then(job).then(function(){ ok++; },
+        function(e){ console.error(e); errs.push(e); });
+    });
+  });
+  return chain.then(function(){ return { ok: ok, fail: errs.length, errs: errs }; });
+}
 /* v2.29：重试上次云端没写成的条目——失败清单在 state.bulkFail 里，重试前先清空，
    再失败会被 bulkPatch 重新填回去，首页卡也就还在。 */
 function retryBulkFail(){
@@ -1683,27 +1699,37 @@ function purgeAud(ids){
   }catch(e){}
 }
 function delShot(id){
-  purgeAud([id]);
   if(!hasCloud()){
+    purgeAud([id]);
     state.shots = state.shots.filter(function(s){ return s._id !== id; });
     localSave(state.shots); refreshAll(); toast('已删除');
     return Promise.resolve();
   }
+  /* v2.30：本机音频**删成功才清**——原来一上来就 purgeAud，云端删除失败时音频已经没了且不可恢复 */
   return db().deleteRecord({ databaseId: DB_ID, recordId: id })
-    .then(function(){ return loadShots(); })
+    .then(function(){ purgeAud([id]); return loadShots(); })
     .then(function(){ refreshAll(); toast('已删除'); })
-    .catch(function(e){ setSync('off'); toast('删除失败'); });
+    .catch(function(e){ console.error(e); setSync('off'); toast('删除失败：' + (e && e.message ? e.message : e)); });
 }
 function clearAllShots(){
-  purgeAud(state.shots.map(function(s){ return s._id; }));
-  if(!hasCloud()){ state.shots = []; localSave([]); refreshAll(); return Promise.resolve(); }
+  var shotIds = state.shots.map(function(s){ return s._id; });
+  if(!hasCloud()){ purgeAud(shotIds); state.shots = []; localSave([]); refreshAll(); return Promise.resolve(); }
   var p = db();
-  var ids = state.shots.map(function(s){ return s._id; });
-  if(!ids.length) return Promise.resolve();
+  if(!shotIds.length) return Promise.resolve();
   setSync('busy');
-  return ids.reduce(function(chain, id){
-    return chain.then(function(){ return p.deleteRecord({ databaseId: DB_ID, recordId: id }); });
-  }, Promise.resolve()).then(function(){ return loadShots(); }).then(function(){ refreshAll(); });
+  var rep = null;
+  /* v2.30：逐条独立 catch——原来一条失败整链断（后面的都不删），且既不刷新也不提示 */
+  return runSerial(shotIds.map(function(id){
+    return function(){ return p.deleteRecord({ databaseId: DB_ID, recordId: id }); };
+  })).then(function(r){
+    rep = r;
+    if(!r.fail) purgeAud(shotIds);   /* 有失败就先留着：没删掉的镜头仍要用到它的音频 */
+    return loadShots();
+  }).then(function(){
+    refreshAll();
+    if(rep && rep.fail){ setSync('off'); toast('清空未完成：已删 ' + rep.ok + ' 条，' + rep.fail + ' 条删除失败（可再点一次清空）'); }
+    else setSync('ok');
+  });
 }
 
 /* ===== 设定卡（角色 / 场景）数据层 ===== */
@@ -1926,9 +1952,16 @@ function clearAllAssets(){
   var p = db();
   var ids = state.assets.map(function(a){ return a._id; });
   if(!ids.length) return Promise.resolve();
-  return ids.reduce(function(chain, id){
-    return chain.then(function(){ return p.deleteRecord({ databaseId: ASSET_DB_ID, recordId: id }); });
-  }, Promise.resolve()).then(function(){ return loadAssets(); });
+  setSync('busy');
+  var rep = null;
+  /* v2.30：逐条独立 catch + 汇总提示（原来一条失败整链断，且不提示） */
+  return runSerial(ids.map(function(id){
+    return function(){ return p.deleteRecord({ databaseId: ASSET_DB_ID, recordId: id }); };
+  })).then(function(r){ rep = r; return loadAssets(); })
+    .then(function(){
+      if(rep && rep.fail){ setSync('off'); toast('设定卡清空未完成：已删 ' + rep.ok + ' 张，' + rep.fail + ' 张失败'); }
+      else setSync('ok');
+    });
 }
 /* 扫描所有分镜，把出现过的角色名 / 场景名补齐成设定卡（去重） */
 function syncAssetsFromShots(){
@@ -5505,30 +5538,41 @@ function undoShots(){
   var p = db(), byId = {}, snapIds = {};
   state.shots.forEach(function(s){ byId[s._id] = s; });
   snap.forEach(function(x){ snapIds[x._id] = true; });
-  var chain = Promise.resolve();
+  /* v2.30：改成「先收集任务、再 runSerial」——原来是一条失败整链断（后面的撤销全不执行），
+     且 catch 里只 console.error，撤销只成功一半却照样提示「已撤销」，用户完全不知情。 */
+  var jobs = [];
   state.shots.forEach(function(s){
     if(!snapIds[s._id]){
-      chain = chain.then(function(){ return p ? p.deleteRecord({ databaseId: DB_ID, recordId: s._id }) : Promise.resolve(); });
+      jobs.push(function(){ return p ? p.deleteRecord({ databaseId: DB_ID, recordId: s._id }) : null; });
     }
   });
   snap.forEach(function(x){
     var cur = byId[x._id];
     if(!cur){
-      chain = chain.then(function(){ return p ? p.addRecord({ databaseId: DB_ID, properties: toProps(x) }) : Promise.resolve(); });
+      jobs.push(function(){ return p ? p.addRecord({ databaseId: DB_ID, properties: toProps(x) }) : null; });
     }else{
       var diff = {}, has = false;
       for(var k in x){ if(k === '_id') continue; if(String(cur[k] == null ? '' : cur[k]) !== String(x[k] == null ? '' : x[k])){ diff[k] = x[k]; has = true; } }
-      if(has) chain = chain.then(function(){ return p ? p.updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps(diff) }) : Promise.resolve(); });
+      if(has) jobs.push(function(){ return p ? p.updateRecord({ databaseId: DB_ID, recordId: x._id, properties: toProps(diff) }) : null; });
     }
   });
-  chain
-    .catch(function(e){ console.error(e); })
-    .then(function(){
+  var rep = null;
+  runSerial(jobs)
+    .then(function(r){
+      rep = r;
       state.shots = snap.map(function(x){ return Object.assign({}, x); });
       if(!hasCloud()) localSave(state.shots);
       return loadShots();
     })
-    .then(function(){ refreshAll(); toast('已撤销上一步操作'); });
+    .then(function(){
+      refreshAll();
+      if(rep && rep.fail){
+        setSync('off');
+        toast('撤销未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新，可再点一次撤销）');
+      }else{
+        toast('已撤销上一步操作');
+      }
+    });
 }
 /* 重排后统一重编号（镜号即顺序，云端也只认这个字段） */
 function renumber(arr){
@@ -6112,14 +6156,16 @@ function saveExtracted(){
   if(!todo.length){ toast('勾选的都已在设定表里了'); closeExtract(); return; }
   closeExtract();
   toast('正在写入 ' + todo.length + ' 张设定卡…');
-  todo.reduce(function(chain, p){
-    return chain.then(function(){
+  /* v2.30：改 runSerial——原来一条失败整链断（后面的都不写），却仍报「已写入 N 张」 */
+  runSerial(todo.map(function(p){
+    return function(){
       return addAsset(Object.assign({ 参考图URL:'', 参考图2:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, p));
-    });
-  }, Promise.resolve()).then(function(){
-    toast('已写入 ' + todo.length + ' 张设定卡，去填描述并生成设定图');
+    };
+  })).then(function(r){
+    if(r.fail) toast('写入未完成：成功 ' + r.ok + ' 张、失败 ' + r.fail + ' 张');
+    else toast('已写入 ' + r.ok + ' 张设定卡，去填描述并生成设定图');
     setView('asset');
-  }).catch(function(e){ console.error(e); toast('写入失败：' + (e.message || e)); });
+  });
 }
 
 /* --- 文本模型：拆镜 --- */
@@ -6172,11 +6218,13 @@ function splitShots(){
       return arr.length;
     }
     setSync('busy');
-    return arr.reduce(function(chain, it){
-      return chain.then(function(){
-        return p.addRecord({ databaseId: DB_ID, properties: toProps(splitShotObj(it, sec)) });
-      });
-    }, Promise.resolve()).then(function(){ return arr.length; });
+    /* v2.30：改 runSerial，返回**实际成功条数**（原来固定返回 arr.length，失败也谎报「已写入 N 个」） */
+    return runSerial(arr.map(function(it){
+      return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(splitShotObj(it, sec)) }); };
+    })).then(function(r){
+      if(r.fail) toast('拆镜未完成：成功写入 ' + r.ok + ' 个、失败 ' + r.fail + ' 个');
+      return r.ok;
+    });
   }).then(function(cnt){
     return loadShots().then(function(){
       var made = syncAssetsFromShots();
@@ -6860,9 +6908,13 @@ function splitChapter(c, n){
       localSave(state.shots);
       return objs.length;
     }
-    return objs.reduce(function(chain, o){
-      return chain.then(function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(o) }); });
-    }, Promise.resolve()).then(function(){ return objs.length; });
+    /* v2.30：改 runSerial——原来一条失败整链断且对外谎报「全部成功」（固定返回 objs.length） */
+    return runSerial(objs.map(function(o){
+      return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(o) }); };
+    })).then(function(r){
+      if(r.fail) toast('新增未完成：成功 ' + r.ok + ' 镜、失败 ' + r.fail + ' 镜');
+      return r.ok;
+    });
   });
 }
 /* 对某章的分镜依次跑某一类任务 */
@@ -7541,22 +7593,35 @@ function runImport(arr, data){
       return;
     }
     setSync('busy');
+    /* v2.30：两段批量 addRecord 都改 runSerial——原来一条失败整链断（后面的全不导入），
+       收尾却照样报「导入完成，共 N 个」，实际只进来一部分。现在按**实际成功条数**汇报。 */
+    var repA = null, repS = null;
     clearAllShots()
     .then(function(){ return clearAllAssets(); })
     .then(function(){
-      return incAssets.reduce(function(chain, it){
-        return chain.then(function(){ return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(buildAsset(it)) }); });
-      }, Promise.resolve());
+      return runSerial(incAssets.map(function(it){
+        return function(){ return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(buildAsset(it)) }); };
+      }));
     })
-    .then(function(){ return loadAssets(); })
+    .then(function(r){ repA = r; return loadAssets(); })
     .then(function(){
-      return arr.reduce(function(chain, it){
-        return chain.then(function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(build(it)) }); });
-      }, Promise.resolve());
-    }).then(function(){ if(data.novel) $('novel').value = data.novel; })
+      return runSerial(arr.map(function(it){
+        return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(build(it)) }); };
+      }));
+    }).then(function(r){ repS = r; if(data.novel) $('novel').value = data.novel; })
       .then(function(){ localStorage.setItem(LS+'novel', $('novel').value); })
       .then(function(){ return loadShots(); })
-      .then(function(){ restoreBackupAudio(data); refreshAll(); toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡'); })
+      .then(function(){
+        var f = (repA ? repA.fail : 0) + (repS ? repS.fail : 0);
+        restoreBackupAudio(data); refreshAll();
+        if(f){
+          setSync('off');
+          toast('导入未完成：设定卡 ' + (repA ? repA.ok : 0) + ' 张、分镜 ' + (repS ? repS.ok : 0) + ' 镜成功，' + f + ' 条失败（已按云端实际状态刷新）');
+        }else{
+          setSync('ok');
+          toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡');
+        }
+      })
       .catch(function(e){ console.error(e); toast('导入失败'); });
 }
 
