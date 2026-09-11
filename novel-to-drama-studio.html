@@ -1209,7 +1209,10 @@ var DEFAULT_CFG = {
   filterViews:[],
   bundlePick:{ srt:true, md:true, csv:true, json:true, ff:true, xlsx:false },
   pipelinePick:{ img:true, vid:true, audio:true, lip:false },
-  bundleStatus:'all'
+  bundleStatus:'all',
+  /* v2.29：healthOpen = 体检明细里各问题类型分组的展开状态 { 问题类型: true/false }。
+     没记住的类型回落「硬性组默认展开」，所以不配也不会错。 */
+  healthOpen:{}
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1594,7 +1597,10 @@ function patchShot(id, obj){
    + 云端 N 个并发请求），一键修复 200 条就是上千次重排、200 个并发请求。
    这里先把同一镜的多条更新合并（如某镜既补时长又补章节），再统一落盘与刷新；
    云端按顺序串行推送——保持写入顺序，也不并发轰接口。
-   updates: [{ id, obj }]；返回实际写入的镜数（镜已被删的条目不计入、也不推云）。 */
+   updates: [{ id, obj }]；返回实际写入的镜数（镜已被删的条目不计入、也不推云）。
+   v2.29 修健壮性问题：原先云端是「一条 reject 整条链断掉」——后面的条目全不推、内存却已改，
+   而本地又只在无云时落盘，于是刷新页面改动全丢、用户还不知道。现在每条独立 catch：
+   失败项收进 state.bulkFail（首页出重试卡），其余继续推；且**先落一次本地**做兜底。 */
 function bulkPatch(updates){
   if(!updates || !updates.length) return 0;
   var byId = {}, order = [];
@@ -1611,18 +1617,38 @@ function bulkPatch(updates){
     return Object.assign({}, s, byId[s._id]);
   });
   if(!n) return 0;                      /* 目标镜全被删了：既不落盘也不推云 */
-  if(!hasCloud()){ localSave(state.shots); refreshAll(); return n; }
+  localSave(state.shots);               /* v2.29：先落本地兜底，云写失败也不至于「改了没存」 */
+  if(!hasCloud()){ refreshAll(); return n; }
   setSync('busy');
-  var chain = Promise.resolve();
+  var fails = [], chain = Promise.resolve();
   order.forEach(function(id){
     if(!hit[id]) return;
     chain = chain.then(function(){
-      return db().updateRecord({ databaseId: DB_ID, recordId: id, properties: toProps(byId[id]) });
+      return db().updateRecord({ databaseId: DB_ID, recordId: id, properties: toProps(byId[id]) })
+        .catch(function(e){ console.error(e); fails.push({ id: id, obj: byId[id], err: e }); });
     });
   });
-  chain.then(function(){ setSync('ok'); refreshAll(); })
-    .catch(function(e){ console.error(e); setSync('off'); toast('保存失败：' + (e && e.message ? e.message : e)); });
+  chain.then(function(){
+    state.bulkFail = fails.slice();     /* 留给首页「重试」入口 */
+    if(fails.length){
+      setSync('off');
+      toast('云端保存失败 ' + fails.length + ' 条（已成功 ' + (n - fails.length) + ' 条，改动已存本机，可在首页点「重试」）');
+    }else{
+      setSync('ok');
+    }
+    refreshAll();
+  });
   return n;
+}
+/* v2.29：重试上次云端没写成的条目——失败清单在 state.bulkFail 里，重试前先清空，
+   再失败会被 bulkPatch 重新填回去，首页卡也就还在。 */
+function retryBulkFail(){
+  var f = state.bulkFail || [];
+  if(!f.length){ toast('没有待重试的云端写入'); return; }
+  state.bulkFail = [];
+  var n = bulkPatch(f.map(function(x){ return { id: x.id, obj: x.obj }; }));
+  if(n) toast('正在重试 ' + n + ' 条云端写入…');
+  else { toast('这些镜头已不在表中，无需重试'); refreshAll(); }
 }
 function addShotObj(obj){
   if(!hasCloud()){
@@ -1960,6 +1986,14 @@ function renderToday(){
   var pendingAssets = state.assets.filter(function(a){ return (a['状态'] || '未生成') !== '已完成'; });
   var html = '';
   $('updAt').textContent = '共 ' + s.total + ' 镜 · 预计成片 ' + fmtSec(s.seconds);
+  /* v2.29：云端批量写入有失败项——改动已存本机但没写进云端，刷新（重拉云端）会丢，必须显式提醒 + 给重试入口 */
+  if(state.bulkFail && state.bulkFail.length){
+    html += '<div class="todo" style="background:#FDECEC;border-color:#F3B7B7">' +
+      '<span class="bad" style="color:#B42318">未同步</span>' +
+      '<span class="txt">有 ' + state.bulkFail.length + ' 条改动没写进云端（已存在本机）。现在重试，或先检查网络 / 数据表权限：</span>' +
+      '<button class="btn sm" data-act="bulkretry">重试写入</button>' +
+      '<button class="btn gh sm" data-act="bulkfailclear">忽略</button></div>';
+  }
   if(pendingAssets.length && state.shots.length){
     html += '<div class="todo" style="background:var(--warn-soft);border-color:#F5D9A0">' +
       '<span class="bad" style="color:#B46B00">一致性</span>' +
@@ -6251,6 +6285,22 @@ function healthGroupRows(issues){
     return ((b.hard ? 1 : 0) - (a.hard ? 1 : 0)) || (b.rows.length - a.rows.length) || (a.type < b.type ? -1 : 1);
   });
 }
+/* v2.29：记住体检明细各分组的展开状态。<details> 的 toggle 事件**不冒泡**，所以只能在
+   document 上用捕获阶段监听；只认带 data-hg 的分组（别处用 details 不受影响）。 */
+var _hgBound = false;
+function bindHealthGroupToggle(){
+  if(_hgBound) return;
+  _hgBound = true;
+  document.addEventListener('toggle', function(ev){
+    var d = ev.target;
+    if(!d || d.tagName !== 'DETAILS') return;
+    var k = d.getAttribute('data-hg');
+    if(!k) return;
+    cfg.healthOpen = cfg.healthOpen || {};
+    cfg.healthOpen[k] = !!d.open;
+    saveCfg();
+  }, true);
+}
 /* 体检明细：不导出时也能在页面上扫一眼（对话框内滚动，最多列 200 条）
    v2.27：从「只读清单」升级为可操作——每条带「去改」直接跳到那一镜；
    顶部给「一键自动修复(N)」「只补时长」两个就地动作，修完/取消都自动重列，方便复查还剩什么。 */
@@ -6266,9 +6316,12 @@ function showHealthBox(){
       '</div>'
     : '';
   /* v2.28：按问题类型分组——每组一个可折叠的 <details>（原生折叠，零 JS 状态），
-     硬性组默认展开；组头带条数与「可自动修复」标，方便一类一类集中处理。 */
+     硬性组默认展开；组头带条数与「可自动修复」标，方便一类一类集中处理。
+     v2.29：折叠状态记进 cfg.healthOpen，下次打开保持上次的展开/收起（没记住的回落硬性默认展开）。 */
   var shown = iss.slice(0, 200);
+  var hgOpen = cfg.healthOpen || {};
   var rows = healthGroupRows(shown).map(function(g){
+    var openIt = (g.type in hgOpen) ? !!hgOpen[g.type] : !!g.hard;
     var head = '<summary style="cursor:pointer;padding:6px 2px;font-weight:600">' +
       (g.hard ? '<span style="color:#B45309">●</span> ' : '<span style="color:var(--tx3)">○</span> ') +
       esc(g.type) +
@@ -6281,9 +6334,10 @@ function showHealthBox(){
         '<span style="flex:1">第 <b>' + x.no + '</b> 镜' + extra + '</span>' +
         '<button class="btn gh sm" data-act="hfixone" data-id="' + esc(x.id) + '">去改</button></div>';
     }).join('');
-    return '<details' + (g.hard ? ' open' : '') + ' style="border-bottom:1px solid var(--line)">' + head + body + '</details>';
+    return '<details' + (openIt ? ' open' : '') + ' data-hg="' + esc(g.type) + '" style="border-bottom:1px solid var(--line)">' + head + body + '</details>';
   }).join('');
   var more = iss.length > 200 ? '<div style="margin-top:8px;color:var(--tx3)">只显示前 200 条，完整清单请点「导出报告」。</div>' : '';
+  bindHealthGroupToggle();
   $('dlgTitle').textContent = '关键字段体检（' + iss.length + ' 个镜头）';
   $('dlgMsg').innerHTML = quick + '<div style="max-height:52vh;overflow:auto;text-align:left">' + rows + more + '</div>' +
     '<div class="hint" style="text-align:left;margin-top:8px">按问题类型分组，点组头可折叠；点每条「去改」直接跳到那一镜；改完再点「查看明细」复查。</div>';
@@ -7046,17 +7100,18 @@ function scanLipRisk(){ scanLipRiskCore(true); }
 function scanLipRiskQuiet(){ scanLipRiskCore(false); }
 function scanLipRiskCore(loud){
   if(!state.shots.length) return;
-  var chain = Promise.resolve(), n = 0;
+  /* v2.29：原来逐条 patchShot 串行写（N 次落盘 + N 次重排 + N 个云端请求），
+     改成先算完全量更新再一次 bulkPatch。 */
+  var ups = [], n = 0;
   state.shots.forEach(function(s){
     var r = lipRiskOf(s);
     if(r === s['口型风险']) return;
     n++;
-    chain = chain.then(function(){ return patchShot(s._id, { 口型风险: r }); });
+    ups.push({ id: s._id, obj: { 口型风险: r } });
   });
-  chain.then(function(){
-    refreshAll();
-    if(loud) toast(n ? ('已更新 ' + n + ' 个镜头的口型风险等级') : '风险等级已是最新');
-  });
+  if(!ups.length){ if(loud) toast('风险等级已是最新'); return; }
+  bulkPatch(ups);
+  if(loud) toast('已更新 ' + n + ' 个镜头的口型风险等级');
 }
 /* 让文本模型把高风险镜头改写成看不到嘴的镜头，台词不变 */
 function aiAvoidLip(){
@@ -7098,7 +7153,8 @@ function avoidLipCore(list){
     if(!arr.length) throw new Error('没能解析出改写结果：' + String(content).slice(0,200));
     var map = {};
     arr.forEach(function(it){ if(it) map[num(it.shot)] = it; });
-    var chain = Promise.resolve(), hit = 0;
+    /* v2.29：先算完全量更新再一次 bulkPatch（原来逐条串行 patchShot，N 次落盘 + N 次重排） */
+    var ups = [], hit = 0;
     list.forEach(function(s){
       var it = map[num(s['镜号'])];
       if(!it) return;
@@ -7112,10 +7168,12 @@ function avoidLipCore(list){
       o['图片状态'] = '未生成'; o['视频状态'] = '未生成';  // 画面变了，图和视频要重生成
       o['满意锁定'] = '否';                               // 旧基准帧对应旧画面，不能再当锚点
       o['更新时间'] = nowStr();
-      chain = chain.then(function(){ return patchShot(s._id, o); });
+      ups.push({ id: s._id, obj: o });
     });
-    return chain.then(function(){ return hit; });
+    if(ups.length) bulkPatch(ups);
+    return hit;
   }).then(function(hit){
+    if(!hit) return;   /* bulkPatch 内部已刷新；没命中就别再刷一遍、也别报「已改写 0 个」 */
     refreshAll();
     toast('已改写 ' + hit + ' 个镜头为低口型风险，需要重新生成这些镜头的图片和视频');
   }).catch(function(e){ console.error(e); toast('改写失败：' + guessCorsMsg(e).slice(0, 160)); });
@@ -7614,6 +7672,8 @@ function bind(){
       case 'hcheck': showHealthBox(); break;                                 /* v2.20：关键字段体检明细 */
       case 'hexp': exportHealthReport(); break;                              /* v2.20：导出体检报告 */
       case 'hfixall': fixHealthAuto(); break;                              /* v2.26：一键自动修复（时长/章节/单角色） */
+      case 'bulkretry': retryBulkFail(); break;                            /* v2.29：重试没写成云端的批量改动 */
+      case 'bulkfailclear': state.bulkFail = []; refreshAll(); toast('已忽略，改动仍在本机，切回云端数据源前不会同步'); break;
       case 'hfixdur': fixDurationsAuto(); break;                           /* v2.25：只补时长（自动修复子集） */
       case 'autopick': autoPickAllCand(); break;                           /* v2.25：候选图批量选最高分 */
       case 'filtercand': {                                                 /* v2.26：只筛出「有候选待挑」的镜 */
@@ -8083,11 +8143,10 @@ function resetStuck(){
   state.assets.forEach(function(a){
     if(a['状态'] === '生成中') ajobs.push({ id:a._id, o:{ 状态:'未生成', 更新时间:nowStr() } });
   });
-  jobs.reduce(function(c, j){ return c.then(function(){ return patchShot(j.id, j.o); }); }, Promise.resolve())
-    .then(function(){
-      return ajobs.reduce(function(c, j){ return c.then(function(){ return patchAsset(j.id, j.o); }); }, Promise.resolve());
-    })
-    .then(function(){ if(jobs.length || ajobs.length) refreshAll(); });
+  /* v2.29：镜头侧走 bulkPatch（一次落盘一次刷新），设定图侧通常只有几条，保持逐条 */
+  var n = jobs.length ? bulkPatch(jobs) : 0;
+  ajobs.reduce(function(c, j){ return c.then(function(){ return patchAsset(j.id, j.o); }); }, Promise.resolve())
+    .then(function(){ if(ajobs.length && !n) refreshAll(); });
 }
 function init(){
   loadCfg();
