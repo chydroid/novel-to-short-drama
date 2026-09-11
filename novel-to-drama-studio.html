@@ -2697,6 +2697,21 @@ function refreshAll(){
   renderLipTip();
   renderTimeline();
   renderUndoBtns();                  /* v2.34：撤销 / 重做按钮的可用态 */
+  renderRetryBtn();                  /* v2.37：失败镜数量实时显示在「重试失败项」上 */
+}
+/* v2.37：一键重试的名单口径只此一处——按钮上的数字必须与真正会重跑的那批镜一致 */
+function failShots(){
+  return state.shots.filter(function(s){ return s['图片状态'] === '失败' || s['视频状态'] === '失败'; });
+}
+/* v2.37：「重试失败项」原来永远是干点（有没有失败都一个样，点了才知道）。
+   现在把当前失败数写在按钮上、没有失败就置灰，跟撤销 / 重做按钮同一个口径。 */
+function renderRetryBtn(){
+  var b = $('btnRetryFail'); if(!b) return;
+  var n = failShots().length;
+  b.disabled = !n;
+  b.textContent = n ? ('重试失败项 (' + n + ')') : '重试失败项';
+  b.title = n ? ('把 ' + n + ' 个「图片或视频失败」的镜头重跑一遍（数量按镜卡状态实时统计）')
+              : '当前没有失败的镜头';
 }
 /* v2.34：撤销 / 重做按钮原来永远是可点状态（点了才知道「没有可撤销的操作」），
    现在按栈里剩几步置灰，并把步数写进 title——尤其是刚跨刷新恢复出来的栈，用户根本看不出来有货。 */
@@ -6954,7 +6969,7 @@ function batch(kind){
     });
 }
 function retryFailed(){
-  var list = state.shots.filter(function(s){ return (s['图片状态'] === '失败') || (s['视频状态'] === '失败'); });
+  var list = failShots();                  /* v2.37：与按钮上的数字共用同一口径 */
   if(!list.length){ toast('没有失败的镜头'); return; }
   var est = costEstimateTxt(list, { img:1, vid:1 });
   askConfirm((est || ('共 ' + list.length + ' 个失败镜头。')) + '确定一键重试？', '重试')
