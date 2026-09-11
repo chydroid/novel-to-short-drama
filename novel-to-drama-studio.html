@@ -174,6 +174,9 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
 .ch .st{flex:0 0 auto;font-size:11px;padding:1px 7px;border-radius:8px;background:var(--bg2);color:var(--tx3)}
 .ch .st.ok{background:#E7F6EC;color:#1F7A3D}
 .ch .st.run{background:#FDF1DC;color:#B46B00}
+/* v2.36：让「没跑完」的章一眼可见——部分完成 / 失败原来都是默认灰，混在列表里看不出来 */
+.ch .st.warn{background:#FDF1DC;color:#B46B00}
+.ch .st.bad{background:#FDEAEA;color:#B3261E}
 /* ---------- 口型 ---------- */
 .lip{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:9px;font-weight:600}
 .lip.hi{background:#FDECEC;color:#C0342B}
@@ -7069,9 +7072,24 @@ function renderChapters(){
     box.innerHTML = '<div class="hint" style="padding:14px">还没有章节。在下面粘贴小说正文后点「识别章节」。</div>';
     return;
   }
-  box.innerHTML = state.chapters.map(function(c, i){
+  /* v2.36：顶部先给一句汇总——「部分完成 / 失败」现在会如实打标，但混在长列表里不好找 */
+  var doneN = 0, badN = 0, leftN = 0;
+  state.chapters.forEach(function(c){
+    if(c.st === '完成') doneN++;
+    else if(c.sel){
+      if(c.st && c.st.indexOf('失败') === 0) badN++;
+      else if(c.st && c.st.indexOf('部分完成') === 0) leftN++;
+    }
+  });
+  var sum = '<div class="hint" style="padding:8px 14px 2px">共 ' + state.chapters.length + ' 章 · 已完成 ' + doneN +
+    (badN ? ' · <b style="color:#B3261E">失败 ' + badN + '</b>' : '') +
+    (leftN ? ' · <b style="color:#B46B00">部分完成 ' + leftN + '</b>' : '') +
+    ((badN || leftN) ? '（点「开始流水线」只会重跑这些有问题的章）' : '') + '</div>';
+  box.innerHTML = sum + state.chapters.map(function(c, i){
     var cls = 'ch' + (c.sel ? ' sel' : '') + (c.st === '完成' ? ' done' : '') + (c.st === '进行中' ? ' on' : '');
-    var stCls = c.st === '完成' ? ' ok' : (c.st === '进行中' ? ' run' : '');
+    var stCls = c.st === '完成' ? ' ok'
+      : (c.st && c.st.indexOf('失败') === 0 ? ' bad'
+      : (c.st && c.st.indexOf('部分完成') === 0 ? ' warn' : (c.st === '进行中' ? ' run' : '')));
     return '<div class="'+cls+'" data-ch="'+i+'" style="flex-wrap:wrap">' +
       '<input type="checkbox" '+(c.sel ? 'checked' : '')+' data-chsel="'+i+'">' +
       '<span class="no">'+esc(c.no)+'</span>' +
