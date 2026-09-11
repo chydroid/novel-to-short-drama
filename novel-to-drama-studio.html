@@ -501,8 +501,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
           <option value="done" data-page-node-id="rYFM3Wd3GZfOGoJiPFn4Uw">已完成</option>
           <option value="expr">按镜号选区（在导出中心的镜号预设上点「筛」）</option>
         </select>
+        <button class="btn gh sm" id="btnFilterSave" title="把当前的筛选条件（含镜号选区表达式）存成一套命名「筛选视图」，以后一键切回来">存为视图</button>
       </div>
       <div class="card-bd" data-page-node-id="2rBptd8UX8WgLZWaFXJFiI">
+        <div class="tools" id="filterViews" style="margin:0 0 10px"></div>
         <div class="hint" style="margin-bottom:12px" data-page-node-id="nQJchICxEi4wiJe1M8CyzD">流程：先生成「分镜图」（agnes-image-2.5-flash），再把图作为首帧生成「分镜视频」（agnes-video-2.5-flash，keyframe 模式）。视频生成较慢，会自动轮询，可放心切走。</div>
         <div class="tools" style="margin:0 0 12px">
           <button class="btn gh sm" id="btnLipScan">扫描口型风险</button>
@@ -878,15 +880,18 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input class="inp" type="text" id="expRange" placeholder="例如 1-20,25,30-35　或　1-50,!8-10　或　#第一集" style="width:100%">
       <div class="tools" style="margin:8px 0 0">
         <button class="btn gh sm" id="btnRangeSave">把当前表达式存为预设</button>
+        <button class="btn gh sm" id="btnRangeExport" title="把镜号预设导成一段 JSON 文件，换设备或发给同事直接导入">导出预设</button>
+        <button class="btn gh sm" id="btnRangeImport" title="选择之前导出的预设 JSON，同名覆盖、新名追加">导入预设</button>
         <span class="hint" id="rangePresetsHint" style="margin:0"></span>
       </div>
       <div class="tools" id="rangePresets" style="margin:8px 0 0"></div>
+      <input type="file" id="fileRangeJson" accept=".json,application/json" style="display:none">
     </div>
     <div class="hint" id="expScopePrev" style="margin:2px 0 12px"></div>
     <div class="tools" style="margin-bottom:16px">
       <button class="btn" id="btnExpBundle">一键打包导出（.zip，字幕 + 脚本 + 清单 + 数据 + 转码命令）</button>
     </div>
-    <div class="tools" style="margin:-8px 0 16px;gap:16px">
+    <div class="tools" style="margin:-8px 0 12px;gap:16px">
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
         <input type="checkbox" id="expInclHealth" style="width:16px;height:16px"> 连「关键字段体检」一起打包（.csv）
       </label>
@@ -894,7 +899,26 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <input type="checkbox" id="expInclLeft" style="width:16px;height:16px"> 连「剩余清单」一起打包（各类型一张 .csv）
       </label>
     </div>
-    <div class="hint" style="margin:-8px 0 16px">把下面 ① ② ③ 组里能导的东西一次打成一个压缩包（字幕 / 脚本 / 清单 / 数据都会按上面的「打包范围」筛选，整轨配音也同步）；本机有配音时会问你要不要连整轨一起打进去。绝不丢内容，单个导出照旧可用。</div>
+    <div class="fld" style="max-width:640px;margin-bottom:8px"><label>打包内容（v2.23：只打你要的那几样——发给剪辑只给字幕和清单时，不必把整包都塞过去）</label>
+      <div class="tools" style="margin:0;gap:16px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
+          <input type="checkbox" id="expPickSrt" style="width:16px;height:16px"> 分镜字幕 .srt
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
+          <input type="checkbox" id="expPickMd" style="width:16px;height:16px"> 分镜脚本 .md
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
+          <input type="checkbox" id="expPickCsv" style="width:16px;height:16px"> 视频清单 .csv
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
+          <input type="checkbox" id="expPickJson" style="width:16px;height:16px"> 全量数据 .json
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
+          <input type="checkbox" id="expPickFf" style="width:16px;height:16px"> 转码命令 .txt
+        </label>
+      </div>
+    </div>
+    <div class="hint" style="margin:-8px 0 16px">一键打包只打上面勾选的几样，都按「打包范围」筛选，整轨配音也同步；本机有配音时会问你要不要连整轨一起打进去。绝不丢内容，单个导出照旧可用。</div>
 
     <div class="sec-t">① 出片</div>
     <div class="tools" style="margin-bottom:16px">
@@ -1155,7 +1179,11 @@ var DEFAULT_CFG = {
      bundleHealth / bundleLeft = 一键打包时是否顺手带上体检报告 / 剩余清单（默认不勾，包保持精简）。 */
   filterExpr:'',
   bundleHealth:false,
-  bundleLeft:false
+  bundleLeft:false,
+  /* v2.23：filterViews = 命名筛选视图 [{n, mode, expr}]，把常用筛选存下来一键切回；
+     bundlePick = 一键打包时「只打这些文件」的勾选（srt/md/csv/json/ff）。 */
+  filterViews:[],
+  bundlePick:{ srt:true, md:true, csv:true, json:true, ff:true }
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1252,9 +1280,24 @@ function batchBarClose(msg, kind){
    这里把「剩余镜号」写进本机存档：一是收尾提示能报准数，二是下次打开页面直接告诉你还剩多少，
    批量入口本来就按「未生成 / 失败」筛选，所以点一下批量就是按未完成项续跑。
    v2.19：按类型分条存，三类任务互不挤占，可各自续跑。 */
-var BATCH_KIND_NAME = { img:'生图', vid:'生视频', audio:'配音' };
+var BATCH_KIND_NAME = { img:'生图', vid:'生视频', audio:'配音', lip:'对口型' };
 function batchLeftKey(){ return LS + 'batchLeft'; }
 function batchLeftName(kind){ return BATCH_KIND_NAME[kind] || '任务'; }
+/* v2.23：状态字段名与「缺什么」判定都收敛到这两处——以前散在批量和清单好几处 if-else 里，
+   加「口型」这个新类型时最容易漏改其中一处，导致清单里的状态列读错字段。 */
+function batchStKey(kind){
+  if(kind === 'img') return '图片状态';
+  if(kind === 'audio') return '配音状态';
+  if(kind === 'lip') return '口型状态';
+  return '视频状态';
+}
+function leftWhyTxt(kind, s){
+  if(kind === 'vid' && !s['图片URL']) return '没图片';
+  if(kind === 'audio' && !String(s['台词旁白'] || '').trim()) return '没台词';
+  if(kind === 'lip' && !s['视频URL']) return '没视频';
+  if(kind === 'lip' && String(s['口型风险'] || lipRiskOf(s)) !== '高') return '口型风险不高';
+  return '';
+}
 /* v2.19：存档从「只有一条」改成「按类型分条」——生图、生视频、配音可以各自留着各自的剩余，
    三个都能同时续跑；以前只有一条，跑配音就会把生图的剩余挤掉。
    存储结构：{ img:{ids,total,at}, vid:{...}, audio:{...} }。
@@ -1301,10 +1344,14 @@ function batchClearLeft(kind){
 function batchLeftTip(){
   /* v2.19：三类各自可能有剩余，逐类挂「（续跑 N）」角标并汇总成一条提示 */
   var all = batchLoadAll(), kinds = [], msg = [];
-  ['img','vid','audio'].forEach(function(k){
+  ['img','vid','audio','lip'].forEach(function(k){
     var r = all[k]; if(!r || !r.ids || !r.ids.length) return;
     kinds.push(k); msg.push(batchLeftName(k) + ' ' + r.ids.length + ' 个');
-    var btn = k === 'audio' ? $('btnBatchAudio') : (k === 'img' ? $('btnBatchImg') : $('btnBatchVid'));
+    /* v2.23：加了口型类型——它对应「批量对口型」按钮 */
+    var btn = k === 'audio' ? $('btnBatchAudio')
+            : (k === 'img' ? $('btnBatchImg')
+            : (k === 'vid' ? $('btnBatchVid')
+            : $('btnLipBatch')));
     if(btn && btn.tagName === 'BUTTON'){
       btn.textContent = String(btn.textContent).replace(/（续跑 \d+）/, '') + '（续跑 ' + r.ids.length + '）';
     }
@@ -1331,7 +1378,7 @@ function buildLeftText(kind){
   if(!rec || !rec.ids || !rec.ids.length) return null;
   var byNo = {};
   (state.shots || []).forEach(function(s){ byNo[String(num(s['镜号']))] = s; });
-  var stKey = kind === 'img' ? '图片状态' : (kind === 'audio' ? '配音状态' : '视频状态');
+  var stKey = batchStKey(kind);
   var lines = [];
   lines.push(csvRow(['剩余' + batchLeftName(kind) + '清单']));
   lines.push(csvRow(['导出时间', nowStr()]));
@@ -1342,10 +1389,7 @@ function buildLeftText(kind){
   rec.ids.forEach(function(no){
     var s = byNo[String(num(no))];
     if(!s){ gone++; lines.push(csvRow([no, '（镜头已删除）', '', '', ''])); return; }
-    var why = '';
-    if(kind === 'vid' && !s['图片URL']) why = '没图片';
-    else if(kind === 'audio' && !String(s['台词旁白'] || '').trim()) why = '没台词';
-    lines.push(csvRow([no, s['章节'] || '', s['景别'] || '', s[stKey] || '未生成', why]));
+    lines.push(csvRow([no, s['章节'] || '', s['景别'] || '', s[stKey] || '未生成', leftWhyTxt(kind, s)]));
   });
   lines.push('');
   if(gone) lines.push('注：有 ' + gone + ' 个镜号在当前分镜里已找不到（可能被删除），可点「忽略」清掉这类记录。');
@@ -1750,23 +1794,26 @@ function todoItems(){
   });
   return out.slice(0, 8);
 }
-function filteredShots(){
-  var f = state.filter;
-  if(f === 'expr'){   /* v2.22：按镜号选区筛选——表达式来自导出中心的镜号预设，与打包范围同一套写法 */
-    var pr = parseShotRange(cfg.filterExpr);
-    if(pr.empty) return state.shots.slice();
-    return state.shots.filter(function(x){ return rangeHit(num(x['镜号']), pr); });
+/* v2.23：把「按条件挑镜头」抽成纯函数——生成页筛选与「筛选视图」共用同一份判定，
+   两处口径不会各写一套、越改越偏。expr 为空 = 不限（与导出范围一致，避免筛成空列表）。 */
+function viewShots(list, mode, expr){
+  list = list || [];
+  if(mode === 'expr'){   /* v2.22：按镜号选区筛选——表达式与导出范围同一套写法，可用 @预设名 */
+    var pr = parseShotRange(expr);
+    if(pr.empty) return list.slice();
+    return list.filter(function(x){ return rangeHit(num(x['镜号']), pr); });
   }
-  return state.shots.filter(function(x){
+  return list.filter(function(x){
     var is = x['图片状态'] || '未生成', vs = x['视频状态'] || '未生成';
-    if(f === 'all') return true;
-    if(f === 'noimg') return is === '未生成';
-    if(f === 'novid') return vs === '未生成' && is === '已完成';
-    if(f === 'fail') return is === '失败' || vs === '失败';
-    if(f === 'done') return vs === '已完成';
+    if(mode === 'all' || !mode) return true;
+    if(mode === 'noimg') return is === '未生成';
+    if(mode === 'novid') return vs === '未生成' && is === '已完成';
+    if(mode === 'fail') return is === '失败' || vs === '失败';
+    if(mode === 'done') return vs === '已完成';
     return true;
   });
 }
+function filteredShots(){ return viewShots(state.shots, state.filter, cfg.filterExpr); }
 function shotById(id){ for(var i=0;i<state.shots.length;i++){ if(state.shots[i]._id === id) return state.shots[i]; } return null; }
 function charStr(v){
   if(Array.isArray(v)) return v.map(function(x){ return String(x).trim(); }).filter(Boolean).join(', ');
@@ -1851,7 +1898,7 @@ function renderToday(){
      v2.18：补「只跑剩余镜」——不重算列表，直接把存档里的剩余镜号投队列，口径与上次完全一致。
      v2.19：按类型分条，三类都有剩余时各出一张卡，互不挤占。 */
   var allLeft = batchLoadAll();
-  ['img','vid','audio'].forEach(function(lk){
+  ['img','vid','audio','lip'].forEach(function(lk){
     var lrec = allLeft[lk];
     if(!lrec || !lrec.ids || !lrec.ids.length) return;
     var leftTot = num(lrec.total) || lrec.ids.length;
@@ -1865,13 +1912,18 @@ function renderToday(){
       '<button class="btn gh sm" data-act="leftclear" data-kind="' + esc(lk) + '">忽略</button></div>';
   });
   /* v2.22：生图与生视频都有剩余时，给一个「串跑」入口——先补图，出完图自动接着生视频，
-     省掉「等图跑完 → 回来再点一次生视频」这一趟。 */
+     省掉「等图跑完 → 回来再点一次生视频」这一趟。
+     v2.23：扩到「图 → 视频 → 配音」三段，且只要能凑够 2 类剩余就值得串（顺带把高风险镜对口型）。 */
   function hasLeftIds(lk){ return !!(allLeft[lk] && allLeft[lk].ids && allLeft[lk].ids.length); }
-  if(hasLeftIds('img') && hasLeftIds('vid')){
+  var pipeKinds = ['img','vid','audio'].filter(hasLeftIds);
+  if(pipeKinds.length >= 2){
+    var plabel = pipeKinds.map(function(k){ return batchLeftName(k) + ' ' + allLeft[k].ids.length + ' 个'; }).join(' → ');
+    var lipN = cfg.lipBase ? lipTodoShots().length : 0;
     html += '<div class="todo" style="background:#EEF0FF;border-color:#DCD9FB">' +
       '<span class="bad" style="color:#5B5BD6">流水线</span>' +
-      '<span class="txt">生图与生视频都有剩余：串起来一次跑完（先补 ' + allLeft.img.ids.length + ' 个图 → 自动接 ' + allLeft.vid.ids.length + ' 个视频），不用守着分两次点</span>' +
-      '<button class="btn sm" data-act="piperesume">图→视频 串跑</button></div>';
+      '<span class="txt">还有 ' + pipeKinds.length + ' 类没跑完：串起来一次跑完（' + plabel +
+      (lipN ? ' → 高风险镜对口型 ' + lipN + ' 个' : '') + '），不用守着分几次点</span>' +
+      '<button class="btn sm" data-act="piperesume">' + pipeKinds.map(batchLeftName).join('→') + ' 串跑</button></div>';
   }
   /* v2.20：关键字段体检——只有出现「硬性缺料」（缺画面描述 / 没时长 / 无生图提示词）时才弹卡，
      免得「没章节」这类软性提示天天占着首页让人麻木。明细与报告里两种都会列。 */
@@ -3762,30 +3814,66 @@ function resumeLeftRun(kind){
   if(!list.length){ batchClearLeft(k); renderToday(); toast('剩余镜头已不存在（可能被删除），已清除记录'); return; }
   if(k === 'audio'){
     if(!cfg.ttsKey){ toast('请先在设置里填小米 TTS Key'); openDrawer(); return; }
+  }else if(k === 'lip'){
+    if(!cfg.lipBase){ toast('请先在设置里填唇形服务 Base URL'); openDrawer(); return; }
   }else if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
   batchRun(k, list, { resume:true });
 }
 /* v2.22：续跑流水线——生图与生视频同时有剩余时，按「先补图 → 再出视频」的自然顺序一次跑完。
    为什么要串起来：生视频要求先有图片，分两次点等于中间得等、还得回来再点一次；
    串成流水线后第一段跑完（图片就绪）立刻接第二段，不用人守着。中途暂停则停在哪段就是哪段。 */
-function resumePipeline(){
-  if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
+/* v2.23：流水线扩到三段——补图 → 出视频 → 配音，并且可以顺带把高风险镜对口型。
+   顺序不是随便排的：视频要图、对口型要视频 + 音频，这三段天然串行，串起来就不用人守着分几次点。 */
+function pipelineSteps(){
   var has = leftKindsWithData(), steps = [];
-  ['img', 'vid'].forEach(function(k){ if(has.indexOf(k) > -1) steps.push(k); });
-  if(steps.length < 2){ toast('需要「生图」与「生视频」都有剩余记录，才能串成流水线'); return; }
+  ['img', 'vid', 'audio'].forEach(function(k){ if(has.indexOf(k) > -1) steps.push(k); });
+  return steps;
+}
+/* 还需要对口型的镜头（高风险 + 有视频 + 没同步过）。口型没有「剩余存档」——它是按当前数据现算的 */
+function lipTodoShots(){
+  return state.shots.filter(function(s){
+    var st = s['口型状态'] || '不需要';
+    return (s['口型风险'] || lipRiskOf(s)) === '高' && s['视频URL'] && st !== '已完成' && st !== '生成中';
+  });
+}
+function resumePipeline(){
+  var steps = pipelineSteps();
+  if(!steps.length){ toast('没有可续跑的剩余记录'); return; }
+  var needAgnes = (steps.indexOf('img') > -1) || (steps.indexOf('vid') > -1);
+  if(needAgnes && !hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
+  var lipList = cfg.lipBase ? lipTodoShots() : [];
   var total = 0, label = [];
   steps.forEach(function(k){
     var r = leftShotList(k);
     if(r && r.list.length){ total += r.list.length; label.push(batchLeftName(k) + ' ' + r.list.length + ' 个'); }
   });
-  askConfirm('流水线续跑：先补 ' + label.join('，跑完自动接着出 ') + '；共 ' + total + ' 个任务。确定开始？', '开始')
-    .then(function(ok){ if(ok) runResumeStep(steps, 0); });
+  askConfirm('流水线续跑：' + label.join(' → ') +
+    (lipList.length ? ('；结尾再把 ' + lipList.length + ' 个高风险镜对口型') : '') +
+    '，共 ' + total + ' 个任务，跑完一段自动接下一段。确定开始？', '开始')
+    .then(function(ok){
+      if(!ok) return;
+      var all = steps.slice();
+      if(lipList.length) all.push('lip');
+      runResumeStep(all, 0);
+    });
 }
 function runResumeStep(steps, i){
   if(i >= steps.length) return Promise.resolve(0);
-  var k = steps[i], r = leftShotList(k);
-  if(!r){ return Promise.resolve(0).then(function(){ return runResumeStep(steps, i + 1); }); }
-  if(!r.list.length){ batchClearLeft(k); renderToday(); return Promise.resolve(0).then(function(){ return runResumeStep(steps, i + 1); }); }
+  var k = steps[i];
+  var r = (k === 'lip') ? { k: 'lip', list: lipTodoShots() } : leftShotList(k);
+  if(!r || !r.list.length){
+    if(k !== 'lip') batchClearLeft(k);
+    renderToday();
+    return Promise.resolve(0).then(function(){ return runResumeStep(steps, i + 1); });
+  }
+  /* 每一段跑前校验自己那把钥匙（Agnes 在入口已校验过，这里补 TTS / 唇形） */
+  if(k === 'audio' && !cfg.ttsKey){
+    toast('流水线停在第 ' + (i + 1) + ' 段（配音）：请先在设置里填小米 TTS Key');
+    openDrawer(); return Promise.resolve(0);
+  }
+  if(k === 'lip' && !cfg.lipBase){
+    return Promise.resolve(0).then(function(){ return runResumeStep(steps, i + 1); });
+  }
   toast('流水线第 ' + (i + 1) + ' 段：' + batchLeftName(k) + '（' + r.list.length + ' 个）');
   return batchRun(k, r.list, { resume:true }).then(function(left){
     renderToday();
@@ -4281,19 +4369,76 @@ function xlsxCol(i){                     /* 0 → A、25 → Z、26 → AA */
 function xlsxTxt(v){
   return esc(String(v == null ? '' : v)).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
 }
-function xlsxSheetXml(rows){
+/* v2.23：最基础的「能看」样式——标题/表头加粗、首行冻结、列宽自适应。
+   全部靠手写 styles.xml 实现，仍然零依赖。样式索引：0=普通正文，1=加粗。 */
+function xlsxStylesXml(){
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="2">' +
+      '<font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>' +
+      '<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/></font>' +
+    '</fonts>' +
+    '<fills count="2">' +
+      '<fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill>' +
+    '</fills>' +
+    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="2">' +
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+    '</cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '</styleSheet>';
+}
+/* 估一个单元格在 Excel 里占几个字符宽：汉字/全角算 2，其余算 1 */
+function xlsxDispW(v){
+  var s = String(v == null ? '' : v), w = 0;
+  for(var i = 0; i < s.length; i++){ w += (s.charCodeAt(i) > 0x2E80) ? 2 : 1; }
+  return w;
+}
+/* 列宽自适应：取该列最宽的格子，留 2 字余量，夹在 6~48 之间（免得某一列超长把表撑爆） */
+function xlsxAutoWidths(rows){
+  var w = [];
+  (rows || []).forEach(function(r){
+    (r || []).forEach(function(v, ci){ var d = xlsxDispW(v); if(d > (w[ci] || 0)) w[ci] = d; });
+  });
+  return w.map(function(d){ return Math.min(48, Math.max(6, d + 2)); });
+}
+/* 表格行上挂的「加粗行号」（1-based，Excel 口径）——由各 build*Rows 边拼边记 */
+function sheetBoldRows(rows){ return (rows && rows._bold) || [1]; }
+function xlsxSheetXml(rows, opt){
+  opt = opt || {};
+  var bold = {};
+  (opt.boldRows || sheetBoldRows(rows)).forEach(function(n){ bold[num(n)] = 1; });
   var body = (rows || []).map(function(r, ri){
+    var st = bold[ri + 1] ? ' s="1"' : '';
     var cells = (r || []).map(function(v, ci){
       var ref = xlsxCol(ci) + (ri + 1);
-      if(typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '"><v>' + v + '</v></c>';
+      if(typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '"' + st + '><v>' + v + '</v></c>';
       var t = xlsxTxt(v);
       if(!t) return '';
-      return '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + t + '</t></is></c>';
+      return '<c r="' + ref + '"' + st + ' t="inlineStr"><is><t xml:space="preserve">' + t + '</t></is></c>';
     }).join('');
     return '<row r="' + (ri + 1) + '">' + cells + '</row>';
   }).join('');
+  /* 冻结窗格：注意 sheetViews 必须排在 cols / sheetData 之前才是合法顺序 */
+  var frz = num(opt.freeze), views = '';
+  if(frz > 0){
+    views = '<sheetViews><sheetView workbookViewId="0">' +
+      '<pane ySplit="' + frz + '" topLeftCell="A' + (frz + 1) + '" activePane="bottomLeft" state="frozen"/>' +
+      '<selection pane="bottomLeft" activeCell="A' + (frz + 1) + '" sqref="A' + (frz + 1) + '"/>' +
+      '</sheetView></sheetViews>';
+  }
+  var widths = opt.widths || (opt.autoWidth !== false ? xlsxAutoWidths(rows) : null), cols = '';
+  if(widths && widths.length){
+    cols = '<cols>' + widths.map(function(w, i){
+      return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>';
+    }).join('') + '</cols>';
+  }
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + body + '</sheetData></worksheet>';
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' + views + cols +
+    '<sheetData>' + body + '</sheetData></worksheet>';
 }
 /* 工作表名不能含 Excel 的非法字符（方括号 星号 斜杠 问号 冒号），且不超过 31 字符，否则打不开 */
 function sheetNameSafe(n, i){
@@ -4318,7 +4463,10 @@ function xlsxBuild(sheets){
       '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
       '<Default Extension="xml" ContentType="application/xml"/>' +
       '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
-      overrides + '</Types>' },
+      overrides +
+      /* v2.23：样式部件（加粗表头 / 冻结 / 列宽都靠它） */
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+      '</Types>' },
     { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
       '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
@@ -4326,9 +4474,12 @@ function xlsxBuild(sheets){
       '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
       '<sheets>' + sheetTags + '</sheets></workbook>' },
     { name: 'xl/_rels/workbook.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '</Relationships>' }
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels +
+      '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      '</Relationships>' },
+    { name: 'xl/styles.xml', data: xlsxStylesXml() }
   ];
-  sheets.forEach(function(sh, i){ files.push({ name: 'xl/worksheets/sheet' + (i + 1) + '.xml', data: xlsxSheetXml(sh.rows) }); });
+  sheets.forEach(function(sh, i){ files.push({ name: 'xl/worksheets/sheet' + (i + 1) + '.xml', data: xlsxSheetXml(sh.rows, sh.style) }); });
   return zipStore(files);
 }
 function downloadXlsx(name, sheets){
@@ -4523,14 +4674,55 @@ function moveRangePreset(i){
   saveCfg(); renderRangePresets();
   toast('已上移「' + (arr[k - 1].n || '') + '」');
 }
+/* v2.23：镜号预设也能导出 / 导入——和类型套餐共用同一套 JSON 机制。
+   一部戏的选区（片头、每集的高潮段落、要去返工的那几条）是攒出来的资产，换设备不该丢。 */
+function exportRangePresets(){
+  var arr = rangePresets();
+  if(!arr.length){ toast('还没有镜号预设可导出——先填个表达式再点「存为预设」'); return; }
+  var obj = { app:'novel-to-drama-studio', kind:'rangePresets', version:1, exportedAt: nowStr(), presets: arr };
+  download('镜号预设_' + nowStr().replace(/[: ]/g, '-') + '.json', JSON.stringify(obj, null, 2), 'application/json;charset=utf-8');
+  toast('已导出 ' + arr.length + ' 个镜号预设（JSON）');
+}
+/* 纯函数：校验并合并导入的预设（接受「裸数组」或「导出文件对象」两种形态）。
+   同名覆盖、新名追加；名字或表达式为空的一律跳过并计数。 */
+function mergeRangePresets(raw){
+  var list = null;
+  if(Array.isArray(raw)) list = raw;
+  else if(raw && Array.isArray(raw.presets)) list = raw.presets;
+  if(!list) return { ok:false, msg:'不是有效的预设文件（缺少 presets 数组）', added:0, updated:0, bad:0 };
+  var arr = rangePresets(), added = 0, updated = 0, bad = 0;
+  list.forEach(function(p){
+    if(!p || typeof p !== 'object'){ bad++; return; }
+    var n = String(p.n == null ? '' : p.n).trim();
+    var v = String(p.v == null ? '' : p.v).trim();
+    if(!n || !v){ bad++; return; }
+    var item = { n: n, v: v }, hit = -1, i;
+    for(i = 0; i < arr.length; i++){ if(arr[i].n === n){ hit = i; break; } }
+    if(hit > -1){ arr[hit] = item; updated++; } else { arr.push(item); added++; }
+  });
+  if(added || updated) saveCfg();
+  return { ok:true, added:added, updated:updated, bad:bad, msg:'' };
+}
+function importRangePresetsText(txt){
+  var raw = null;
+  try{ raw = JSON.parse(String(txt == null ? '' : txt)); }catch(e){ toast('导入失败：不是合法的 JSON 文本'); return; }
+  var r = mergeRangePresets(raw);
+  if(!r.ok){ toast('导入失败：' + r.msg); return; }
+  renderRangePresets();
+  toast(r.added || r.updated
+    ? ('导入完成：新增 ' + r.added + ' 个、更新 ' + r.updated + ' 个镜号预设' + (r.bad ? ('，忽略无效 ' + r.bad + ' 条') : ''))
+    : '文件里没有可导入的预设（可能都是空数据）');
+}
+function importRangePresets(){ if($('fileRangeJson')) $('fileRangeJson').click(); }
 /* v2.22：按预设筛选生成页——预设不只在导出时有用，也常想「只看这批镜」逐镜过一遍。 */
 function setFilterExpr(expr, name){
   var raw = String(expr == null ? '' : expr).trim();
+  saveViewScroll();   /* v2.23：切视图前先记住当前位置 */
   cfg.filterExpr = raw;
   state.filter = raw ? 'expr' : 'all';
   var sel = $('filterSel');
   if(sel) sel.value = state.filter;
-  saveCfg(); renderGenList();
+  saveCfg(); renderGenList(); renderFilterViews();
   var n = presetHits(raw);
   toast(raw ? ('已按选区「' + (name || raw) + '」筛出 ' + n + ' 镜（清空选区可恢复全部）') : '已恢复显示全部镜头');
 }
@@ -4547,6 +4739,89 @@ function filterByRangePreset(i){
     var el = first ? document.querySelector('.gen[data-id="' + first._id + '"]') : null;
     if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
   }, 80);
+}
+var FILTER_NAMES = { all:'全部镜头', noimg:'待生成图片', novid:'待生成视频', fail:'失败的', done:'已完成', expr:'按镜号选区' };
+function filterViews(){
+  if(!Array.isArray(cfg.filterViews)) cfg.filterViews = [];
+  return cfg.filterViews;
+}
+/* 视图指纹 = 下拉取值 + （选区时才有的）表达式。用来判断「现在正处在哪套视图」，
+   也当滚动位置的键——同一套视图切回来就回到上次看的那一屏。 */
+function filterKey(mode, expr){
+  var m = String(mode || 'all');
+  return m + '|' + (m === 'expr' ? String(expr == null ? '' : expr).trim() : '');
+}
+function curFilterKey(){ return filterKey(state.filter, cfg.filterExpr); }
+function filterViewLabel(v){ return (v && v.n) || FILTER_NAMES[(v && v.mode) || 'all'] || '视图'; }
+function filterViewTip(v){ return FILTER_NAMES[(v && v.mode) || 'all'] || '视图'; }
+function filterViewHits(v){ return viewShots(state.shots, v && v.mode, v && v.expr).length; }
+/* 切视图前先把当前位置记下来；切回来时再滚回去。滚动记的是窗口位置，容器换了也不受影响。 */
+function saveViewScroll(){
+  state.viewScroll = state.viewScroll || {};
+  var y = 0;
+  try{ y = window.scrollY || window.pageYOffset || 0; }catch(e){}
+  state.viewScroll[curFilterKey()] = y;
+  return y;
+}
+function restoreViewScroll(key){
+  state.viewScroll = state.viewScroll || {};
+  var y = num(state.viewScroll[key]);
+  if(y > 0) setTimeout(function(){ try{ window.scrollTo(0, y); }catch(e){} }, 60);
+  return y;
+}
+function renderFilterViews(){
+  var box = $('filterViews'); if(!box) return;
+  var arr = filterViews();
+  if(!arr.length){
+    box.innerHTML = '<span class="hint" style="margin:0">还没有筛选视图——调好右边的筛选（或按镜号选区）后点「存为视图」，以后一键切回</span>';
+    return;
+  }
+  var cur = curFilterKey();
+  box.innerHTML = arr.map(function(v, i){
+    var k = filterKey(v.mode, v.expr), on = (k === cur);
+    var tip = filterViewTip(v) + (String(v.mode) === 'expr' && v.expr ? ('：' + v.expr) : '') + '（命中 ' + filterViewHits(v) + ' 镜）';
+    return '<span style="display:inline-flex;align-items:center;gap:2px;margin:0 8px 6px 0">' +
+      '<button class="btn ' + (on ? '' : 'gh ') + 'sm" data-act="fvuse" data-i="' + i + '" title="' + esc(tip) + '">' +
+        esc(filterViewLabel(v)) + ' <span style="color:var(--tx3)">(' + filterViewHits(v) + ')</span></button>' +
+      '<button class="btn gh sm" data-act="fvdel" data-i="' + i + '" title="删除该视图">×</button></span>';
+  }).join('');
+}
+function saveFilterView(){
+  var expr = String(cfg.filterExpr || '').trim();
+  if(state.filter === 'expr' && !expr){ toast('选区还是空的——先去导出中心的镜号预设上点「筛」，再回来存视图'); return; }
+  var nm = FILTER_NAMES[state.filter] || '视图';
+  var suffix = (state.filter === 'expr' && expr) ? ('：' + (expr.length > 24 ? expr.slice(0, 24) + '…' : expr)) : '';
+  askInput('把当前筛选（' + nm + suffix + '）存成一套视图，起个名字：', nm)
+    .then(function(name){
+      name = String(name == null ? '' : name).trim();
+      if(!name) return;
+      var arr = filterViews(), i;
+      for(i = 0; i < arr.length; i++){
+        if(arr[i].n === name){ arr[i].mode = state.filter; arr[i].expr = expr; saveCfg(); renderFilterViews(); toast('已更新筛选视图「' + name + '」'); return; }
+      }
+      arr.push({ n: name, mode: state.filter, expr: expr });
+      saveCfg(); renderFilterViews();
+      toast('已存为筛选视图「' + name + '」，点它即可一键切回');
+    });
+}
+function applyFilterView(i){
+  var v = filterViews()[num(i)];
+  if(!v) return;
+  saveViewScroll();   /* 先把当前视图的滚动位置记下来，切回来时用 */
+  state.filter = v.mode || 'all';
+  if(state.filter === 'expr') cfg.filterExpr = String(v.expr || '');
+  var sel = $('filterSel'); if(sel) sel.value = state.filter;
+  saveCfg(); renderGenList(); renderFilterViews();
+  var y = restoreViewScroll(filterKey(v.mode, v.expr));
+  toast('已切到视图「' + filterViewLabel(v) + '」（命中 ' + filterViewHits(v) + ' 镜）' + (y > 0 ? '，回到上次看的位置' : ''));
+}
+function delFilterView(i){
+  var arr = filterViews(), k = num(i);
+  if(!arr[k]) return;
+  var nm = filterViewLabel(arr[k]);
+  arr.splice(k, 1);
+  saveCfg(); renderFilterViews();
+  toast('已删除筛选视图「' + nm + '」');
 }
 /* v2.21：把某一类型的剩余镜号直接存成镜号预设——暂停后不必手抄那些镜号，
    以后想在导出里「只导这批镜」直接套用即可。 */
@@ -4688,23 +4963,39 @@ function updExpPreview(){
 /* 一键把所有能导的东西打成一个包：srt + md + csv + json + 转码命令（+ 可选整轨 wav）。
    每个文件都是复用单独导出时的同一份内容（build* 系列纯函数），不会出现「单导和打包结果不一致」。
    v2.17：全部按「打包范围」筛选，范围写进包内说明，避免拿到包不知道导的是哪一部分。 */
+/* v2.23：一键打包「只打这些文件」的勾选。缺省全打（与老行为一致），
+   存档里的对象万一缺键也按「打」处理，不会因为升级把用户的文件悄悄少了。 */
+function bundlePick(){
+  var d = { srt:true, md:true, csv:true, json:true, ff:true }, p = cfg.bundlePick;
+  if(p && typeof p === 'object'){ for(var k in d){ if(k in p) d[k] = !!p[k]; } }
+  return d;
+}
+function bundlePickTxt(){
+  var p = bundlePick(), a = [];
+  if(p.srt) a.push('字幕'); if(p.md) a.push('脚本'); if(p.csv) a.push('清单');
+  if(p.json) a.push('数据'); if(p.ff) a.push('转码命令');
+  return a.length ? a.join(' / ') : '（无）';
+}
 function exportBundle(){
   if(!state.shots.length){ toast('还没有分镜，先导入小说拆镜'); return; }
   var scope = exportScopeShots();
   if(!scope.length){ toast('当前打包范围内没有镜头，换个范围再试'); return; }
+  var pick = bundlePick();
+  if(!pick.srt && !pick.md && !pick.csv && !pick.json && !pick.ff && !cfg.bundleHealth && !cfg.bundleLeft){
+    toast('「打包内容」一个都没勾——至少勾一样再打包'); return;
+  }
   var files = [];
-  var srt = buildSrtText(scope);
-  if(srt) files.push({ name: '分镜字幕.srt', data: srt.text });
-  files.push({ name: '分镜脚本.md', data: buildMdText(scope) });
-  files.push({ name: '视频清单.csv', data: '\ufeff' + buildCsvText(scope) });
-  files.push({ name: '全量数据.json', data: JSON.stringify({
+  if(pick.srt){ var srt = buildSrtText(scope); if(srt) files.push({ name: '分镜字幕.srt', data: srt.text }); }
+  if(pick.md) files.push({ name: '分镜脚本.md', data: buildMdText(scope) });
+  if(pick.csv) files.push({ name: '视频清单.csv', data: '\ufeff' + buildCsvText(scope) });
+  if(pick.json) files.push({ name: '全量数据.json', data: JSON.stringify({
     exportedAt: nowStr(),
     scope: scopeLabel(),
     shotCount: scope.length,
     novel: ($('novel') && $('novel').value) || '',
     assets: state.assets, shots: scope
   }, null, 2) });
-  files.push({ name: '转码命令.txt', data: ffmpegMp3Cmd() });
+  if(pick.ff) files.push({ name: '转码命令.txt', data: ffmpegMp3Cmd() });
   /* v2.22：可选把体检报告 / 剩余清单一起打进包——发给协作者时一份包看全，不必再单独导两次 */
   if(cfg.bundleHealth){
     var hRows = buildHealthRows();
@@ -4719,6 +5010,7 @@ function exportBundle(){
   files.push({ name: '打包说明.txt', data:
     '导出时间：' + nowStr() + '\n' +
     '打包范围：' + scopeLabel() + '\n' +
+    '打包内容：' + bundlePickTxt() + (cfg.bundleHealth ? ' / 体检报告' : '') + (cfg.bundleLeft ? ' / 剩余清单' : '') + '\n' +
     '包含镜头：' + scope.length + ' / ' + state.shots.length + ' 镜' +
     (scope.length < state.shots.length ? '（第 ' + scope.map(function(s){ return s['镜号']; }).join(', ') + ' 镜）' : '（全部）') + '\n' +
     '说明：字幕 / 脚本 / 清单 / 全量数据 / 整轨配音均只含上述范围内的镜头；' +
@@ -5624,6 +5916,9 @@ function preflightShots(list, kind){
   (list || []).forEach(function(s){
     if(kind === 'vid' && !s['图片URL']) skip.push({ s: s, why: '没图片' });
     else if(kind === 'audio' && !String(s['台词旁白'] || '').trim()) skip.push({ s: s, why: '没台词' });
+    /* v2.23：对口型只做「高风险 + 已有视频」的镜，别的镜头交给唇形服务纯属白花钱 */
+    else if(kind === 'lip' && !s['视频URL']) skip.push({ s: s, why: '没视频' });
+    else if(kind === 'lip' && String(s['口型风险'] || lipRiskOf(s)) !== '高') skip.push({ s: s, why: '口型风险不高' });
     else run.push(s);
   });
   return { run: run, skip: skip };
@@ -5732,12 +6027,15 @@ function buildHealthRows(){
   });
   rows.push([]);
   rows.push(['说明', '缺画面描述 / 没时长 / 无生图提示词 会直接影响出图与成片时长；没章节、有台词没角色 属软性提示。']);
+  /* v2.23：告诉 xlsx「哪几行加粗」——标题 + 分区标题 + 两个表头（行号随问题类型数变化，所以在这里算） */
+  rows._bold = [1, 5, 6, 8 + hs.order.length];
   return rows;
 }
 function exportHealthXlsx(){
   var rows = buildHealthRows();
   if(!rows){ toast('没有发现关键字段缺失，无需导出'); return; }
-  downloadXlsx('关键字段体检_' + nowStr().replace(/[: ]/g, '-') + '.xlsx', [{ name: '体检报告', rows: rows }]);
+  downloadXlsx('关键字段体检_' + nowStr().replace(/[: ]/g, '-') + '.xlsx',
+    [{ name: '体检报告', rows: rows, style: { boldRows: sheetBoldRows(rows), freeze: 1 } }]);
 }
 /* v2.22：剩余清单的表格行（单类型）。与 buildLeftText 同一口径，只是拆成二维数组给 xlsx 用。 */
 function buildLeftSheet(kind){
@@ -5745,7 +6043,7 @@ function buildLeftSheet(kind){
   if(!rec || !rec.ids || !rec.ids.length) return null;
   var byNo = {};
   (state.shots || []).forEach(function(s){ byNo[String(num(s['镜号']))] = s; });
-  var stKey = kind === 'img' ? '图片状态' : (kind === 'audio' ? '配音状态' : '视频状态');
+  var stKey = batchStKey(kind);
   var rows = [];
   rows.push(['剩余' + batchLeftName(kind) + '清单']);
   rows.push(['导出时间', nowStr()]);
@@ -5756,15 +6054,14 @@ function buildLeftSheet(kind){
   rec.ids.forEach(function(no){
     var s = byNo[String(num(no))];
     if(!s){ gone++; rows.push([num(no), '（镜头已删除）', '', '', '']); return; }
-    var why = '';
-    if(kind === 'vid' && !s['图片URL']) why = '没图片';
-    else if(kind === 'audio' && !String(s['台词旁白'] || '').trim()) why = '没台词';
-    rows.push([num(no), s['章节'] || '', s['景别'] || '', s[stKey] || '未生成', why]);
+    rows.push([num(no), s['章节'] || '', s['景别'] || '', s[stKey] || '未生成', leftWhyTxt(kind, s)]);
   });
   rows.push([]);
   if(gone) rows.push(['注', '有 ' + gone + ' 个镜号在当前分镜里已找不到（可能被删除），可点「忽略」清掉这类记录。']);
   rows.push(['说明', '本清单只列「上次批量没跑完」的镜号；回首页点续跑卡的「只跑剩余镜」即可接着跑。']);
-  return { name: '剩余' + batchLeftName(kind), rows: rows };
+  /* v2.23：标题行 + 表头行加粗（xlsx 用） */
+  rows._bold = [1, 5];
+  return { name: '剩余' + batchLeftName(kind), rows: rows, style: { boldRows: [1, 5], freeze: 1 } };
 }
 /* 哪几类还有剩余——导出「全部剩余清单」时按这个顺序出多个工作表 */
 function leftKindsWithData(){
@@ -5781,8 +6078,8 @@ function exportLeftXlsx(kind){
 }
 function batchRun(kind, list, opts){
   opts = opts || {};
-  var isImg = (kind === 'img'), isAud = (kind === 'audio');
-  var stKey = isImg ? '图片状态' : (isAud ? '配音状态' : '视频状态');
+  var isImg = (kind === 'img'), isAud = (kind === 'audio'), isLip = (kind === 'lip');
+  var stKey = batchStKey(kind);
   var n = Math.min(3, Math.max(1, num(cfg.imgN) || 1));
   var multi = isImg && !!cfg.batchCand && n > 1;
   state.stopBatch = false;
@@ -5794,11 +6091,13 @@ function batchRun(kind, list, opts){
     toast(skipN ? ('这 ' + skipN + ' 个镜头都缺前置条件（' + skipTxt + '），先去补齐再来') : '没有可处理的镜头');
     return Promise.resolve(0);
   }
-  batchBarOpen((opts.resume ? '续跑剩余：' : '') + (isImg ? '批量生成分镜图' : (isAud ? '批量生成配音' : '批量生成视频')) +
+  batchBarOpen((opts.resume ? '续跑剩余：' : '') +
+    (isImg ? '批量生成分镜图' : (isAud ? '批量生成配音' : (isLip ? '批量对口型' : '批量生成视频'))) +
     (skipN ? '（跳过 ' + skipN + ' 个）' : ''));
   return runPool(list, function(s){
     if(isImg) return genShotImage(s._id);
     if(isAud) return genAudio(s._id);
+    if(isLip) return genLipsync(s._id).then(function(){ return waitShot(s._id, '口型状态', 300000); });
     if(!s['图片URL']) return Promise.resolve();
     return genVideo(s._id);
   }, function(done, total, s){
@@ -5809,7 +6108,7 @@ function batchRun(kind, list, opts){
   }, { kind: kind, ids: list.map(function(s){ return s._id; }) }).then(function(left){
     var bad = list.filter(function(s){ return s[stKey] === '失败'; }).length;
     var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
-    var tail = (bad ? '，失败 ' + bad + ' 条' + (isAud ? '（可点「重试失败」）' : '') : '') +
+    var tail = (bad ? '，失败 ' + bad + ' 条' + ((isAud || isLip) ? '（可点「重试失败」）' : '') : '') +
       (skipN ? '，跳过 ' + skipN + ' 个（' + skipTxt + '）' : '') +
       (pend ? '；' + pend + ' 个镜头候选待挑选（点镜卡「选图(N)」）' : '');
     /* 中途暂停/停止时不要谎报「全部完成」 */
@@ -5819,9 +6118,12 @@ function batchRun(kind, list, opts){
       renderToday();
       return left;
     }
-    batchBarClose((isAud ? '配音完成：成功 ' + (list.length - bad) + ' 条' : '批量完成：' + (list.length - bad) + ' / ' + list.length) + tail, kind);
+    batchBarClose((isAud ? '配音完成：成功 ' + (list.length - bad) + ' 条'
+                       : (isLip ? '对口型完成：成功 ' + (list.length - bad) + ' 条'
+                                : '批量完成：' + (list.length - bad) + ' / ' + list.length)) + tail, kind);
     toast(isAud ? (bad ? ('配音完成，' + bad + ' 条失败') : ('配音全部完成，共 ' + (list.length - bad) + ' 条'))
-                : (pend ? ('批量完成：' + pend + ' 个镜头的候选图待挑选') : '批量任务已全部完成'));
+                : (isLip ? (bad ? ('对口型完成，' + bad + ' 条失败（多为本机音频无法提交给唇形服务）') : ('对口型全部完成，共 ' + (list.length - bad) + ' 条'))
+                         : (pend ? ('批量完成：' + pend + ' 个镜头的候选图待挑选') : '批量任务已全部完成')));
     renderToday();
     return 0;
   });
@@ -6466,14 +6768,16 @@ function batchLipsync(){
   if(!list.length){ toast('没有需要对口型的镜头'); return; }
   if(!cfg.lipBase){ toast('请先在设置里填唇形服务 Base URL'); openDrawer(); return; }
   var est = costEstimateTxt(list, { lip:1 });
-  askConfirm((est || ('共 ' + list.length + ' 个镜头。')) + '确定开始？', '开始')
+  var pf = preflightShots(list, 'lip');   /* v2.23：走 batchRun 前先预检，确认框里说清会跳过几个 */
+  if(!pf.run.length){ toast('这 ' + list.length + ' 个镜头都缺前置条件（' + skipWhyTxt(pf.skip) + '）'); return; }
+  list = pf.run;
+  askConfirm((est || ('共 ' + list.length + ' 个镜头。')) +
+    (pf.skip.length ? ('另有 ' + pf.skip.length + ' 个' + skipWhyTxt(pf.skip) + '，本次跳过；') : '') +
+    '确定开始？', '开始')
     .then(function(ok){
       if(!ok) return;
-      toast('开始对口型 ' + list.length + ' 个镜头（并发 ' + Math.max(1, Math.min(8, num(cfg.conc) || 1)) + '）…');
-      state.stopBatch = false;
-      runPool(list, function(s){
-        return genLipsync(s._id).then(function(){ return waitShot(s._id, '口型状态', 300000); });
-      }).then(function(){ toast('对口型全部处理完'); });
+      /* v2.23：收尾统一交给 batchRun——进度条 / 暂停 / 剩余续跑与生图生视频完全一致 */
+      return batchRun('lip', list);
     });
 }
 function testLip(){
@@ -6870,6 +7174,8 @@ function bind(){
       case 'rngdel': delRangePreset(t.getAttribute('data-i')); break;        /* v2.20：删除镜号预设 */
       case 'rngfilter': filterByRangePreset(t.getAttribute('data-i')); break;/* v2.22：按选区预设筛选生成页 */
       case 'rngup': moveRangePreset(t.getAttribute('data-i')); break;        /* v2.22：预设上移一位 */
+      case 'fvuse': applyFilterView(t.getAttribute('data-i')); break;        /* v2.23：套用命名筛选视图 */
+      case 'fvdel': delFilterView(t.getAttribute('data-i')); break;          /* v2.23：删除筛选视图 */
       case 'hcheck': showHealthBox(); break;                                 /* v2.20：关键字段体检明细 */
       case 'hexp': exportHealthReport(); break;                              /* v2.20：导出体检报告 */
       case 'guse': applyGenrePreset(t.getAttribute('data-i')); break;        /* v2.20：套用自定义类型套餐 */
@@ -6997,14 +7303,18 @@ function bind(){
   });
 
   $('filterSel').addEventListener('change', function(){
+    saveViewScroll();   /* v2.23：切走前记下当前视图的滚动位置（必须先于 state.filter 的改动） */
     state.filter = this.value;
     /* v2.22：选「按镜号选区」但还没设过表达式时，别把列表筛成空的 */
     if(state.filter === 'expr' && !String(cfg.filterExpr || '').trim()){
       toast('还没有选区表达式——到「成片与导出 → 导出中心」，在镜号预设上点「筛」');
       state.filter = 'all'; this.value = 'all';
     }
-    renderGenList();
+    saveCfg(); renderGenList(); renderFilterViews();
   });
+  /* v2.23：筛选视图——把常用筛选存成命名的一套，一键切回并回到上次看的位置 */
+  if($('btnFilterSave')) $('btnFilterSave').addEventListener('click', saveFilterView);
+  renderFilterViews();
   $('btnSet').addEventListener('click', openDrawer);
   $('btnCloseSet').addEventListener('click', closeDrawer);
   $('mask').addEventListener('click', closeDrawer);
@@ -7056,6 +7366,18 @@ function bind(){
     $('expInclLeft').checked = !!cfg.bundleLeft;
     $('expInclLeft').addEventListener('change', function(){ cfg.bundleLeft = !!this.checked; saveCfg(); });
   }
+  /* v2.23：「只打这些文件」的勾选——回填当前选择并即时写档 */
+  var _pickMap = { expPickSrt:'srt', expPickMd:'md', expPickCsv:'csv', expPickJson:'json', expPickFf:'ff' };
+  Object.keys(_pickMap).forEach(function(eid){
+    var el = $(eid); if(!el) return;
+    var key = _pickMap[eid];
+    el.checked = bundlePick()[key];
+    el.addEventListener('change', function(){
+      if(!cfg.bundlePick || typeof cfg.bundlePick !== 'object') cfg.bundlePick = { srt:true, md:true, csv:true, json:true, ff:true };
+      cfg.bundlePick[key] = !!el.checked;
+      saveCfg();
+    });
+  });
   /* v2.17：打包范围记住上次选择（默认全部），免得每次都重选 */
   if($('expScope')){
     $('expScope').value = cfg.expScope || 'all';
@@ -7073,6 +7395,18 @@ function bind(){
     $('expRange').value = _er;
     $('expRange').addEventListener('input', function(){ cfg.expRange = this.value; saveCfg(); updExpPreview(); });
     if($('btnRangeSave')) $('btnRangeSave').addEventListener('click', saveRangePreset);
+    /* v2.23：镜号预设的导出 / 导入（与类型套餐同一套 JSON 机制） */
+    if($('btnRangeExport')) $('btnRangeExport').addEventListener('click', exportRangePresets);
+    if($('btnRangeImport')) $('btnRangeImport').addEventListener('click', importRangePresets);
+    if($('fileRangeJson')) $('fileRangeJson').addEventListener('change', function(){
+      var f = this.files && this.files[0];
+      this.value = '';
+      if(!f) return;
+      var fr = new FileReader();
+      fr.onload = function(){ importRangePresetsText(fr.result); };
+      fr.onerror = function(){ toast('读取预设文件失败'); };
+      fr.readAsText(f, 'utf-8');
+    });
     renderRangePresets();   /* v2.20：把存过的镜号预设列出来 */
   }
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
