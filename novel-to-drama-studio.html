@@ -605,6 +605,13 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <button class="btn gh sm" id="btnGenreStyle">按类型套用整套配置（画风 + 全局令牌 + 提示词）</button>
         <span class="hint" id="genreStyleHint" style="margin:0"></span>
       </div></div>
+    <div class="fld"><label>类型套餐库（v2.20：内置 3 套 + 你自己存的配方，点一下即套用「画风预设 + 全局画风令牌 + 提示词注入」三件套）</label>
+      <div class="tools" style="margin:0">
+        <button class="btn gh sm" id="btnGenreSave">把当前配置存为套餐</button>
+        <span class="hint" id="genrePresetsHint" style="margin:0"></span>
+      </div>
+      <div class="tools" id="genrePresets" style="margin:8px 0 0"></div>
+    </div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_genrePrompt" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>并把<b>剧集画面类型</b>也写进生成提示词（v2.17：把「古装 / 动画 / 现代写实」提前告诉模型，避免古装被画成现代装、动画被画成实拍；选「自动」时不注入，填了<b>全局画风前缀</b>时也照常叠加）</span>
@@ -863,8 +870,13 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="range">自定镜号（下面填镜号表达式，支持多段与排除）</option>
       </select></div>
     <div class="fld" id="expRangeWrap" style="max-width:480px;display:none">
-      <label>镜号表达式（v2.19：多段用逗号隔开，如 <code>1-20,25,30-35</code>；排除用 <code>!</code> 前缀，如 <code>1-50,!8-10</code>；只写 <code>!3</code> 表示「全部扣掉第 3 镜」）</label>
-      <input class="inp" type="text" id="expRange" placeholder="例如 1-20,25,30-35　或　1-50,!8-10" style="width:100%">
+      <label>镜号表达式（v2.19：多段用逗号隔开，如 <code>1-20,25,30-35</code>；排除用 <code>!</code> 前缀，如 <code>1-50,!8-10</code>；只写 <code>!3</code> 表示「全部扣掉第 3 镜」；v2.20 起可用 <code>#章节名</code> 直接引用整章，如 <code>1-100,!#第一集</code>）</label>
+      <input class="inp" type="text" id="expRange" placeholder="例如 1-20,25,30-35　或　1-50,!8-10　或　#第一集" style="width:100%">
+      <div class="tools" style="margin:8px 0 0">
+        <button class="btn gh sm" id="btnRangeSave">把当前表达式存为预设</button>
+        <span class="hint" id="rangePresetsHint" style="margin:0"></span>
+      </div>
+      <div class="tools" id="rangePresets" style="margin:8px 0 0"></div>
     </div>
     <div class="hint" id="expScopePrev" style="margin:2px 0 12px"></div>
     <div class="tools" style="margin-bottom:16px">
@@ -998,7 +1010,7 @@ function closestAct(el){
 }
 
 /* ---- 自绘确认弹窗：资料库页面在 iframe 沙箱里，原生 confirm 会被静默拦截 ---- */
-var _dlgResolve = null;
+var _dlgResolve = null, _dlgInput = false;   /* v2.20：_dlgInput = 确定按钮要把输入框内容回传 */
 function askConfirm(msg, okText, danger){
   return new Promise(function(resolve){
     $('dlgTitle').textContent = danger ? '危险操作' : '请确认';
@@ -1010,15 +1022,43 @@ function askConfirm(msg, okText, danger){
     $('dlgNo').style.display = '';
     $('dialog').classList.add('on');
     $('dlgMask').classList.add('on');
+    _dlgInput = false;
     _dlgResolve = resolve;
+  });
+}
+/* v2.20：自绘输入弹窗——原生 window.prompt 和 confirm 一样会被 iframe 沙箱静默拦截，
+   而「存为预设 / 另存套餐」这类命名操作必须收一个字符串。确定返回 trim 后的名称（空则视为取消），
+   取消返回 null；回车等同「确定」。 */
+function askInput(msg, defVal, okText){
+  return new Promise(function(resolve){
+    $('dlgTitle').textContent = '请输入名称';
+    $('dlgMsg').innerHTML = '<div style="margin-bottom:8px;color:var(--tx2);line-height:1.5">' + esc(msg) + '</div>' +
+      '<input class="inp" id="dlgInput" style="width:100%" placeholder="给个名字，方便以后一眼认出" value="' + esc(defVal || '') + '">';
+    var yes = $('dlgYes');
+    yes.textContent = okText || '保存';
+    yes.className = 'btn';
+    yes.style.display = '';
+    $('dlgNo').style.display = '';
+    $('dialog').classList.add('on');
+    $('dlgMask').classList.add('on');
+    _dlgInput = true;
+    _dlgResolve = resolve;
+    setTimeout(function(){ var el = $('dlgInput'); if(el){ el.focus(); el.select(); } }, 30);
   });
 }
 function closeDlg(v){
   $('dialog').classList.remove('on');
   $('dlgMask').classList.remove('on');
   if($('dlgNo')) $('dlgNo').style.display = '';
+  var inputMode = _dlgInput; _dlgInput = false;
   var r = _dlgResolve; _dlgResolve = null;
-  if(r) r(v);
+  if(!r) return;
+  if(inputMode){
+    var el = $('dlgInput'), val = el ? String(el.value || '').trim() : '';
+    r((v && val) ? val : null);
+    return;
+  }
+  r(v);
 }
 /* 弹窗被浏览器拦截时的兜底：直接在页面内预览 */
 function previewMedia(url, kind){
@@ -1092,7 +1132,11 @@ var DEFAULT_CFG = {
      这两个键保留只为迁移老配置，不再在界面出现。 */
   expFrom:0, expTo:0,
   /* v2.19：自定镜号表达式（多段 + 排除），如 "1-20,25,30-35" 或 "1-50,!8-10" */
-  expRange:''
+  expRange:'',
+  /* v2.20：rangePresets = 镜号表达式的常用预设 [{n:'名', v:'表达式'}]，一键套用，免每次手打；
+     genrePresets = 用户自定义的类型套餐 [{n, style, globalStyle, prompt}]（内置三套之外的私有配方）。 */
+  rangePresets:[],
+  genrePresets:[]
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1253,6 +1297,40 @@ function batchLeftTip(){
 function leftNosPreview(ids, max){
   var n = Math.max(1, num(max) || 6), arr = ids || [], head = arr.slice(0, n).join(', ');
   return arr.length > n ? head + ' 等' : head;
+}
+/* v2.20：把某类型的剩余镜号导成清单——离线核对用（例如发给负责生图 / 配音的同事）。
+   按「镜号 / 章节 / 景别 / 当前状态 / 缺什么」列成 TSV，Excel 直接能开。 */
+function buildLeftText(kind){
+  var rec = (batchLoadAll() || {})[kind];
+  if(!rec || !rec.ids || !rec.ids.length) return null;
+  var byNo = {};
+  (state.shots || []).forEach(function(s){ byNo[String(num(s['镜号']))] = s; });
+  var stKey = kind === 'img' ? '图片状态' : (kind === 'audio' ? '配音状态' : '视频状态');
+  var lines = [];
+  lines.push('剩余' + batchLeftName(kind) + '清单');
+  lines.push('导出时间：' + nowStr());
+  lines.push('计划总数：' + (num(rec.total) || rec.ids.length) + '　　未完成：' + rec.ids.length + '　　上次记录：' + (rec.at || '—'));
+  lines.push('');
+  lines.push(['镜号', '章节', '景别', '当前状态', '缺什么'].join('\t'));
+  var gone = 0;
+  rec.ids.forEach(function(no){
+    var s = byNo[String(num(no))];
+    if(!s){ gone++; lines.push([no, '（镜头已删除）', '', '', ''].join('\t')); return; }
+    var why = '';
+    if(kind === 'vid' && !s['图片URL']) why = '没图片';
+    else if(kind === 'audio' && !String(s['台词旁白'] || '').trim()) why = '没台词';
+    lines.push([no, String(s['章节'] || ''), String(s['景别'] || ''), String(s[stKey] || '未生成'), why].join('\t'));
+  });
+  lines.push('');
+  if(gone) lines.push('注：有 ' + gone + ' 个镜号在当前分镜里已找不到（可能被删除），可点「忽略」清掉这类记录。');
+  lines.push('说明：本清单只列「上次批量没跑完」的镜号；回首页点续跑卡的「只跑剩余镜」即可接着跑。');
+  return lines.join('\n');
+}
+function exportLeftList(kind){
+  var txt = buildLeftText(kind);
+  if(!txt){ toast('这一类型当前没有剩余记录'); return; }
+  download('剩余' + batchLeftName(kind) + '清单_' + nowStr().replace(/[: ]/g, '-') + '.txt', txt, 'text/plain;charset=utf-8');
+  toast('已导出剩余' + batchLeftName(kind) + '清单');
 }
 function runPool(list, worker, onOne, opts){   /* v2.17：补回第 4 个参数 opts——v2.16 漏了形参，函数体里的 opts.kind 会抛 ReferenceError，收尾逻辑全废 */
   var conc = Math.max(1, Math.min(8, num(cfg.conc) || 1));
@@ -1751,8 +1829,22 @@ function renderToday(){
       '<span class="txt">上次' + batchLeftName(lk) + '共 ' + leftTot + ' 个，还剩 ' + lrec.ids.length + ' 个没跑完（第 ' + esc(leftNosPreview(lrec.ids)) + ' 镜）</span>' +
       '<button class="btn sm" data-act="leftrun" data-kind="' + esc(lk) + '">只跑剩余镜</button>' +
       '<button class="btn gh sm" data-act="leftjump" data-kind="' + esc(lk) + '">去定位</button>' +
+      '<button class="btn gh sm" data-act="leftlist" data-kind="' + esc(lk) + '">导出清单</button>' +
       '<button class="btn gh sm" data-act="leftclear" data-kind="' + esc(lk) + '">忽略</button></div>';
   });
+  /* v2.20：关键字段体检——只有出现「硬性缺料」（缺画面描述 / 没时长 / 无生图提示词）时才弹卡，
+     免得「没章节」这类软性提示天天占着首页让人麻木。明细与报告里两种都会列。 */
+  var hIss = shotHealth(state.shots), hHard = healthHardCount(hIss);
+  if(hHard){
+    var hs = healthSummary(hIss);
+    html += '<div class="todo" style="background:#F5F6F8;border-color:#E3E5EC">' +
+      '<span class="bad" style="color:#4B5563">体检</span>' +
+      '<span class="txt">' + hIss.length + ' 个镜头缺关键字段：' +
+      hs.order.slice(0, 3).map(function(k){ return k + ' ' + hs.byType[k]; }).join('、') +
+      (hs.order.length > 3 ? ' 等' : '') + '（会拖累出图与成片）</span>' +
+      '<button class="btn sm" data-act="hcheck">查看明细</button>' +
+      '<button class="btn gh sm" data-act="hexp">导出报告</button></div>';
+  }
   if(!items.length && !html){
     box.innerHTML = '<div class="hint">' +
       (s.total ? '所有镜头都已推进到位了，可以去「成片与导出」收尾。' : '还没有分镜。到「剧本拆镜」粘贴小说，点「AI 一键拆镜」开始。') + '</div>';
@@ -2165,6 +2257,7 @@ function fillSettings(){
   if($('cf_usedTts')) $('cf_usedTts').value = num(cfg.usedTts);
   if($('cf_usedLip')) $('cf_usedLip').value = num(cfg.usedLip);
   if(typeof updGenreStyleHint === 'function') updGenreStyleHint();   /* v2.18：类型旁显示建议画风 */
+  if(typeof renderGenrePresets === 'function') renderGenrePresets(); /* v2.20：套餐库列表也要跟着刷新 */
 }
 function readSettings(){
   cfg.agnesKey = $('cf_agnesKey').value.trim();
@@ -4103,13 +4196,36 @@ function selectedChapterTitles(){
      !3                   只写排除段 = 全部减去 3
      8-  /  -20           开区间：8 到末尾 / 开头到 20
      20                   单个镜号
+   v2.20：再加「#章节名」——直接引用某个章节下的全部镜号（包含匹配，如 #第一集），
+     1-100,!#第一集       也可整章排除。
    写错的段直接忽略、不报错、不炸；空字符串表示「不限」，避免导出空包。 */
+/* v2.20：#章节名 → 该章节下所有镜号。先试「完全等于章节名」，命中即只取这些章节；
+   没有任何章节名完全相等时，退化为「包含」匹配（用户常只记得片段，如「第一集」）。 */
+function chapterShotNos(name){
+  var key = String(name == null ? '' : name).trim(), out = [];
+  if(!key) return out;
+  var chs = state.chapters || [], exact = {}, hasExact = false, i;
+  for(i = 0; i < chs.length; i++){
+    if(String(chs[i].title || '') === key){ exact[String(chs[i].title)] = 1; hasExact = true; }
+  }
+  (state.shots || []).forEach(function(s){
+    var t = String(s['章节'] || '');
+    var hit = hasExact ? !!exact[t] : (t.indexOf(key) > -1);
+    if(hit){ var n = num(s['镜号']); if(n) out.push(n); }
+  });
+  return out;
+}
 function parseShotRange(str){
   var inc = [], exc = [];
   String(str == null ? '' : str).split(/[,，;；\s]+/).forEach(function(seg){
     seg = String(seg).trim(); if(!seg) return;
     var neg = false;
     if(seg[0] === '!' || seg[0] === '^'){ neg = true; seg = seg.slice(1); }
+    /* v2.20：#章节名 —— 展开成该章节下每个镜号的单点区间（保持 rangeHit 只做数值判断） */
+    if(seg[0] === '#'){
+      chapterShotNos(seg.slice(1)).forEach(function(n){ (neg ? exc : inc).push([n, n]); });
+      return;
+    }
     var a, b,
         m  = seg.match(/^(\d+)\s*[-~－—至到]\s*(\d+)$/),
         m2 = seg.match(/^(\d+)\s*[-~－—至到]$/),
@@ -4173,35 +4289,112 @@ function exportScopeShots(){
 }
 function scopeLabel(){
   var sc = ($('expScope') && $('expScope').value) || 'all';
-  if(sc === 'range') return '自定镜号 ' + shotRangeTxt(parseShotRange($('expRange') && $('expRange').value));
+  if(sc === 'range'){
+    var raw = String(($('expRange') && $('expRange').value) || '').trim();
+    /* v2.20：含 #章节引用 时直接回显原文——展开成几十个镜号反而看不懂 */
+    return '自定镜号 ' + (raw.indexOf('#') > -1 ? raw : shotRangeTxt(parseShotRange(raw)));
+  }
   return { all:'全部镜头', done:'仅已完成镜头', filter:'跟随当前筛选', chapter:'仅勾选章节' }[sc] || '全部镜头';
+}
+/* v2.20：镜号表达式的常用预设——「只导前 20 镜」「排除片头」这类固定选区不必每次手打。
+   预设存在 cfg.rangePresets（本机持久化），点击套用、× 删除。 */
+function rangePresets(){
+  if(!Array.isArray(cfg.rangePresets)) cfg.rangePresets = [];
+  return cfg.rangePresets;
+}
+function renderRangePresets(){
+  var box = $('rangePresets'), hint = $('rangePresetsHint');
+  if(!box) return;
+  var arr = rangePresets();
+  if(hint) hint.textContent = arr.length ? ('共 ' + arr.length + ' 个预设，点一下套用；点 × 删除') : '还没有预设，填好表达式后点左边按钮存一个';
+  box.innerHTML = arr.map(function(p, i){
+    return '<button class="btn gh sm" data-act="rnguse" data-i="' + i + '" title="' + esc(p.v || '') + '">' + esc(p.n || ('预设 ' + (i + 1))) + '</button>' +
+      '<button class="btn gh sm" data-act="rngdel" data-i="' + i + '" title="删除该预设">×</button>';
+  }).join('');
+}
+function saveRangePreset(){
+  var el = $('expRange'), v = String((el && el.value) || '').trim();
+  if(!v){ toast('先在输入框里写好一个表达式，再存为预设'); return; }
+  askInput('给这个镜号表达式起个名字（以后在导出中心一键套用）：', '选区 ' + (rangePresets().length + 1))
+    .then(function(name){
+      if(!name) return;
+      var arr = rangePresets(), i;
+      for(i = 0; i < arr.length; i++){
+        if(arr[i].n === name){ arr[i].v = v; saveCfg(); renderRangePresets(); toast('已更新预设「' + name + '」'); return; }
+      }
+      arr.push({ n: name, v: v });
+      saveCfg(); renderRangePresets();
+      toast('已存为预设「' + name + '」');
+    });
+}
+function applyRangePreset(i){
+  var p = rangePresets()[num(i)];
+  if(!p) return;
+  var el = $('expRange');
+  if(el) el.value = p.v || '';
+  cfg.expRange = p.v || '';
+  saveCfg(); updExpPreview();
+  toast('已套用预设「' + (p.n || '') + '」');
+}
+function delRangePreset(i){
+  var arr = rangePresets(), k = num(i);
+  if(!arr[k]) return;
+  var nm = arr[k].n || '';
+  arr.splice(k, 1);
+  saveCfg(); renderRangePresets();
+  toast('已删除预设「' + nm + '」');
 }
 /* v2.19：打包体积估算。文本类按真实内容算（字幕 / 脚本 / 清单 / 数据 / 转码命令），
    整轨配音按「wav 单声道 16bit @24k」估——与 buildTrackWav 的实际规格一致。
-   镜数很大（>1500）时按经验均值估，避免每敲一个字符都全量拼字符串把页面卡住。 */
+   镜数很大（>1500）时按经验均值估，避免每敲一个字符都全量拼字符串把页面卡住。
+   v2.20：再细化——分文件列出来，并把 zip 容器自身的开销也算进去（store 模式每个文件
+   有本地头 + 中央目录两条记录，各带一次文件名；末尾还有 22 字节 EOCD）。
+   这样预览里的数字才和真正下载下来的压缩包对得上，而不是「永远比实际小一点」。 */
 function fmtBytes(n){
   n = Math.max(0, Math.round(num(n) || 0));
   if(n < 1024) return n + ' B';
   if(n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
   return (n / 1024 / 1024).toFixed(1) + ' MB';
 }
+/* zip 容器开销：每文件 本地头(30 + 名字) + 中央目录(46 + 名字)，再加末尾 EOCD 22 字节 */
+function zipOverhead(names){
+  var b = 22;
+  (names || []).forEach(function(n){ var L = utf8Bytes(String(n)).length; b += (30 + L) + (46 + L); });
+  return b;
+}
 function estExportSize(scope){
   scope = scope || [];
   var secs = 0, hasAud = false;
   scope.forEach(function(s){ secs += shotDur(s); if(audLoad(s._id)) hasAud = true; });
-  var approx = scope.length > 1500, text;
+  var approx = scope.length > 1500, parts = [], text = 0;
+  function add(name, bytes){ parts.push({ name: name, bytes: bytes }); text += bytes; }
   if(approx){
-    text = Math.round(2400 * scope.length);
+    add('字幕 / 脚本 / 清单 / 数据 / 命令', Math.round(2800 * scope.length));
   }else{
     var srt = buildSrtText(scope);
-    text = utf8Bytes(srt ? srt.text : '').length +
-           utf8Bytes(buildMdText(scope)).length +
-           utf8Bytes('\ufeff' + buildCsvText(scope)).length +
-           utf8Bytes(JSON.stringify({ assets: state.assets, shots: scope })).length +
-           utf8Bytes(ffmpegMp3Cmd()).length;
+    add('分镜字幕.srt', utf8Bytes(srt ? srt.text : '').length);
+    add('分镜脚本.md', utf8Bytes(buildMdText(scope)).length);
+    add('视频清单.csv', utf8Bytes('\ufeff' + buildCsvText(scope)).length);
+    add('全量数据.json', utf8Bytes(JSON.stringify({ assets: state.assets, shots: scope })).length);
+    add('转码命令 / 打包说明', utf8Bytes(ffmpegMp3Cmd()).length + 320);
   }
   var track = hasAud ? Math.round(secs * 24000 * 2) : 0;   /* 24k 单声道 16bit = 2 字节/采样 */
-  return { text: text, track: track, total: text + track, secs: secs, hasAud: hasAud, approx: approx };
+  var names = parts.map(function(p){ return p.name; });
+  if(hasAud) names.push('整轨配音.wav');
+  add('zip 容器开销', zipOverhead(names));
+  /* 整轨不计入 text：text 保持「不勾整轨时的体积」口径，total 才是含整轨的总体积 */
+  if(hasAud) parts.push({ name: '整轨配音.wav', bytes: track, audio: true });
+  var biggest = null;
+  parts.forEach(function(p){ if(!biggest || p.bytes > biggest.bytes) biggest = p; });
+  return { text: text, track: track, total: text + track, secs: secs, hasAud: hasAud, approx: approx, parts: parts, biggest: biggest };
+}
+/* v2.20：把体积明细按大小排一下，只说前 3 大项——用户想知道「包为什么这么大」时一眼能看到 */
+function sizeBreakTxt(sz){
+  if(!sz || !sz.parts || !sz.parts.length) return '';
+  var arr = sz.parts.slice().sort(function(a, b){ return b.bytes - a.bytes; });
+  var top = arr.slice(0, 3).map(function(p){ return esc(p.name) + ' ' + fmtBytes(p.bytes); }).join('　·　');
+  var rest = arr.length > 3 ? '　·　其余 ' + (arr.length - 3) + ' 项' : '';
+  return '<div style="color:var(--tx3);margin-top:2px">体积明细（按大小）：' + top + rest + '</div>';
 }
 /* v2.18：导出前的即时预览——打完包才发现「范围选错了/导了空包」很浪费时间，
    这里在导出中心实时算出「本次会导出几镜、大概多长、大概多大」，并提示空范围。 */
@@ -4219,7 +4412,8 @@ function updExpPreview(){
     (sz.hasAud ? '<span style="color:var(--tx3)">（含整轨 ' + fmtBytes(sz.track) + '；不勾整轨约 ' + fmtBytes(sz.text) + '）</span>' : '');
   el.innerHTML = '本次将导出 <b>' + list.length + '</b> / ' + state.shots.length + ' 镜 · 预计时长 <b>' + fmtSec(Math.round(secs)) + '</b> · ' + sizeTxt +
     (empty ? '　<span style="color:#EF4444">（此范围没有镜头，换个范围再打包）</span>' : '') +
-    '　<span style="color:var(--tx3)">范围：' + esc(scopeLabel()) + '</span>';
+    '　<span style="color:var(--tx3)">范围：' + esc(scopeLabel()) + '</span>' +
+    (empty ? '' : sizeBreakTxt(sz));
 }
 /* 一键把所有能导的东西打成一个包：srt + md + csv + json + 转码命令（+ 可选整轨 wav）。
    每个文件都是复用单独导出时的同一份内容（build* 系列纯函数），不会出现「单导和打包结果不一致」。
@@ -4608,6 +4802,79 @@ function applyGenreStyle(){
 function curGlobalStyle(){
   var el = $('cf_globalStyle');
   return el ? String(el.value || '').trim() : String((cfg && cfg.globalStyle) || '');
+}
+/* v2.20：套餐从「内置三套 + 只能用类型触发」升级为「可编辑的多套」——
+   用户可以把调好的配方（画风预设 + 全局令牌 + 是否注入提示词）存成自己的套餐，
+   下次不必从零再配一遍。内置三套仍按类型自动推荐，自定义的以 ⭐ 标注。 */
+function genrePresets(){
+  if(!Array.isArray(cfg.genrePresets)) cfg.genrePresets = [];
+  return cfg.genrePresets;
+}
+function genrePresetList(){
+  var out = [];
+  ['modern', 'costume', 'anime'].forEach(function(g){
+    if(GENRE_BUNDLE[g]) out.push({ n: GENRE_LABEL[g] || g, style: GENRE_BUNDLE[g].style, globalStyle: GENRE_BUNDLE[g].globalStyle, prompt: true, builtin: g });
+  });
+  genrePresets().forEach(function(p, i){
+    out.push({ n: p.n || ('配方 ' + (i + 1)), style: p.style || '', globalStyle: p.globalStyle || '', prompt: p.prompt !== false, custom: i });
+  });
+  return out;
+}
+function renderGenrePresets(){
+  var box = $('genrePresets'), hint = $('genrePresetsHint');
+  if(!box) return;
+  var arr = genrePresetList(), mine = genrePresets().length;
+  if(hint) hint.textContent = '共 ' + arr.length + ' 套（内置 3 套 + 你自己存的 ' + mine + ' 套）；点名称即套用' + (mine ? '，带 ⭐ 的可点 × 删除' : '');
+  box.innerHTML = arr.map(function(p, i){
+    var tip = p.style + (p.globalStyle ? ' ｜ ' + p.globalStyle : '') + (p.prompt ? ' ｜ 注入提示词' : ' ｜ 不注入');
+    return '<button class="btn gh sm" data-act="guse" data-i="' + i + '" title="' + esc(tip) + '">' + esc(p.n) + (p.custom != null ? ' ⭐' : '') + '</button>' +
+      (p.custom != null ? '<button class="btn gh sm" data-act="gdel" data-i="' + i + '" title="删除该自定义套餐">×</button>' : '');
+  }).join('');
+}
+function applyGenrePreset(i){
+  var p = genrePresetList()[num(i)];
+  if(!p) return;
+  var cur = curGlobalStyle();
+  askConfirm('套用套餐「' + p.n + '」：画风预设 →「' + p.style + '」；全局画风令牌 →「' + (p.globalStyle || '（清空）') + '」；' +
+    (p.prompt ? '并开启' : '并关闭') + '「类型写进提示词」。会覆盖你当前的画风 / 前缀 / 负向词' +
+    (cur ? '（当前令牌：' + cur + '）' : '') + '，确定？', '套用')
+    .then(function(ok){
+      if(!ok) return;
+      applyStylePreset(p.style);
+      cfg.globalStyle = p.globalStyle || '';
+      if($('cf_globalStyle')) $('cf_globalStyle').value = cfg.globalStyle;
+      cfg.genrePrompt = !!p.prompt;
+      if($('cf_genrePrompt')) $('cf_genrePrompt').checked = !!p.prompt;
+      saveCfg(); updGenreStyleHint(); renderGenrePresets();
+      toast('已套用套餐「' + p.n + '」');
+    });
+}
+function saveGenrePreset(){
+  var style = (cfg && cfg.stylePreset) || '';
+  if(!style){ toast('先在风格库里挑一套画风（或按类型套用一次），再存为套餐'); return; }
+  var gs = curGlobalStyle();
+  var pr = $('cf_genrePrompt') ? !!$('cf_genrePrompt').checked : (cfg.genrePrompt !== false);
+  askInput('把当前这套配置（画风「' + style + '」' + (gs ? ' + 全局令牌' : '') + '）存成套餐，起个名字：', genreLabel() + ' 配方')
+    .then(function(name){
+      if(!name) return;
+      var arr = genrePresets(), i;
+      for(i = 0; i < arr.length; i++){
+        if(arr[i].n === name){ arr[i].style = style; arr[i].globalStyle = gs; arr[i].prompt = pr; saveCfg(); renderGenrePresets(); toast('已更新套餐「' + name + '」'); return; }
+      }
+      arr.push({ n: name, style: style, globalStyle: gs, prompt: pr });
+      saveCfg(); renderGenrePresets();
+      toast('已存为自定义套餐「' + name + '」');
+    });
+}
+function delGenrePreset(i){
+  var p = genrePresetList()[num(i)];
+  if(!p || p.custom == null) return;   /* 内置套餐不给删，避免把类型联动弄没了 */
+  var arr = genrePresets();
+  if(!arr[p.custom]) return;
+  var nm = arr[p.custom].n || '';
+  arr.splice(p.custom, 1);
+  saveCfg(); renderGenrePresets();
+  toast('已删除自定义套餐「' + nm + '」');
 }
 function updGenreStyleHint(){
   var el = $('genreStyleHint'); if(!el) return;
@@ -5045,6 +5312,84 @@ function skipWhyTxt(skip){
   (skip || []).forEach(function(x){ c[x.why] = (c[x.why] || 0) + 1; });
   for(k in c) parts.push(c[k] + ' 个' + k);
   return parts.join('、');
+}
+/* v2.20：关键字段体检。跟「跑前预检」不同——预检判断的是「这一步现在能不能跑」，
+   体检判断的是「这条数据本身有没有缺料」：缺画面描述 → 生图只能瞎编；没时长 → 成片时长对不上；
+   没章节 → 分集打包会乱；有台词没角色 → 配音音色匹配不上。
+   分「硬性」与「软性」两档：硬性问题会挡出图/成片质量，软性问题只影响组织方式。
+   全部只是提示，不阻断批量——用户可以明知故犯。 */
+var HEALTH_HARD = { '缺画面描述':1, '无生图提示词':1, '没时长':1 };
+function shotHealth(shots){
+  var out = [];
+  (shots || []).forEach(function(s){
+    var issues = [];
+    if(!String(s['画面描述'] || '').trim()) issues.push('缺画面描述');
+    if(!String(s['英文提示词'] || '').trim() && !String(s['图片提示词覆盖'] || '').trim()) issues.push('无生图提示词');
+    if(!(num(s['时长秒']) > 0)) issues.push('没时长');
+    if(!String(s['章节'] || '').trim()) issues.push('没章节');
+    if(String(s['台词旁白'] || '').trim() && !String(s['说话角色'] || '').trim()) issues.push('有台词没角色');
+    if(issues.length) out.push({ no: num(s['镜号']), id: s._id, issues: issues });
+  });
+  return out;
+}
+/* 硬性问题条数（一条镜可能同时命中多条）：>0 才值得在首页弹体检卡，免得软性提示天天刷存在感 */
+function healthHardCount(issues){
+  var n = 0;
+  (issues || []).forEach(function(x){ x.issues.forEach(function(t){ if(HEALTH_HARD[t]) n++; }); });
+  return n;
+}
+function healthSummary(issues){
+  var c = {}, arr = issues || [];
+  arr.forEach(function(x){ x.issues.forEach(function(t){ c[t] = (c[t] || 0) + 1; }); });
+  /* 硬性问题排前面（更该先补），同档再按数量降序，最后按名字稳定排序 */
+  var order = Object.keys(c).sort(function(a, b){
+    var ha = HEALTH_HARD[a] ? 1 : 0, hb = HEALTH_HARD[b] ? 1 : 0;
+    return (hb - ha) || (c[b] - c[a]) || (a < b ? -1 : 1);
+  });
+  return { count: arr.length, byType: c, order: order };
+}
+/* 体检明细：不导出时也能在页面上扫一眼（对话框内滚动，最多列 200 条） */
+function showHealthBox(){
+  var iss = shotHealth(state.shots);
+  if(!iss.length){ toast('没有发现关键字段缺失，数据挺完整'); return; }
+  var rows = iss.slice(0, 200).map(function(x){
+    var hard = x.issues.some(function(t){ return HEALTH_HARD[t]; });
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--line)">第 <b>' + x.no + '</b> 镜：' +
+      '<span style="color:' + (hard ? '#B45309' : 'var(--tx2)') + '">' + esc(x.issues.join('、')) + '</span></div>';
+  }).join('');
+  var more = iss.length > 200 ? '<div style="margin-top:8px;color:var(--tx3)">只显示前 200 条，完整清单请点「导出报告」。</div>' : '';
+  $('dlgTitle').textContent = '关键字段体检（' + iss.length + ' 个镜头）';
+  $('dlgMsg').innerHTML = '<div style="max-height:52vh;overflow:auto;text-align:left">' + rows + more + '</div>';
+  $('dlgNo').style.display = 'none';
+  $('dlgYes').textContent = '知道了'; $('dlgYes').className = 'btn';
+  $('dlgYes').style.display = '';
+  $('dialog').classList.add('on'); $('dlgMask').classList.add('on');
+  _dlgInput = false;
+  _dlgResolve = function(){};
+}
+function buildHealthText(){
+  var iss = shotHealth(state.shots);
+  if(!iss.length) return null;
+  var hs = healthSummary(iss), lines = [];
+  lines.push('关键字段体检报告');
+  lines.push('生成时间：' + nowStr());
+  lines.push('镜头总数：' + state.shots.length + '　　有缺料的镜头：' + iss.length);
+  lines.push('');
+  lines.push('按问题类型统计：');
+  hs.order.forEach(function(k){ lines.push('　' + k + '：' + hs.byType[k] + ' 个'); });
+  lines.push('');
+  lines.push(['镜号', '问题'].join('\t'));
+  iss.forEach(function(x){ lines.push([x.no, x.issues.join('、')].join('\t')); });
+  lines.push('');
+  lines.push('说明：缺画面描述 / 没时长 / 无生图提示词 会直接影响出图与成片时长，建议先补齐；');
+  lines.push('　　　没章节、有台词没角色 属软性提示，影响分集打包与配音音色匹配。');
+  return lines.join('\n');
+}
+function exportHealthReport(){
+  var txt = buildHealthText();
+  if(!txt){ toast('没有发现关键字段缺失，无需导出'); return; }
+  download('关键字段体检_' + nowStr().replace(/[: ]/g, '-') + '.txt', txt, 'text/plain;charset=utf-8');
+  toast('已导出体检报告');
 }
 function batchRun(kind, list, opts){
   opts = opts || {};
@@ -6114,6 +6459,13 @@ function bind(){
       /* v2.18：只跑剩余镜——不切筛选、不重算，直接按存档镜号投队列（v2.19：带类型） */
       case 'leftrun': resumeLeftRun(t.getAttribute('data-kind')); break;
       case 'leftclear': batchClearLeft(t.getAttribute('data-kind')); renderToday(); toast('已忽略该类型的剩余记录'); break;
+      case 'leftlist': exportLeftList(t.getAttribute('data-kind')); break;   /* v2.20：导出剩余清单 */
+      case 'rnguse': applyRangePreset(t.getAttribute('data-i')); break;      /* v2.20：套用镜号预设 */
+      case 'rngdel': delRangePreset(t.getAttribute('data-i')); break;        /* v2.20：删除镜号预设 */
+      case 'hcheck': showHealthBox(); break;                                 /* v2.20：关键字段体检明细 */
+      case 'hexp': exportHealthReport(); break;                              /* v2.20：导出体检报告 */
+      case 'guse': applyGenrePreset(t.getAttribute('data-i')); break;        /* v2.20：套用自定义类型套餐 */
+      case 'gdel': delGenrePreset(t.getAttribute('data-i')); break;          /* v2.20：删除自定义类型套餐 */
       case 'del': {
         var ds = shotById(id);
         askConfirm('确定删除第 ' + (ds ? ds['镜号'] : '') + ' 镜？删除后可用「撤销」恢复。', '删除', true)
@@ -6242,11 +6594,14 @@ function bind(){
   $('mask').addEventListener('click', closeDrawer);
   $('btnSaveSet').addEventListener('click', function(){ readSettings(); toast('设置已保存到本机'); closeDrawer(); });
   /* v2.18：剧集类型 ↔ 画风预设 联动——换类型即时刷新「建议画风」提示，一键套用
-     v2.19：套餐还含全局画风令牌与提示词开关，这两处改动也刷新提示 */
+     v2.19：套餐还含全局画风令牌与提示词开关，这两处改动也刷新提示
+     v2.20：再加「套餐库」——内置 3 套 + 自定义配方，可套用 / 删除 / 另存 */
   if($('cf_genre')) $('cf_genre').addEventListener('change', function(){ updGenreStyleHint(); });
   if($('btnGenreStyle')) $('btnGenreStyle').addEventListener('click', applyGenreStyle);
-  if($('cf_globalStyle')) $('cf_globalStyle').addEventListener('input', updGenreStyleHint);
-  if($('cf_genrePrompt')) $('cf_genrePrompt').addEventListener('change', updGenreStyleHint);
+  if($('cf_globalStyle')) $('cf_globalStyle').addEventListener('input', function(){ updGenreStyleHint(); });
+  if($('cf_genrePrompt')) $('cf_genrePrompt').addEventListener('change', function(){ updGenreStyleHint(); });
+  if($('btnGenreSave')) $('btnGenreSave').addEventListener('click', saveGenrePreset);
+  renderGenrePresets();
   $('btnTest').addEventListener('click', testAgnes);
   $('btnTestText').addEventListener('click', testText);
   if($('btnTestTts')) $('btnTestTts').addEventListener('click', function(){ readSettings(); testTts(); });
@@ -6278,6 +6633,8 @@ function bind(){
     }
     $('expRange').value = _er;
     $('expRange').addEventListener('input', function(){ cfg.expRange = this.value; saveCfg(); updExpPreview(); });
+    if($('btnRangeSave')) $('btnRangeSave').addEventListener('click', saveRangePreset);
+    renderRangePresets();   /* v2.20：把存过的镜号预设列出来 */
   }
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
@@ -6360,6 +6717,10 @@ function bind(){
   $('dlgYes').addEventListener('click', function(){ closeDlg(true); });
   $('dlgNo').addEventListener('click', function(){ closeDlg(false); });
   $('dlgMask').addEventListener('click', function(){ closeDlg(false); });
+  /* v2.20：输入框弹窗（askInput）里回车 = 确定；只对输入模式生效，免得影响普通确认框 */
+  $('dialog').addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && _dlgInput){ e.preventDefault(); closeDlg(true); }
+  });
   document.addEventListener('keydown', function(e){
     if(e.key === 'Escape' && $('dialog').classList.contains('on')) closeDlg(false);
   });
