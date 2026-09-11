@@ -1966,10 +1966,24 @@ function renderToday(){
         (pipeKinds.length >= 2 ? '<button class="btn gh sm" data-act="piperesume">' + pipeKinds.map(batchLeftName).join('→') + ' 全串跑</button>' : '') +
       '</div></div>';
   }
+  /* v2.25：候选图待挑选——批量生图开了 A/B 时，跑完一堆镜都有候选没挑。给一个「批量选最高分」入口，免得逐镜点面板。 */
+  var pendCand = state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length;
+  if(pendCand){
+    html += '<div class="todo" style="background:#EAF7EE;border-color:#BFE6CB">' +
+      '<span class="bad" style="color:#1F7A3D">选优</span>' +
+      '<span class="txt">有 ' + pendCand + ' 个镜头的候选图没挑（批量生图开了 A/B 时常见）。不想逐镜点面板，可按评分自动选最高分：</span>' +
+      '<button class="btn sm" data-act="autopick">批量选最高分</button></div>';
+  }
   /* v2.20：关键字段体检——只有出现「硬性缺料」（缺画面描述 / 没时长 / 无生图提示词）时才弹卡，
      免得「没章节」这类软性提示天天占着首页让人麻木。明细与报告里两种都会列。 */
   var hIss = shotHealth(state.shots), hHard = healthHardCount(hIss);
   if(hHard){
+    /* v2.25：能靠台词自动估时长的「没时长」镜数——有才显示「补齐时长」按钮 */
+    var durFix = hIss.filter(function(x){
+      if(x.issues.indexOf('没时长') < 0) return false;
+      var sh = shotById(x.id);
+      return sh && String(sh['台词旁白'] || '').trim();
+    }).length;
     var hs = healthSummary(hIss);
     html += '<div class="todo" style="background:#F5F6F8;border-color:#E3E5EC">' +
       '<span class="bad" style="color:#4B5563">体检</span>' +
@@ -1977,6 +1991,7 @@ function renderToday(){
       hs.order.slice(0, 3).map(function(k){ return k + ' ' + hs.byType[k]; }).join('、') +
       (hs.order.length > 3 ? ' 等' : '') + '（会拖累出图与成片）</span>' +
       '<button class="btn sm" data-act="hjump">去修第一个</button>' +
+      (durFix ? '<button class="btn gh sm" data-act="hfixdur">补齐时长(' + durFix + ')</button>' : '') +
       '<button class="btn gh sm" data-act="hcheck">查看明细</button>' +
       '<button class="btn gh sm" data-act="hexp">导出报告</button></div>';
   }
@@ -3305,6 +3320,67 @@ function discardCand(){
   var id = cbShotId, s = id ? shotById(id) : null;
   closeCandPanel();
   if(s){ s._imgCand = []; toast('已放弃候选图，可点「A/B 选优」重新生成'); refreshAll(); }
+}
+/* v2.25：把「选第 i 版候选」的提交动作抽成可复用函数——面板里 pickCand 用，批量选最高分也用同一份，避免两套提交逻辑各写各的。
+   不依赖面板状态（cbShotId / closeCandPanel），批量场景直接拿 shot 对象提交。 */
+function commitBestCand(s, i){
+  if(!s || !Array.isArray(s._imgCand) || !s._imgCand[i]) return false;
+  var url = s._imgCand[i];
+  var oldUrl = s['图片URL'] || '';
+  var obj = { 图片URL:url, 图片状态:'已完成', 错误信息:'', 更新时间:nowStr() };
+  if(oldUrl && oldUrl !== url){
+    pushImgHist(s, oldUrl);
+    obj._imgHist = s._imgHist;
+    markImageChanged(s);
+    if(s['视频URL'] || s['口型视频URL']) obj._imgNewer = true;
+  }
+  s._imgCand = [];
+  patchShot(s._id, obj);
+  return true;
+}
+/* v2.25：批量选最高分——对每张有候选待选的镜，复用与面板一致的评分口径（清晰度 / 曝光 / 一致性 / 构图 / 主体）算分，自动提交最高分那版。
+   省掉「跑完批量 → 逐镜打开面板点推荐」那一趟；某镜全部取不到像素（跨域）就跳过交回人工。 */
+function autoPickAllCand(){
+  var list = state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; });
+  if(!list.length){ toast('没有待挑选的候选图'); return; }
+  if(!askConfirm('对 ' + list.length + ' 个镜头的候选图，按技术评分（清晰度 / 曝光 / 一致性 / 构图 / 主体）自动选最高分的一版？\n评分取不到像素的镜头会跳过，交回你手动选。', '批量选最高分')) return;
+  batchBarOpen('批量选最高分（共 ' + list.length + ' 镜）');
+  var done = 0, picked = 0, skipped = 0;
+  function step(i){
+    if(i >= list.length || state.stopBatch){ finish(); return; }
+    var s = list[i];
+    var urls = s._imgCand.slice();
+    var wantCons = cfg.imgCons !== false;
+    Promise.all([
+      Promise.all(urls.map(scoreCandidate)),
+      wantCons ? dramaBaseHist(s._id) : Promise.resolve(null)
+    ]).then(function(pair){
+      var base = pair[1];
+      var rs = pair[0].map(function(t){
+        if(!t) return null;
+        return candFinal(t, (base && t.hist) ? consScore(histSim(t.hist, base)) : null, t.safe, t.subj);
+      });
+      var bi = -1, best = -1;
+      rs.forEach(function(r, k){ if(r && r.score > best){ best = r.score; bi = k; } });
+      if(bi < 0){ skipped++; }
+      else if(commitBestCand(s, bi)){ picked++; }
+      done++;
+      batchBarStep(done, list.length);
+      batchBarMsg('已处理第 ' + s['镜号'] + ' 镜' + (bi < 0 ? '（取不到像素，跳过）' : '（选最高分 ' + String.fromCharCode(65 + bi) + '）'));
+      setTimeout(function(){ step(i + 1); }, 0);
+    }).catch(function(){
+      skipped++; done++;
+      batchBarStep(done, list.length);
+      setTimeout(function(){ step(i + 1); }, 0);
+    });
+  }
+  function finish(){
+    batchBarClose('批量选最高分完成：自动选定 ' + picked + ' 镜' + (skipped ? '，' + skipped + ' 镜取不到像素已跳过（请手动选）' : ''), 'img');
+    toast('批量选最高分完成：' + picked + ' 镜已自动选定' + (skipped ? '，' + skipped + ' 镜需手动挑选' : ''));
+    renderToday();
+    if(typeof renderGenList === 'function') renderGenList();
+  }
+  step(0);
 }
 /* --- 视频：agnes-video-2.5-flash keyframe --- */
 function buildVideoBody(s){
@@ -6139,6 +6215,33 @@ function exportHealthReport(){
   download('关键字段体检_' + nowStr().replace(/[: ]/g, '-') + '.txt', txt, 'text/plain;charset=utf-8');
   toast('已导出体检报告');
 }
+/* v2.25：按台词字数估算镜头时长——与字幕 cue 同一套语速口径（cueEst），clamp 到 4–12 秒（对齐 shotDur）。
+   仅当有台词时给出估值；无台词的空镜返回 null，不替用户乱填时长。 */
+function estShotDurFromText(s){
+  var txt = String(s['台词旁白'] || '').trim();
+  if(!txt) return null;
+  var rate = num(cfg.cnRate) || 4.5;
+  var cues = (cfg.srtCue !== false) ? parseCues(txt) : [{ text: txt }];
+  var sum = 0;
+  cues.forEach(function(c){ sum += cueEst(c, rate); });
+  if(sum <= 0) return null;
+  return Math.min(12, Math.max(4, sum));
+}
+/* v2.25：一键补齐时长——只补「没时长 + 有台词」的镜（这类才能靠台词估出来），空镜（无台词）不动，避免误改。
+   与面板「去修第一个」互补：能自动估的批量填，估不了的留给人。 */
+function fixDurationsAuto(){
+  var list = state.shots.filter(function(s){
+    return !(num(s['时长秒']) > 0) && estShotDurFromText(s) != null;
+  });
+  if(!list.length){ toast('没有「既没时长、又有台词」的镜头可自动补（空镜不会动）'); return; }
+  if(!askConfirm('对 ' + list.length + ' 个「没时长但有台词」的镜头，按台词字数（语速 ' + (num(cfg.cnRate) || 4.5) + ' 字/秒）自动估算并填入时长（4–12 秒）？\n无台词的空镜不会改动。', '补齐时长')) return;
+  list.forEach(function(s){
+    var d = estShotDurFromText(s);
+    if(d != null) patchShot(s._id, { 时长秒: d, 更新时间: nowStr() });
+  });
+  toast('已自动补齐 ' + list.length + ' 个镜头的时长');
+  renderToday();
+}
 /* v2.22：体检报告的「表格行」——xlsx 与打包里的 CSV 共用同一份数据，两处口径不会打架。
    硬性 / 软性单独一列，用户在 Excel 里能直接按列排序、筛选。 */
 function buildHealthRows(){
@@ -7328,6 +7431,8 @@ function bind(){
       case 'fvren': renameFilterView(t.getAttribute('data-i')); break;        /* v2.24：重命名筛选视图 */
       case 'hcheck': showHealthBox(); break;                                 /* v2.20：关键字段体检明细 */
       case 'hexp': exportHealthReport(); break;                              /* v2.20：导出体检报告 */
+      case 'hfixdur': fixDurationsAuto(); break;                            /* v2.25：一键补齐时长（按台词估算） */
+      case 'autopick': autoPickAllCand(); break;                            /* v2.25：候选图批量选最高分 */
       case 'guse': applyGenrePreset(t.getAttribute('data-i')); break;        /* v2.20：套用自定义类型套餐 */
       case 'gdel': delGenrePreset(t.getAttribute('data-i')); break;          /* v2.20：删除自定义类型套餐 */
       case 'del': {
