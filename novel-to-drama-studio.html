@@ -600,7 +600,11 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="modern">现代都市（真人写实，肤色可信，偏重肤色）</option>
         <option value="costume">古装 / 年代（厚衣遮肤色，更依赖显著性）</option>
         <option value="anime">动画 / 二次元（平坦高饱和，放宽显著性阈值）</option>
-      </select></div>
+      </select>
+      <div class="tools" style="margin:8px 0 0">
+        <button class="btn gh sm" id="btnGenreStyle">按类型套用画风预设</button>
+        <span class="hint" id="genreStyleHint" style="margin:0"></span>
+      </div></div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_genrePrompt" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
       <span>并把<b>剧集画面类型</b>也写进生成提示词（v2.17：把「古装 / 动画 / 现代写实」提前告诉模型，避免古装被画成现代装、动画被画成实拍；选「自动」时不注入，填了<b>全局画风前缀</b>时也照常叠加）</span>
@@ -856,7 +860,16 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="done">仅已完成（有视频 / 口型视频）的镜头</option>
         <option value="filter">跟随「③ 生成图 / 视频」页当前筛选</option>
         <option value="chapter">仅「① 剧本拆镜」页勾选的章节</option>
+        <option value="range">自定镜号区间（下面填起止镜号）</option>
       </select></div>
+    <div class="fld" id="expRangeWrap" style="max-width:480px;display:none">
+      <label>镜号区间（含两端；只填一边表示从那端起到末尾 / 从头到那端）</label>
+      <div class="tools" style="margin:0">
+        <input class="inp" type="number" min="1" id="expFrom" placeholder="起始镜号" style="width:150px">
+        <span style="align-self:center;color:var(--tx3)">—</span>
+        <input class="inp" type="number" min="1" id="expTo" placeholder="结束镜号" style="width:150px">
+      </div></div>
+    <div class="hint" id="expScopePrev" style="margin:2px 0 12px"></div>
     <div class="tools" style="margin-bottom:16px">
       <button class="btn" id="btnExpBundle">一键打包导出（.zip，字幕 + 脚本 + 清单 + 数据 + 转码命令）</button>
     </div>
@@ -1076,8 +1089,10 @@ var DEFAULT_CFG = {
      v2.17：补进 DEFAULT_CFG——loadCfg 只回填「已在 cfg 里的键」，之前漏了导致刷新后类型选择丢失。
      genrePrompt = 是否把该画面类型也写进生成提示词（默认开，auto 本身无描述等同不注入）。 */
   genre:'auto', genrePrompt:true,
-  /* v2.17：expScope = 一键打包的默认范围（all/done/filter/chapter），记住上次选择 */
-  expScope:'all'
+  /* v2.17：expScope = 一键打包的默认范围（all/done/filter/chapter/range），记住上次选择 */
+  expScope:'all',
+  /* v2.18：自定镜号区间的起止（range 范围时用；0 = 不限该端） */
+  expFrom:0, expTo:0
 };
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
@@ -1179,13 +1194,13 @@ function batchLeftName(kind){ return BATCH_KIND_NAME[kind] || '任务'; }
 function batchLoadLeft(){
   try{ return JSON.parse(localStorage.getItem(batchLeftKey()) || 'null'); }catch(e){ return null; }
 }
-function batchSaveLeft(kind, list){
+function batchSaveLeft(kind, list, total){
   if(!kind) return;
   var ids = [];
   (list || []).forEach(function(s){ var n = num(s && s['镜号']); if(n) ids.push(n); });
   if(!ids.length){ batchClearLeft(); return; }
   try{
-    localStorage.setItem(batchLeftKey(), JSON.stringify({ kind: kind, ids: ids, at: nowStr() }));
+    localStorage.setItem(batchLeftKey(), JSON.stringify({ kind: kind, ids: ids, total: num(total) || ids.length, at: nowStr() }));
   }catch(e){}
 }
 function batchClearLeft(){ try{ localStorage.removeItem(batchLeftKey()); }catch(e){} }
@@ -1194,7 +1209,7 @@ function batchLeftTip(){
   var left = batchLoadLeft();
   if(!left || !left.ids || !left.ids.length) return;
   var n = left.ids.length, nm = batchLeftName(left.kind);
-  toast('上次' + nm + '还剩 ' + n + ' 个未完成，点批量按钮即可续跑');
+  toast('上次' + nm + '还剩 ' + n + ' 个未完成，可用首页「续跑」卡的「只跑剩余镜」继续');
   var btn = left.kind === 'audio' ? $('btnBatchAudio') : (left.kind === 'img' ? $('btnBatchImg') : $('btnBatchVid'));
   if(btn && btn.tagName === 'BUTTON'){
     btn.textContent = String(btn.textContent).replace(/（续跑 \d+）/, '') + '（续跑 ' + n + '）';
@@ -1249,12 +1264,15 @@ function runPool(list, worker, onOne, opts){   /* v2.17：补回第 4 个参数 
   }
   return Promise.all(workers).then(function(){
     /* v2.16：暂停/停止导致没跑完时，把剩余镜号存下来；正常跑完则清掉存档。
-       存档只有一条，所以要判类型：跑 A 类型不会把 B 类型「还剩 N 个」的记录清掉或覆盖。 */
+       存档只有一条，所以要判类型：跑 A 类型不会把 B 类型「还剩 N 个」的记录清掉或覆盖。
+       v2.18：opts 扩展为 {kind, ids}——ids 是本次批量「计划要跑的镜」ID 全集，写进存档当分母，
+       续跑卡就能说清「共 N 个里还剩 M 个」，而不是只报一个孤零零的剩余数。 */
     var left = list.slice(i), kind = opts && opts.kind;
     if(kind){
       var cur = batchLoadLeft();
+      var planned = (opts.ids && opts.ids.length) || 0;
       if(left.length && (state.stopBatch || state.batchPause)){
-        if(!cur || cur.kind === kind) batchSaveLeft(kind, left);
+        if(!cur || cur.kind === kind) batchSaveLeft(kind, left, planned);
       }else if(cur && cur.kind === kind){
         batchClearLeft();
       }
@@ -1691,13 +1709,16 @@ function renderToday(){
       '<span class="txt">还有 ' + pendingAssets.length + ' 张设定图没生成，先生成它们再出分镜图</span>' +
       '<button class="btn sm" data-act="goasset">去生成</button></div>';
   }
-  /* v2.17：上次批量没跑完的剩余进度——首页给一处可见入口，点「去续跑」直接跳到对应镜头 */
+  /* v2.17：上次批量没跑完的剩余进度——首页给一处可见入口，点「去续跑」直接跳到对应镜头。
+     v2.18：补「只跑剩余镜」——不重算列表，直接把存档里的剩余镜号投队列，口径与上次完全一致。 */
   var left = batchLoadLeft();
   if(left && left.ids && left.ids.length){
+    var leftTot = num(left.total) || left.ids.length;
     html += '<div class="todo" style="background:#EEF0FF;border-color:#DCD9FB">' +
       '<span class="bad" style="color:#5B5BD6">续跑</span>' +
-      '<span class="txt">上次' + batchLeftName(left.kind) + '还剩 ' + left.ids.length + ' 个没跑完（第 ' + esc(leftNosPreview(left.ids)) + ' 镜）</span>' +
-      '<button class="btn sm" data-act="leftjump" data-kind="' + esc(left.kind || '') + '">去续跑</button>' +
+      '<span class="txt">上次' + batchLeftName(left.kind) + '共 ' + leftTot + ' 个，还剩 ' + left.ids.length + ' 个没跑完（第 ' + esc(leftNosPreview(left.ids)) + ' 镜）</span>' +
+      '<button class="btn sm" data-act="leftrun" data-kind="' + esc(left.kind || '') + '">只跑剩余镜</button>' +
+      '<button class="btn gh sm" data-act="leftjump" data-kind="' + esc(left.kind || '') + '">去定位</button>' +
       '<button class="btn gh sm" data-act="leftclear">忽略</button></div>';
   }
   if(!items.length && !html){
@@ -2111,6 +2132,7 @@ function fillSettings(){
   if($('cf_usedVidSec')) $('cf_usedVidSec').value = num(cfg.usedVidSec);
   if($('cf_usedTts')) $('cf_usedTts').value = num(cfg.usedTts);
   if($('cf_usedLip')) $('cf_usedLip').value = num(cfg.usedLip);
+  if(typeof updGenreStyleHint === 'function') updGenreStyleHint();   /* v2.18：类型旁显示建议画风 */
 }
 function readSettings(){
   cfg.agnesKey = $('cf_agnesKey').value.trim();
@@ -2709,6 +2731,19 @@ function genreOpts(){
 /* v2.17：剧集画面类型写进生成提示词的总开关（默认开；auto 类型本身不带描述，等同不注入） */
 function genrePromptOn(){ return !(cfg && cfg.genrePrompt === false); }
 function genreStyleCn(){ var o = genreOpts(); return (o && o.cn) || ''; }
+/* v2.18：剧集类型 ↔ 画风预设 联动。
+   之前类型只改评分阈值和提示词描述，用户还得自己去点风格预设，很容易忘了配；
+   这里给出「类型 → 建议画风预设」的映射，并提供一键套用（画风 / 前缀 / 负向词一起换）。 */
+var GENRE_LABEL = { auto:'自动 / 通用', modern:'现代都市', costume:'古装 / 年代', anime:'动画 / 二次元' };
+var GENRE_STYLE_SUGGEST = { auto:'', modern:'写实电影感', costume:'国风古装', anime:'日系动画' };
+/* 设置面板里「当前选中的」类型——设置是点保存才写入 cfg 的，所以 UI 提示要跟着下拉框走 */
+function selGenre(){
+  var sel = $('cf_genre');
+  if(sel && GENRE_OPTS[sel.value]) return sel.value;
+  return (cfg && cfg.genre) || 'auto';
+}
+function genreLabel(){ return GENRE_LABEL[selGenre()] || GENRE_LABEL.auto; }
+function genreStyleSuggest(){ return GENRE_STYLE_SUGGEST[selGenre()] || ''; }
 function genreStyleEn(){ var o = genreOpts(); return (o && o.en) || ''; }
 /* v2.15：主体占比 = 肤色占比 ∪ 显著性占比（取较大者，显著性按 salW 打折）。
    为什么要改：v2.14 只用肤色，暗调夜戏 / 古装厚衣 / 强色偏一律被打成「看不到人物」的假报警。
@@ -3520,29 +3555,26 @@ function batchAudio(){
   askConfirm((est || ('共 ' + list.length + ' 条配音。')) + '确定开始？', '开始')
     .then(function(ok){
       if(!ok) return;
-      state.stopBatch = false;
-      batchBarOpen('批量生成配音');
-      runPool(list, function(s){ return genAudio(s._id); },
-        function(done, total, s){
-          if(s && s['配音状态'] === '失败') batchBarFail();
-          batchBarStep(done, total);
-          batchBarMsg('正在处理第 ' + (s ? s['镜号'] : '?') + ' 镜' + (cfg.cueTts ? '（逐句配音，每句一次请求）' : ''));
-        }, { kind:'audio' })
-        .then(function(left){
-          var bad = list.filter(function(s){ return s['配音状态'] === '失败'; }).length;
-          var ok = list.length - bad;
-          /* v2.16：中途暂停/停止时，收尾提示改成「还剩 N 条」，而不是假装全跑完了 */
-          if(left){
-            batchBarClose('已暂停：完成 ' + ok + ' 条' + (bad ? '，失败 ' + bad + ' 条' : ''), 'audio');
-            toast('已暂停，还剩 ' + left + ' 条未完成（点批量按钮续跑）');
-            renderToday();   /* v2.17：首页续跑卡同步 */
-            return;
-          }
-          batchBarClose('配音完成：成功 ' + ok + ' 条' + (bad ? '，失败 ' + bad + ' 条（可点「重试失败」）' : ''), 'audio');
-          toast(bad ? ('配音完成，' + bad + ' 条失败') : ('配音全部完成，共 ' + ok + ' 条'));
-          renderToday();   /* v2.17：跑完则续跑卡同步消失 */
-        });
+      /* v2.18：与生图/生视频共用同一套收尾（batchRun） */
+      return batchRun('audio', list);
     });
+}
+/* v2.18：首页续跑卡「只跑剩余镜」——严格按存档里的剩余镜号投队列。
+   以前只能「去定位」再自己点批量按钮，而批量入口是按「未生成/失败」重算列表，
+   口径跟上次的剩余不一定一致（中途改过设置/筛选就会多跑或少跑）。
+   这里只跑存档里那几个镜号，跑完/再暂停会按同一套逻辑刷新存档。 */
+function resumeLeftRun(){
+  var left = batchLoadLeft();
+  if(!left || !left.ids || !left.ids.length){ toast('没有可续跑的剩余记录'); return; }
+  var byNo = {};
+  state.shots.forEach(function(s){ byNo[String(num(s['镜号']))] = s; });
+  var list = [];
+  left.ids.forEach(function(no){ var s = byNo[String(num(no))]; if(s) list.push(s); });
+  if(!list.length){ batchClearLeft(); renderToday(); toast('剩余镜头已不存在（可能被删除），已清除记录'); return; }
+  if(left.kind === 'audio'){
+    if(!cfg.ttsKey){ toast('请先在设置里填小米 TTS Key'); openDrawer(); return; }
+  }else if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
+  batchRun(left.kind, list, { resume:true });
 }
 function testTts(){
   var box = $('testTtsResult');
@@ -3709,6 +3741,7 @@ function openExportPanel(){
   var b = $('expBox'), m = $('expMask');
   if(!b) return;
   b.classList.add('on'); if(m) m.classList.add('on');
+  updExpPreview();   /* v2.18：打开面板先按当前范围算一遍「导出几镜 / 多长」 */
 }
 function closeExportPanel(){
   var b = $('expBox'), m = $('expMask');
@@ -4036,11 +4069,42 @@ function exportScopeShots(){
     if(!has) return list;   /* 一个章节都没勾 → 视为不限，避免导出空包 */
     return list.filter(function(s){ return sel[String(s['章节'] || '')]; });
   }
+  /* v2.18：自定镜号区间——只填一边则只卡那一端，两边都不填等于不限（避免导出空包） */
+  if(sc === 'range'){
+    var from = num($('expFrom') && $('expFrom').value), to = num($('expTo') && $('expTo').value);
+    if(!from && !to) return list;
+    return list.filter(function(s){
+      var no = num(s['镜号']);
+      if(from && no < from) return false;
+      if(to && no > to) return false;
+      return true;
+    });
+  }
   return list;
 }
 function scopeLabel(){
   var sc = ($('expScope') && $('expScope').value) || 'all';
+  if(sc === 'range'){
+    var from = num($('expFrom') && $('expFrom').value), to = num($('expTo') && $('expTo').value);
+    if(!from && !to) return '自定镜号区间（未填，等于全部）';
+    return '自定镜号区间 ' + (from ? from : '首') + '–' + (to ? to : '末');
+  }
   return { all:'全部镜头', done:'仅已完成镜头', filter:'跟随当前筛选', chapter:'仅勾选章节' }[sc] || '全部镜头';
+}
+/* v2.18：导出前的即时预览——打完包才发现「范围选错了/导了空包」很浪费时间，
+   这里在导出中心实时算出「本次会导出几镜、大概多长」，并提示空范围。 */
+function updExpPreview(){
+  var el = $('expScopePrev'); if(!el) return;
+  var sc = ($('expScope') && $('expScope').value) || 'all';
+  var wrap = $('expRangeWrap'); if(wrap) wrap.style.display = (sc === 'range') ? '' : 'none';
+  if(!state.shots.length){ el.innerHTML = '当前还没有分镜，先到「剧本拆镜」导入小说。'; return; }
+  var list = exportScopeShots();
+  var secs = 0;
+  list.forEach(function(s){ secs += shotDur(s); });
+  var empty = !list.length;
+  el.innerHTML = '本次将导出 <b>' + list.length + '</b> / ' + state.shots.length + ' 镜 · 预计时长 <b>' + fmtSec(Math.round(secs)) + '</b>' +
+    (empty ? '　<span style="color:#EF4444">（此范围没有镜头，换个范围再打包）</span>' : '') +
+    '　<span style="color:var(--tx3)">范围：' + esc(scopeLabel()) + '</span>';
 }
 /* 一键把所有能导的东西打成一个包：srt + md + csv + json + 转码命令（+ 可选整轨 wav）。
    每个文件都是复用单独导出时的同一份内容（build* 系列纯函数），不会出现「单导和打包结果不一致」。
@@ -4395,8 +4459,28 @@ function applyStylePreset(name){
   cfg.prefix = p.pre;
   cfg.neg = p.neg;
   var st = $('shotStyle'); if(st) st.value = p.style;
+  /* v2.18：顺手把设置里的「前缀 / 负向词」输入框也同步——以前只改了 cfg，输入框还显示旧值，
+     下次一保存设置就把 cfg 又覆盖回旧值，等于白切。 */
+  if($('cf_prefix')) $('cf_prefix').value = cfg.prefix;
+  if($('cf_neg')) $('cf_neg').value = cfg.neg;
   saveCfg(); renderStylePresets();
+  if(typeof updGenreStyleHint === 'function') updGenreStyleHint();
   toast('已切换到「' + p.n + '」风格：画风、提示词前缀、负向词均已更新');
+}
+/* v2.18：把当前剧集类型对应的画风预设一键套上（类型变了却忘了换画风时尤其有用） */
+function applyGenreStyle(){
+  var nm = genreStyleSuggest();
+  if(!nm){ toast('「' + genreLabel() + '」不指定固定画风，请手动选一套风格预设'); return; }
+  var p = null; STYLE_PRESETS.forEach(function(x){ if(x.n === nm) p = x; });
+  if(!p){ toast('没有找到与「' + genreLabel() + '」匹配的画风预设'); return; }
+  applyStylePreset(nm);
+  toast('已按「' + genreLabel() + '」套用画风预设「' + nm + '」');
+}
+/* v2.18：把「当前类型建议哪套画风 / 是否已套用」显示在类型选择旁，用户不用猜 */
+function updGenreStyleHint(){
+  var el = $('genreStyleHint'); if(!el) return;
+  var sug = genreStyleSuggest(), cur = (cfg && cfg.stylePreset) || '';
+  el.textContent = sug ? ('建议画风预设：' + sug + (cur === sug ? '（已套用）' : (cur ? '（当前是「' + cur + '」）' : ''))) : '「自动」不限固定画风';
 }
 
 /* ---------- 导出剪辑时间线 FCPXML（PR / 达芬奇 / Final Cut 可直接导入） ----------
@@ -4806,6 +4890,48 @@ function parseShotArray(txt){
 }
 
 /* ---------------- 批量 ---------------- */
+/* v2.18：把「开进度条 → runPool → 收尾（暂停/完成/候选/失败）」抽成一处。
+   原先 batch() 与 batchAudio() 各写一套收尾，改一处漏一处；现在普通批量与
+   「只跑剩余镜」直投都走这里，收尾口径只有一个。
+   kind: 'img' | 'vid' | 'audio'；opts.resume = true 表示这是续跑（面板标题/文案区分）。
+   返回 Promise，resolve 剩余未完成数（0 = 全部跑完）。 */
+function batchRun(kind, list, opts){
+  opts = opts || {};
+  var isImg = (kind === 'img'), isAud = (kind === 'audio');
+  var stKey = isImg ? '图片状态' : (isAud ? '配音状态' : '视频状态');
+  var n = Math.min(3, Math.max(1, num(cfg.imgN) || 1));
+  var multi = isImg && !!cfg.batchCand && n > 1;
+  state.stopBatch = false;
+  batchBarOpen((opts.resume ? '续跑剩余：' : '') + (isImg ? '批量生成分镜图' : (isAud ? '批量生成配音' : '批量生成视频')));
+  return runPool(list, function(s){
+    if(isImg) return genShotImage(s._id);
+    if(isAud) return genAudio(s._id);
+    if(!s['图片URL']) return Promise.resolve();
+    return genVideo(s._id);
+  }, function(done, total, s){
+    if(s && s[stKey] === '失败') batchBarFail();
+    batchBarStep(done, total);
+    var tag = isAud ? (cfg.cueTts ? '（逐句配音，每句一次请求）' : '') : (multi ? '（每镜 ' + n + ' 版候选）' : '');
+    batchBarMsg('正在处理第 ' + (s ? s['镜号'] : '?') + ' 镜' + tag);
+  }, { kind: kind, ids: list.map(function(s){ return s._id; }) }).then(function(left){
+    var bad = list.filter(function(s){ return s[stKey] === '失败'; }).length;
+    var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
+    var tail = (bad ? '，失败 ' + bad + ' 条' + (isAud ? '（可点「重试失败」）' : '') : '') +
+      (pend ? '；' + pend + ' 个镜头候选待挑选（点镜卡「选图(N)」）' : '');
+    /* 中途暂停/停止时不要谎报「全部完成」 */
+    if(left){
+      batchBarClose('已暂停：' + (list.length - left - bad) + ' / ' + list.length + tail, kind);
+      toast('已暂停，还剩 ' + left + ' 个未完成（可点首页续跑卡的「只跑剩余镜」继续）');
+      renderToday();
+      return left;
+    }
+    batchBarClose((isAud ? '配音完成：成功 ' + (list.length - bad) + ' 条' : '批量完成：' + (list.length - bad) + ' / ' + list.length) + tail, kind);
+    toast(isAud ? (bad ? ('配音完成，' + bad + ' 条失败') : ('配音全部完成，共 ' + (list.length - bad) + ' 条'))
+                : (pend ? ('批量完成：' + pend + ' 个镜头的候选图待挑选') : '批量任务已全部完成'));
+    renderToday();
+    return 0;
+  });
+}
 function batch(kind){
   var list = state.shots.filter(function(s){
     var is = s['图片状态'] || '未生成', vs = s['视频状态'] || '未生成';
@@ -4825,31 +4951,8 @@ function batch(kind){
     (num(cfg.retry) > 0 ? '，失败自动重试 ' + num(cfg.retry) + ' 次' : '') + '）确定开始批量生成？', '开始')
     .then(function(ok){
       if(!ok) return;
-      state.stopBatch = false;
-      batchBarOpen(kind === 'img' ? '批量生成分镜图' : '批量生成视频');
-      runPool(list, function(s){
-        if(kind === 'img') return genShotImage(s._id);
-        if(!s['图片URL']) return Promise.resolve();
-        return genVideo(s._id);
-      }, function(done, total, s){
-        if(s && s[kind === 'img' ? '图片状态' : '视频状态'] === '失败') batchBarFail();
-        batchBarStep(done, total);
-        batchBarMsg('正在处理第 ' + (s ? s['镜号'] : '?') + ' 镜' + (multi ? '（每镜 ' + n + ' 版候选）' : ''));
-      }, { kind: kind }).then(function(left){
-        var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
-        var bad = list.filter(function(s){ return s[kind === 'img' ? '图片状态' : '视频状态'] === '失败'; }).length;
-        var tail = (bad ? '，失败 ' + bad + ' 条' : '') + (pend ? '；' + pend + ' 个镜头候选待挑选（点镜卡「选图(N)」）' : '');
-        /* v2.16：中途暂停/停止时不要谎报「全部完成」 */
-        if(left){
-          batchBarClose('已暂停：' + (list.length - left - bad) + ' / ' + list.length + tail, kind);
-          toast('已暂停，还剩 ' + left + ' 个未完成（点批量按钮续跑）');
-          renderToday();   /* v2.17：首页续跑卡立刻出现，不用等手动刷新 */
-          return;
-        }
-        batchBarClose('批量完成：' + (list.length - bad) + ' / ' + list.length + tail, kind);
-        toast(pend ? ('批量完成：' + pend + ' 个镜头的候选图待挑选') : '批量任务已全部完成');
-        renderToday();   /* v2.17：跑完则续跑卡同步消失 */
-      });
+      /* v2.18：收尾逻辑统一交给 batchRun，不再在这里重复一遍 */
+      return batchRun(kind, list);
     });
 }
 function retryFailed(){
@@ -5841,6 +5944,8 @@ function bind(){
         toast('已筛出剩余' + batchLeftName(lk) + '镜头（' + ((lf && lf.ids) ? lf.ids.length : 0) + ' 个），点批量按钮即可续跑');
         break;
       }
+      /* v2.18：只跑剩余镜——不切筛选、不重算，直接按存档镜号投队列 */
+      case 'leftrun': resumeLeftRun(); break;
       case 'leftclear': batchClearLeft(); renderToday(); toast('已忽略上次的剩余记录'); break;
       case 'del': {
         var ds = shotById(id);
@@ -5969,6 +6074,9 @@ function bind(){
   $('btnCloseSet').addEventListener('click', closeDrawer);
   $('mask').addEventListener('click', closeDrawer);
   $('btnSaveSet').addEventListener('click', function(){ readSettings(); toast('设置已保存到本机'); closeDrawer(); });
+  /* v2.18：剧集类型 ↔ 画风预设 联动——换类型即时刷新「建议画风」提示，一键套用 */
+  if($('cf_genre')) $('cf_genre').addEventListener('change', function(){ updGenreStyleHint(); });
+  if($('btnGenreStyle')) $('btnGenreStyle').addEventListener('click', applyGenreStyle);
   $('btnTest').addEventListener('click', testAgnes);
   $('btnTestText').addEventListener('click', testText);
   if($('btnTestTts')) $('btnTestTts').addEventListener('click', function(){ readSettings(); testTts(); });
@@ -5987,7 +6095,16 @@ function bind(){
   /* v2.17：打包范围记住上次选择（默认全部），免得每次都重选 */
   if($('expScope')){
     $('expScope').value = cfg.expScope || 'all';
-    $('expScope').addEventListener('change', function(){ cfg.expScope = this.value; saveCfg(); });
+    $('expScope').addEventListener('change', function(){ cfg.expScope = this.value; saveCfg(); updExpPreview(); });
+  }
+  /* v2.18：自定镜号区间（起止）也记住，并参与实时预览 */
+  if($('expFrom')){
+    if(num(cfg.expFrom)) $('expFrom').value = String(num(cfg.expFrom));
+    $('expFrom').addEventListener('input', function(){ cfg.expFrom = num(this.value) || 0; saveCfg(); updExpPreview(); });
+  }
+  if($('expTo')){
+    if(num(cfg.expTo)) $('expTo').value = String(num(cfg.expTo));
+    $('expTo').addEventListener('input', function(){ cfg.expTo = num(this.value) || 0; saveCfg(); updExpPreview(); });
   }
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
