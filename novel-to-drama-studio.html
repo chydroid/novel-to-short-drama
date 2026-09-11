@@ -1589,6 +1589,41 @@ function patchShot(id, obj){
     .then(function(){ setSync('ok'); refreshAll(); })
     .catch(function(e){ console.error(e); setSync('off'); toast('保存失败：' + (e && e.message ? e.message : e)); });
 }
+/* v2.28：批量落库——把「逐条 patchShot」合并成「一次改内存、一次落盘、一次刷新」。
+   逐条 patchShot 在批量场景的代价 = N ×（全量 localStorage 序列化 + refreshAll 重排 6 个面板
+   + 云端 N 个并发请求），一键修复 200 条就是上千次重排、200 个并发请求。
+   这里先把同一镜的多条更新合并（如某镜既补时长又补章节），再统一落盘与刷新；
+   云端按顺序串行推送——保持写入顺序，也不并发轰接口。
+   updates: [{ id, obj }]；返回实际写入的镜数（镜已被删的条目不计入、也不推云）。 */
+function bulkPatch(updates){
+  if(!updates || !updates.length) return 0;
+  var byId = {}, order = [];
+  updates.forEach(function(u){
+    if(!u || !u.id || !u.obj) return;
+    if(!byId[u.id]){ byId[u.id] = {}; order.push(u.id); }
+    Object.assign(byId[u.id], u.obj);   /* 同镜多条更新合并，后写覆盖前写 */
+  });
+  if(!order.length) return 0;
+  var hit = {}, n = 0;
+  state.shots = state.shots.map(function(s){
+    if(!byId[s._id]) return s;
+    hit[s._id] = 1; n++;
+    return Object.assign({}, s, byId[s._id]);
+  });
+  if(!n) return 0;                      /* 目标镜全被删了：既不落盘也不推云 */
+  if(!hasCloud()){ localSave(state.shots); refreshAll(); return n; }
+  setSync('busy');
+  var chain = Promise.resolve();
+  order.forEach(function(id){
+    if(!hit[id]) return;
+    chain = chain.then(function(){
+      return db().updateRecord({ databaseId: DB_ID, recordId: id, properties: toProps(byId[id]) });
+    });
+  });
+  chain.then(function(){ setSync('ok'); refreshAll(); })
+    .catch(function(e){ console.error(e); setSync('off'); toast('保存失败：' + (e && e.message ? e.message : e)); });
+  return n;
+}
 function addShotObj(obj){
   if(!hasCloud()){
     var rec = Object.assign({ _id: newId() }, obj);
@@ -3313,17 +3348,9 @@ function pickCand(i){
   var id = cbShotId; if(!id) return;
   var s = shotById(id);
   if(!s || !Array.isArray(s._imgCand) || !s._imgCand[i]){ closeCandPanel(); return; }
-  var url = s._imgCand[i];
-  var oldUrl = s['图片URL'] || '';
-  var obj = { 图片URL:url, 图片状态:'已完成', 错误信息:'', 更新时间:nowStr() };
-  if(oldUrl && oldUrl !== url){
-    pushImgHist(s, oldUrl);
-    obj._imgHist = s._imgHist;
-    markImageChanged(s);
-    if(s['视频URL'] || s['口型视频URL']) obj._imgNewer = true;
-  }
-  s._imgCand = [];
+  var obj = candCommitObj(s, i);   /* v2.28：与批量选优共用同一套提交口径 */
   closeCandPanel();
+  if(!obj) return;
   patchShot(id, obj);
   toast('已选 ' + String.fromCharCode(65 + i) + ' 版为第 ' + s['镜号'] + ' 镜图片');
 }
@@ -3332,10 +3359,12 @@ function discardCand(){
   closeCandPanel();
   if(s){ s._imgCand = []; toast('已放弃候选图，可点「A/B 选优」重新生成'); refreshAll(); }
 }
-/* v2.25：把「选第 i 版候选」的提交动作抽成可复用函数——面板里 pickCand 用，批量选最高分也用同一份，避免两套提交逻辑各写各的。
-   不依赖面板状态（cbShotId / closeCandPanel），批量场景直接拿 shot 对象提交。 */
-function commitBestCand(s, i){
-  if(!s || !Array.isArray(s._imgCand) || !s._imgCand[i]) return false;
+/* v2.25 / v2.28：把「选第 i 版候选」的提交动作抽成可复用函数——面板的 pickCand、批量选最高分、批量落库三处共用同一套
+   提交口径，避免多套逻辑各写各的。不依赖面板状态（cbShotId / closeCandPanel），批量场景直接拿 shot 对象提交。
+   只算出更新对象 + 做内存副作用（清候选、旧图入历史、标记画面已变），不落库：单条走 patchShot、批量走 bulkPatch。
+   越界 / 没有候选返回 null（调用方据此判「跳过」）。 */
+function candCommitObj(s, i){
+  if(!s || !Array.isArray(s._imgCand) || !s._imgCand[i]) return null;
   var url = s._imgCand[i];
   var oldUrl = s['图片URL'] || '';
   var obj = { 图片URL:url, 图片状态:'已完成', 错误信息:'', 更新时间:nowStr() };
@@ -3346,6 +3375,11 @@ function commitBestCand(s, i){
     if(s['视频URL'] || s['口型视频URL']) obj._imgNewer = true;
   }
   s._imgCand = [];
+  return obj;
+}
+function commitBestCand(s, i){
+  var obj = candCommitObj(s, i);
+  if(!obj) return false;
   patchShot(s._id, obj);
   return true;
 }
@@ -3364,6 +3398,9 @@ function autoPickRun(list){
   if(!list || !list.length){ toast('没有待挑选的候选图'); return; }
   batchBarOpen('批量选最高分（共 ' + list.length + ' 镜）');
   var done = 0, picked = 0, skipped = 0;
+  /* v2.28：这里只收集「提交对象」，等全部评完再一次性 bulkPatch——
+     逐镜 commitBestCand 会触发 N 次全量落盘 + N 次整页重排（几十镜就很卡）。 */
+  var ups = [];
   function step(i){
     if(i >= list.length || state.stopBatch){ finish(); return; }
     var s = list[i];
@@ -3381,7 +3418,11 @@ function autoPickRun(list){
       var bi = -1, best = -1;
       rs.forEach(function(r, k){ if(r && r.score > best){ best = r.score; bi = k; } });
       if(bi < 0){ skipped++; }
-      else if(commitBestCand(s, bi)){ picked++; }
+      else {
+        var co = candCommitObj(s, bi);
+        if(co){ ups.push({ id: s._id, obj: co }); picked++; }
+        else skipped++;
+      }
       done++;
       batchBarStep(done, list.length);
       batchBarMsg('已处理第 ' + s['镜号'] + ' 镜' + (bi < 0 ? '（取不到像素，跳过）' : '（选最高分 ' + String.fromCharCode(65 + bi) + '）'));
@@ -3393,10 +3434,10 @@ function autoPickRun(list){
     });
   }
   function finish(){
+    if(ups.length) bulkPatch(ups);   /* 一次改内存、一次落盘、一次刷新；有云时写完后刷新 */
+    else { renderToday(); if(typeof renderGenList === 'function') renderGenList(); }
     batchBarClose('批量选最高分完成：自动选定 ' + picked + ' 镜' + (skipped ? '，' + skipped + ' 镜取不到像素已跳过（请手动选）' : ''), 'img');
     toast('批量选最高分完成：' + picked + ' 镜已自动选定' + (skipped ? '，' + skipped + ' 镜需手动挑选' : ''));
-    renderToday();
-    if(typeof renderGenList === 'function') renderGenList();
   }
   step(0);
 }
@@ -6190,6 +6231,26 @@ function healthSummary(issues){
   });
   return { count: arr.length, byType: c, order: order };
 }
+/* v2.28：哪些问题能靠本地规则自动推定——与 healthFixables 的三类一一对应（dur / chap / role）。
+   明细里给这些组打「可自动修复」标，用户一眼知道哪几组不必手点。 */
+var FIX_KIND_OF = { '没时长':'dur', '没章节':'chap', '有台词没角色':'role' };
+/* v2.28：体检明细按「问题类型」分组——一个人查 200 条时，按镜号平铺看不出主次；
+   分组后能先集中处理某类问题（比如先把所有「没时长」补掉）。硬性组在前，
+   同档按条数降序，组内保持镜号顺序（与全片一致）。纯函数，便于单测。 */
+function healthGroupRows(issues){
+  var map = {}, arr = issues || [];
+  arr.forEach(function(x){
+    x.issues.forEach(function(t){
+      if(!map[t]) map[t] = [];
+      map[t].push(x);
+    });
+  });
+  return Object.keys(map).map(function(t){
+    return { type: t, hard: !!HEALTH_HARD[t], fixKind: FIX_KIND_OF[t] || '', rows: map[t] };
+  }).sort(function(a, b){
+    return ((b.hard ? 1 : 0) - (a.hard ? 1 : 0)) || (b.rows.length - a.rows.length) || (a.type < b.type ? -1 : 1);
+  });
+}
 /* 体检明细：不导出时也能在页面上扫一眼（对话框内滚动，最多列 200 条）
    v2.27：从「只读清单」升级为可操作——每条带「去改」直接跳到那一镜；
    顶部给「一键自动修复(N)」「只补时长」两个就地动作，修完/取消都自动重列，方便复查还剩什么。 */
@@ -6204,17 +6265,28 @@ function showHealthBox(){
         '<span class="hint" style="margin:0">可自动推定：' + esc(fixSum.txt) + '</span>' +
       '</div>'
     : '';
-  var rows = iss.slice(0, 200).map(function(x){
-    var hard = x.issues.some(function(t){ return HEALTH_HARD[t]; });
-    return '<div style="padding:5px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">' +
-      '<span style="flex:1">第 <b>' + x.no + '</b> 镜：' +
-      '<span style="color:' + (hard ? '#B45309' : 'var(--tx2)') + '">' + esc(x.issues.join('、')) + '</span></span>' +
-      '<button class="btn gh sm" data-act="hfixone" data-id="' + esc(x.id) + '">去改</button></div>';
+  /* v2.28：按问题类型分组——每组一个可折叠的 <details>（原生折叠，零 JS 状态），
+     硬性组默认展开；组头带条数与「可自动修复」标，方便一类一类集中处理。 */
+  var shown = iss.slice(0, 200);
+  var rows = healthGroupRows(shown).map(function(g){
+    var head = '<summary style="cursor:pointer;padding:6px 2px;font-weight:600">' +
+      (g.hard ? '<span style="color:#B45309">●</span> ' : '<span style="color:var(--tx3)">○</span> ') +
+      esc(g.type) +
+      ' <span style="font-weight:400;color:var(--tx3)">' + g.rows.length + ' 条</span>' +
+      (g.fixKind ? ' <span style="font-weight:400;color:#1F7A3D">可自动修复</span>' : '') +
+      '</summary>';
+    var body = g.rows.map(function(x){
+      var extra = x.issues.length > 1 ? '<span style="color:var(--tx3)">　（共 ' + x.issues.length + ' 项）</span>' : '';
+      return '<div style="padding:4px 0 4px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">' +
+        '<span style="flex:1">第 <b>' + x.no + '</b> 镜' + extra + '</span>' +
+        '<button class="btn gh sm" data-act="hfixone" data-id="' + esc(x.id) + '">去改</button></div>';
+    }).join('');
+    return '<details' + (g.hard ? ' open' : '') + ' style="border-bottom:1px solid var(--line)">' + head + body + '</details>';
   }).join('');
   var more = iss.length > 200 ? '<div style="margin-top:8px;color:var(--tx3)">只显示前 200 条，完整清单请点「导出报告」。</div>' : '';
   $('dlgTitle').textContent = '关键字段体检（' + iss.length + ' 个镜头）';
   $('dlgMsg').innerHTML = quick + '<div style="max-height:52vh;overflow:auto;text-align:left">' + rows + more + '</div>' +
-    '<div class="hint" style="text-align:left;margin-top:8px">点每条的「去改」可直接跳到那一镜；改完再点「查看明细」复查。</div>';
+    '<div class="hint" style="text-align:left;margin-top:8px">按问题类型分组，点组头可折叠；点每条「去改」直接跳到那一镜；改完再点「查看明细」复查。</div>';
   $('dlgNo').style.display = 'none';
   $('dlgYes').textContent = '知道了'; $('dlgYes').className = 'btn';
   $('dlgYes').style.display = '';
@@ -6306,13 +6378,16 @@ function healthFixSummary(kinds){
   if(p.role.length) parts.push('角色 ' + p.role.length);
   return { total: p.dur.length + p.chap.length + p.role.length, txt: parts.join('、') };
 }
-/* v2.27：真正落库那一半单独抽出来——好测（不碰确认弹窗）、也好被别处复用 */
+/* v2.27：真正落库那一半单独抽出来——好测（不碰确认弹窗）、也好被别处复用
+   v2.28：改走 bulkPatch——一次确认里常有上百项（且同一镜往往既缺时长又缺章节），
+   逐条 patchShot 会触发上百次全量落盘 + 上百次整页重排；合并后只落盘/刷新一次。 */
 function applyHealthFix(plan){
-  var t = nowStr();
-  plan.dur.forEach(function(x){ patchShot(x.s._id, { 时长秒: x.val, 更新时间: t }); });
-  plan.chap.forEach(function(x){ patchShot(x.s._id, { 章节: x.val, 更新时间: t }); });
-  plan.role.forEach(function(x){ patchShot(x.s._id, { 说话角色: x.val, 更新时间: t }); });
-  return plan.dur.length + plan.chap.length + plan.role.length;
+  var t = nowStr(), ups = [];
+  plan.dur.forEach(function(x){ ups.push({ id: x.s._id, obj: { 时长秒: x.val, 更新时间: t } }); });
+  plan.chap.forEach(function(x){ ups.push({ id: x.s._id, obj: { 章节: x.val, 更新时间: t } }); });
+  plan.role.forEach(function(x){ ups.push({ id: x.s._id, obj: { 说话角色: x.val, 更新时间: t } }); });
+  bulkPatch(ups);
+  return ups.length;
 }
 /* v2.26：一键自动修复——一次确认把上面三类能推定的项批量写入（patchShot 落库），修完分类汇报。
    缺画面描述 / 无生图提示词 无法本地推定，会明确告诉用户还得手补。
@@ -6340,9 +6415,8 @@ function fixHealthAuto(kinds, after){
     '缺画面描述 / 无生图提示词 无法本地推定，会留给你手动补。';
   askConfirm(msg, '一键自动修复').then(function(ok){
     if(ok){
-      applyHealthFix(plan);
+      applyHealthFix(plan);   /* v2.28：内部走 bulkPatch，落库后自己刷新，这里不必再 renderToday */
       toast('已自动修复 ' + total + ' 项（' + parts.join('、') + '）');
-      renderToday();
     }
     if(after) after();
   });
