@@ -1043,7 +1043,8 @@ var state = {
   redo: [],         // v2.32：重做栈，与撤销栈同一套存法
   syncMsg: '',      // v2.31：同步条上的临时进度文案
   serialTag: '',    // v2.32：正在跑的批量任务名（有值才显示「停止」）
-  stopSerial: ''    // v2.32：已请求停止的任务名
+  stopSerial: '',   // v2.32：已请求停止的任务名
+  poolFail: 0       // v2.35：本轮 runPool 里彻底失败的项数（worker 吞错时也能记上）
 };
 var cfg = {};
 var pollers = {};   // shotId -> intervalId
@@ -1444,23 +1445,38 @@ function exportLeftList(kind){
 function runPool(list, worker, onOne, opts){   /* v2.17：补回第 4 个参数 opts——v2.16 漏了形参，函数体里的 opts.kind 会抛 ReferenceError，收尾逻辑全废 */
   var conc = Math.max(1, Math.min(8, num(cfg.conc) || 1));
   var retryN = Math.max(0, Math.min(3, num(cfg.retry)));
-  var total = list.length, done = 0, i = 0, stopped = false;
+  var total = list.length, done = 0, i = 0;
+  state.poolFail = 0;                       /* v2.35：本轮失败计数，收尾如实汇报 */
   function one(item){
-    var attempt = 0;
+    var attempt = 0, lastErr = null;
     function run(){
-      if(stopped || state.stopBatch) return Promise.resolve();
+      if(state.stopBatch) return Promise.resolve();
       return Promise.resolve()
         .then(function(){ return worker(item); })
+        .then(function(){
+          /* v2.35：绝大多数 worker（genImage / genVideo / genAudio / genLipsync）自己 catch 掉错误、
+             只把状态字段写成「失败」然后正常 resolve——光看 Promise 永远不知道失败了，
+             于是下面这个 retryN 重试**一次都没跑过**（而确认框上还写着「失败自动重试 N 次」）。
+             这里用 opts.isFail 按**最新内存状态**再判一次，判定失败就照旧退避重试。 */
+          if(opts && opts.isFail && opts.isFail(item)){
+            attempt++;
+            if(attempt <= retryN) return wait(1500 * attempt).then(run);
+            state.poolFail++;                          /* 重试到头还是失败态，记账 */
+          }
+        })
         .catch(function(e){
           attempt++;
           if(attempt <= retryN){
             return wait(1500 * attempt).then(run);   /* 退避重试，不影响其它并发任务 */
           }
           console.error(e);
+          state.poolFail++;                          /* v2.35：统一记账 */
+          lastErr = e;
         });
     }
-    /* v2.14：onOne 多带一个 item，好让调用方在每项完成时统计失败数 */
-    return run().then(function(){ done++; if(onOne) onOne(done, total, item); });
+    /* v2.14：onOne 多带一个 item，好让调用方在每项完成时统计失败数
+       v2.35：再带 err（成功为 null），调用方不必自己猜 */
+    return run().then(function(){ done++; if(onOne) onOne(done, total, item, lastErr); });
   }
   /* v2.15：暂停时不再取新任务——等 state.batchPause 解除（或收到停止）再继续取下一个 */
   function waitResume(){
@@ -2932,9 +2948,15 @@ function batchAssets(){
         });
       }, Promise.resolve());
     });
-  }).then(function(){
-    setSync('ok');
-    toast('设定图全部完成，现在可以去生成分镜图了');
+  }).then(function(){ return loadAssets(); }).then(function(){
+    /* v2.35：genAsset 自己吞错只把状态写成「失败」，链上永远 resolve——
+       原来无论几张失败都报「设定图全部完成，现在可以去生成分镜图了」，
+       用户真去了，出来的分镜图全都没有参考图（一致性 2.0 直接失效）。 */
+    var bad = state.assets.filter(function(a){ return (a['状态'] || '未生成') === '失败'; }).length;
+    setSync(bad ? 'off' : 'ok');
+    toast(bad ? ('设定图跑完，但有 ' + bad + ' 张失败（看卡上的错误信息，修好再点一次；' +
+                 '带着失败的设定图去生分镜图会丢参考图）')
+              : '设定图全部完成，现在可以去生成分镜图了');
   }).catch(function(e){
     console.error(e);
     setSync('off');
@@ -6847,12 +6869,22 @@ function batchRun(kind, list, opts){
     if(!s['图片URL']) return Promise.resolve();
     return genVideo(s._id);
   }, function(done, total, s){
-    if(s && s[stKey] === '失败') batchBarFail();
+    /* v2.35：s 是**跑批那一刻**的对象引用，而 patchShot 是「整表 map 出新对象」，
+       所以旧引用上的状态永远是旧值——原来这行判失败一次都没中过，收尾也永远报「失败 0」。
+       一律改用 shotById 取当前内存里的那一份。 */
+    var cur = s ? shotById(s._id) : null;
+    if(cur && cur[stKey] === '失败') batchBarFail();
     batchBarStep(done, total);
     var tag = isAud ? (cfg.cueTts ? '（逐句配音，每句一次请求）' : '') : (multi ? '（每镜 ' + n + ' 版候选）' : '');
-    batchBarMsg('正在处理第 ' + (s ? s['镜号'] : '?') + ' 镜' + tag);
-  }, { kind: kind, ids: list.map(function(s){ return s._id; }) }).then(function(left){
-    var bad = list.filter(function(s){ return s[stKey] === '失败'; }).length;
+    batchBarMsg('正在处理第 ' + (cur ? cur['镜号'] : '?') + ' 镜' + tag);
+  }, { kind: kind, ids: list.map(function(s){ return s._id; }),
+       /* v2.35：让「失败自动重试」真的会重试——worker 自己吞错不抛，只能按最新状态判 */
+       isFail: function(s){ var c = shotById(s._id); return !!c && c[stKey] === '失败'; }
+     }).then(function(left){
+    var inIds = {};
+    list.forEach(function(s){ inIds[s._id] = 1; });
+    /* v2.35：同上，按 id 取当前对象再数失败——原来恒为 0，全失败也报「批量任务已全部完成」 */
+    var bad = state.shots.filter(function(s){ return inIds[s._id] && s[stKey] === '失败'; }).length;
     var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
     var tail = (bad ? '，失败 ' + bad + ' 条' + ((isAud || isLip) ? '（可点「重试失败」）' : '') : '') +
       (skipN ? '，跳过 ' + skipN + ' 个（' + skipTxt + '）' : '') +
@@ -6910,13 +6942,34 @@ function retryFailed(){
   askConfirm((est || ('共 ' + list.length + ' 个失败镜头。')) + '确定一键重试？', '重试')
     .then(function(ok){
       if(!ok) return;
-      toast('重试 ' + list.length + ' 个失败镜头（并发 ' + Math.max(1, Math.min(8, num(cfg.conc) || 1)) + '）…');
       state.stopBatch = false;
-      runPool(list, function(s){
+      /* v2.35：原来这里没有进度条（不能暂停/停止），收尾也永远是一句「重试完成」——
+         genImage / genVideo 内部吞错只改状态，所以无论成功失败都是一个说法。
+         现在开批量条拿到暂停权，并按**当前状态**如实汇报仍有几个没成。 */
+      var ids = {};
+      list.forEach(function(s){ ids[s._id] = 1; });
+      var stFail = function(s){ return s['图片状态'] === '失败' || s['视频状态'] === '失败'; };
+      batchBarOpen('重试失败项（共 ' + list.length + ' 个）');
+      return runPool(list, function(s){
         if(s['图片状态'] === '失败') return genImage(s._id);
         if(s['视频状态'] === '失败' && s['图片URL']) return genVideo(s._id);
         return Promise.resolve();
-      }).then(function(){ toast('重试完成'); });
+      }, function(done, total, s){
+        var cur = s ? shotById(s._id) : null;
+        if(cur && stFail(cur)) batchBarFail();
+        batchBarStep(done, total);
+        batchBarMsg('正在重试第 ' + (cur ? cur['镜号'] : '?') + ' 镜');
+      }, { isFail: function(s){
+            var c = shotById(s._id); if(!c) return false;
+            if(c['图片状态'] === '失败') return true;
+            return c['视频状态'] === '失败' && !!c['图片URL'];   /* 没图的视频镜本来就跳过，不算失败 */
+          } }).then(function(left){
+        var bad = state.shots.filter(function(s){ return ids[s._id] && stFail(s); }).length;
+        batchBarClose(bad ? ('重试完成：仍有 ' + bad + ' 个失败') : ('重试完成：' + list.length + ' 个全部成功'), 'retry');
+        toast(bad ? ('重试完成，仍有 ' + bad + ' 个失败（可再点一次，或看镜卡里的错误信息）')
+                  : ('重试完成，' + list.length + ' 个全部成功'));
+        renderToday();
+      });
     });
 }
 
@@ -7615,6 +7668,12 @@ function batchAssetsQuiet(){
       }, Promise.resolve());
     });
   }).then(function(){ return loadAssets(); })
+    .then(function(){
+      /* v2.35：静默版同样吞错——流水线里设定图全失败也照样往下跑，出来的分镜图全没参考图。
+         这里不打断流水线（绝不能往外抛），只给一句明确提示。 */
+      var bad = state.assets.filter(function(a){ return (a['状态'] || '未生成') === '失败'; }).length;
+      if(bad) toast('有 ' + bad + ' 张设定图生成失败，后续分镜图会缺参考图（流水线结束后去「② 角色与场景」补跑）');
+    })
     /* v2.31：静默版更不能往外抛——流水线里一段 reject 会让整条链永远挂在「进行中」 */
     .catch(function(e){ console.error(e); setSync('off'); });
 }
