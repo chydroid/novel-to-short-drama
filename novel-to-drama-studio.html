@@ -41,6 +41,10 @@ svg{display:block}
 .dot.busy{background:var(--warn);animation:pulse 1s infinite}
 .dot.off{background:var(--err)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* v2.32：批量跑（清空 / 导入 / 拆镜 / 撤销）时同步条右侧出现的「停止」 */
+.serial-stop{border:0;background:transparent;color:var(--err);font-size:12px;font-weight:600;cursor:pointer;padding:0 2px}
+.serial-stop:hover{text-decoration:underline}
+.serial-stop[hidden]{display:none}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 14px;border-radius:10px;background:var(--main);color:#fff;font-weight:600;font-size:14px;transition:.15s}
 .btn:hover{background:var(--main-dk)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -285,7 +289,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <div class="sub" data-page-node-id="FtqeB353zr0b6rSokWM6yP">拆镜 → 生图 → 生视频 → 成片</div>
     </div>
     <div class="hd-sp" data-page-node-id="RKF8iXShKOYLjvjsWvCCO7"></div>
-    <div class="sync" id="syncBox" data-page-node-id="6b9fQ5kf29sR91pJHUV96A"><span class="dot" id="syncDot" data-page-node-id="NZ2IRkZITRk9IbwOSrjIeW"></span><span id="syncTxt" data-page-node-id="qE0s1M4gZDfyQXOawqGxQ4">已同步</span></div>
+    <div class="sync" id="syncBox" data-page-node-id="6b9fQ5kf29sR91pJHUV96A"><span class="dot" id="syncDot" data-page-node-id="NZ2IRkZITRk9IbwOSrjIeW"></span><span id="syncTxt" data-page-node-id="qE0s1M4gZDfyQXOawqGxQ4">已同步</span><button class="serial-stop" id="serialStop" data-act="serialstop" hidden>停止</button></div>
     <button class="btn gh sm" id="btnSet" title="设置" data-page-node-id="dB4CZAmxM8afGG9lwzRfBi">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" data-page-node-id="5ZBTBmZAXqR4R7fQoPzlla"><circle cx="12" cy="12" r="3" data-page-node-id="xwqpgQM2zKpnGf3VMNstvv"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" data-page-node-id="anjFiqKXQafPCwWpk7rtPU"/></svg>
       <span class="hide-sm" data-page-node-id="osZhpzyBgCueJ4b1cVitBq">设置</span>
@@ -464,6 +468,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
           </button>
           <button class="btn gh" id="btnAddShot" data-page-node-id="cdHVi0qSPOXE7XgYHlwOor">+ 手动加一镜</button>
           <button class="btn gh" data-act="undo" title="撤销上一次分镜改动（Ctrl+Z）">撤销</button>
+          <button class="btn gh" data-act="redo" title="重做刚撤销的那一步（Ctrl+Shift+Z）">重做</button>
           <button class="btn gh" id="btnDemo" data-page-node-id="Drn4EgHQUL8ko67TLP92y4">载入示例分镜</button>
         </div>
         <div class="result" id="splitResult" data-page-node-id="5ajly6loKBA8CxK4joQrDF"></div>
@@ -1033,7 +1038,12 @@ var state = {
   busy: {},      // shotId -> true 表示正在生成中
   chapters: [],  // 长篇：识别出的章节（含正文，只存内存）
   pipe: { running: false, stop: false },
-  pipeOpts: null
+  pipeOpts: null,
+  undo: [],         // v2.31：撤销栈（整表快照，最近 UNDO_SAVE 条落本机）
+  redo: [],         // v2.32：重做栈，与撤销栈同一套存法
+  syncMsg: '',      // v2.31：同步条上的临时进度文案
+  serialTag: '',    // v2.32：正在跑的批量任务名（有值才显示「停止」）
+  stopSerial: ''    // v2.32：已请求停止的任务名
 };
 var cfg = {};
 var pollers = {};   // shotId -> intervalId
@@ -1649,21 +1659,35 @@ function bulkPatch(updates){
    （静默半成功，用户以为都成了）。现在统一：跑完 + 汇总 {ok, fail, errs}，由调用方决定提示与收尾。
    jobs: [function(){ return Promise }]（返回 undefined 也算成功，兼容 `p ? ... : null` 的写法）。
    opts（v2.31）：{ label:'清空分镜', min:8 }——条数 >= min 时同步条上显示「label 3/20」，
-   免得几十条的活儿只有个转圈，看着像卡死。默认 min=8，不想显示进度就不传 label。 */
+   免得几十条的活儿只有个转圈，看着像卡死。默认 min=8，不想显示进度就不传 label。
+   opts.tag（v2.32）：给这批任务起个名字，同步条右侧会冒出「停止」，点了之后**剩下的任务全部跳过**
+   （已经执行的不回滚——收尾照常重新拉云端，界面与真实状态对齐）。 */
 function runSerial(jobs, opts){
   opts = opts || {};
   var ok = 0, errs = [], done = 0, chain = Promise.resolve();
   var total = (jobs || []).length;
-  var label = opts.label || '', min = opts.min || 8;
+  var label = opts.label || '', min = opts.min || 8, tag = opts.tag || '';
+  if(tag){ state.serialTag = tag; state.stopSerial = ''; renderSync(); }
   (jobs || []).forEach(function(job){
     var idx = ++done;
     chain = chain.then(function(){
+      if(tag && state.stopSerial === tag) return;      /* 被叫停：后面的直接跳过，也不计入成功数 */
       if(label && total >= min) setSync('busy', label + ' ' + idx + '/' + total);
       return Promise.resolve().then(job).then(function(){ ok++; },
         function(e){ console.error(e); errs.push(e); });
     });
   });
-  return chain.then(function(){ return { ok: ok, fail: errs.length, errs: errs }; });
+  return chain.then(function(){
+    var stopped = !!(tag && state.stopSerial === tag);
+    if(tag){ state.serialTag = ''; state.stopSerial = ''; renderSync(); }
+    return { ok: ok, fail: errs.length, errs: errs, stopped: stopped };
+  });
+}
+/* v2.32：用户点「停止」——正在跑的那条会跑完（不半途掐断写请求），剩下的跳过 */
+function stopSerial(){
+  if(!state.serialTag) return;
+  state.stopSerial = state.serialTag;
+  toast('正在停止…已经写出去的那几条不会回滚，收尾会重新拉云端对齐');
 }
 /* v2.29：重试上次云端没写成的条目——失败清单在 state.bulkFail 里，重试前先清空，
    再失败会被 bulkPatch 重新填回去，首页卡也就还在。 */
@@ -1733,7 +1757,7 @@ function clearAllShots(skipUndo){
   /* v2.30：逐条独立 catch——原来一条失败整链断（后面的都不删），且既不刷新也不提示 */
   return runSerial(shotIds.map(function(id){
     return function(){ return p.deleteRecord({ databaseId: DB_ID, recordId: id }); };
-  }), { label: '清空分镜' }).then(function(r){
+  }), { label: '清空分镜', tag: 'clear' }).then(function(r){
     rep = r;
     if(!r.fail) purgeAud(shotIds);   /* 有失败就先留着：没删掉的镜头仍要用到它的音频 */
     return loadShots();
@@ -1971,13 +1995,16 @@ function clearAllAssets(){
   /* v2.30：逐条独立 catch + 汇总提示（原来一条失败整链断，且不提示） */
   return runSerial(ids.map(function(id){
     return function(){ return p.deleteRecord({ databaseId: ASSET_DB_ID, recordId: id }); };
-  })).then(function(r){ rep = r; return loadAssets(); })
+  }), { label: '清空设定卡', tag: 'clear' }).then(function(r){ rep = r; return loadAssets(); })
     .then(function(){
       if(rep && rep.fail){ setSync('off'); toast('设定卡清空未完成：已删 ' + rep.ok + ' 张，' + rep.fail + ' 张失败'); }
       else setSync('ok');
     });
 }
-/* 扫描所有分镜，把出现过的角色名 / 场景名补齐成设定卡（去重） */
+/* 扫描所有分镜，把出现过的角色名 / 场景名补齐成设定卡（去重）。
+   v2.32：**返回 Promise<实际补齐张数>**——原来同步返回「计划张数」，可云端那一段是异步的，
+   流水线紧接着就 `loadAssets()` → `fillNewAssets()`（AI 补全设定描述），
+   经常发生「新设定卡还没建好就开始补描述」→ 新建的角色卡空着描述进生图，一致性全崩。 */
 function syncAssetsFromShots(){
   var names = { '角色': [], '场景': [] };
   state.shots.forEach(function(s){
@@ -1989,13 +2016,13 @@ function syncAssetsFromShots(){
   ['角色','场景'].forEach(function(t){
     names[t].forEach(function(n){ if(!assetByName(n, t)) todo.push({ 类型: t, 名称: n }); });
   });
-  if(!todo.length) return 0;
+  if(!todo.length) return Promise.resolve(0);
   if(hasCloud()){
     /* v2.31：改 runSerial——原来是一条 addRecord 失败整链断（后面的设定卡全不建）、
        既没有 catch（unhandled rejection）也不提示，而外面照样按 todo.length 报「已提取 N 张」。
-       现在跑完汇总，只在真失败时补一条更正提示（成功就不重复打扰，沿用调用方的提示）。 */
+       v2.32：并对外返回 Promise<实际成功数>，调用方（尤其流水线）才等得到。 */
     setSync('busy');
-    runSerial(todo.map(function(a){
+    return runSerial(todo.map(function(a){
       return function(){
         return db().addRecord({ databaseId: ASSET_DB_ID, properties: toProps(
           Object.assign({ 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, a)
@@ -2007,6 +2034,7 @@ function syncAssetsFromShots(){
         refreshAll();
         if(r.fail){ setSync('off'); toast('设定卡只补上 ' + r.ok + ' 张，' + r.fail + ' 张写入失败（可再点一次提取）'); }
         else setSync('ok');
+        return r.ok;                                  /* v2.32：实际张数交给调用方 */
       });
   }else{
     todo.forEach(function(a){
@@ -2016,7 +2044,14 @@ function syncAssetsFromShots(){
     try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
     refreshAll();
   }
-  return todo.length;
+  return Promise.resolve(todo.length);
+}
+/* v2.32：「从分镜提取角色 / 场景」两个按钮共用——syncAssetsFromShots 现在是异步的，
+   提示必须等真正建完再说（原来同步返回计划数，云端还没写完就报「已提取 N 张」） */
+function pickAssetsFromShots(){
+  syncAssetsFromShots().then(function(n){
+    toast(n ? '已从分镜提取 ' + n + ' 张设定卡' : '分镜里没有新的角色 / 场景名');
+  });
 }
 
 /* ---------------- 渲染层（彼此不互调） ---------------- */
@@ -2027,6 +2062,9 @@ function renderSync(){
   /* v2.31：批量跑的时候把进度写在这里（清空 / 撤销 / 导入动辄几十条，原来只有个转圈，用户不知道是卡了还是在跑） */
   t.textContent = state.syncing ? (state.syncMsg || '同步中…')
     : (state.online ? '已同步' : (state.hasCloud ? '离线模式' : '本地存储'));
+  /* v2.32：有带 tag 的批量任务在跑才显示「停止」 */
+  var sb = $('serialStop');
+  if(sb) sb.hidden = !state.serialTag;
 }
 function renderToday(){
   var s = statOf();
@@ -5574,30 +5612,31 @@ function padSeg(n){ return ('00' + n).slice(-3); }
    UNDO_KEEP 是内存里保留的条数（比落盘的多，反正内存便宜）。 */
 var UNDO_KEEP = 20, UNDO_SAVE = 3, UNDO_MAX = 600000;
 function undoLsKey(){ return LS + 'undo'; }
-function saveUndo(){
+function redoLsKey(){ return LS + 'redo'; }        /* v2.32：重做栈，与撤销栈同一套存法 */
+function saveSnaps(key, list){
   try{
-    var arr = (state.undo || []).slice(-UNDO_SAVE), total = 0, cut = 0, i;
+    var arr = (list || []).slice(-UNDO_SAVE), total = 0, cut = 0, i;
     for(i = arr.length - 1; i >= 0; i--){          /* 从新往旧累加，超了就只留更近的那截 */
       total += String(arr[i]).length;
       if(total > UNDO_MAX){ cut = i + 1; break; }
     }
     if(cut) arr = arr.slice(cut);
     while(arr.length){
-      try{ localStorage.setItem(undoLsKey(), JSON.stringify(arr)); return; }
+      try{ localStorage.setItem(key, JSON.stringify(arr)); return; }
       catch(e){ arr.shift(); }                     /* 配额不够：丢掉最老的一张再来 */
     }
-    try{ localStorage.removeItem(undoLsKey()); }catch(e){}
+    try{ localStorage.removeItem(key); }catch(e){}
   }catch(e){}
 }
 /* v2.31：跨刷新恢复快照有个前提——这份快照得还是「当前这份数据的上一版」。
    换设备、别人改过、或者清空后另起了新数据，旧快照再恢复就是拿历史覆盖现状，
    比没有撤销更糟。所以只在「最新快照的镜头数、镜头 id 与当前完全一致」时才恢复，否则直接丢掉。 */
-function loadUndo(){
+function loadSnaps(key){
   try{
-    var v = JSON.parse(localStorage.getItem(undoLsKey()));
-    if(!Array.isArray(v)) return;
+    var v = JSON.parse(localStorage.getItem(key));
+    if(!Array.isArray(v)) return null;
     var arr = v.filter(function(x){ return typeof x === 'string'; }).slice(-UNDO_SAVE);
-    if(!arr.length) return;
+    if(!arr.length) return null;
     var last = JSON.parse(arr[arr.length - 1]);
     var ids = {};
     state.shots.forEach(function(s){ ids[s._id] = 1; });
@@ -5606,24 +5645,34 @@ function loadUndo(){
     var every = function(a, inB){ for(var k in a){ if(!inB[k]) return false; } return true; };
     /* 只允许「纯删」或「纯增」两种偏离：快照 ⊇ 现状（清空过）/ 快照 ⊆ 现状（新增过）。
        id 完全对不上说明数据已经换了一批（换设备、别人改过），一律作废。 */
-    if(every(ids, lastIds) || every(lastIds, ids)) state.undo = arr;
-    else{ try{ localStorage.removeItem(undoLsKey()); }catch(e){} }
-  }catch(e){}
+    if(every(ids, lastIds) || every(lastIds, ids)) return arr;
+    try{ localStorage.removeItem(key); }catch(e){}
+    return null;
+  }catch(e){ return null; }
+}
+function saveUndo(){ saveSnaps(undoLsKey(), state.undo); }
+function saveRedo(){ saveSnaps(redoLsKey(), state.redo); }
+function loadUndo(){ var a = loadSnaps(undoLsKey()); if(a) state.undo = a; }
+function loadRedo(){ var a = loadSnaps(redoLsKey()); if(a) state.redo = a; }
+/* 当前整表的快照字符串（`_localOnly` 是纯前端派生字段，不入账） */
+function snapShots(){
+  return JSON.stringify(state.shots.map(function(s){
+    var o = {}; for(var k in s){ if(k !== '_localOnly') o[k] = s[k]; } return o;
+  }));
 }
 function pushUndo(){
   try{
     state.undo = state.undo || [];
-    state.undo.push(JSON.stringify(state.shots.map(function(s){
-      var o = {}; for(var k in s){ if(k !== '_localOnly') o[k] = s[k]; } return o;
-    })));
+    state.undo.push(snapShots());
     if(state.undo.length > UNDO_KEEP) state.undo.shift();
-    saveUndo();                                    /* v2.31：顺手落盘，刷新后还能撤 */
+    /* v2.32：一有新改动，之前那条「重做」就作废了（否则重做会跳到一个已经不存在的分支上） */
+    state.redo = [];
+    saveUndo(); saveRedo();                        /* v2.31：顺手落盘，刷新后还能撤 */
   }catch(e){}
 }
-function undoShots(){
-  if(!state.undo || !state.undo.length){ toast('没有可撤销的操作'); return; }
-  var snap = JSON.parse(state.undo.pop());
-  saveUndo();                                    /* v2.31：弹掉一张就重新落盘，别让刷新后又冒出来 */
+/* v2.32：把「拿一张快照去对齐云端」抽出来，撤销 / 重做共用同一套 diff 逻辑（原来只有撤销一份）。
+   返回 Promise<rep>：{ok, fail, errs, stopped}，由调用方决定怎么提示。 */
+function restoreSnap(snap, label){
   var p = db(), byId = {}, snapIds = {};
   state.shots.forEach(function(s){ byId[s._id] = s; });
   snap.forEach(function(x){ snapIds[x._id] = true; });
@@ -5646,7 +5695,7 @@ function undoShots(){
     }
   });
   var rep = null;
-  runSerial(jobs, { label: '撤销' })
+  return runSerial(jobs, { label: label, tag: 'undo' })
     .then(function(r){
       rep = r;
       state.shots = snap.map(function(x){ return Object.assign({}, x); });
@@ -5655,13 +5704,41 @@ function undoShots(){
     })
     .then(function(){
       refreshAll();
-      if(rep && rep.fail){
-        setSync('off');
-        toast('撤销未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新，可再点一次撤销）');
-      }else{
-        toast('已撤销上一步操作');
-      }
+      return rep;
     });
+}
+function undoShots(){
+  if(!state.undo || !state.undo.length){ toast('没有可撤销的操作'); return; }
+  var snap = JSON.parse(state.undo.pop());
+  /* v2.32：撤销前把「现状」压进重做栈，撤销就不再是单程票 */
+  state.redo = state.redo || [];
+  state.redo.push(snapShots());
+  if(state.redo.length > UNDO_KEEP) state.redo.shift();
+  saveUndo(); saveRedo();                        /* 弹掉/压入一张就重新落盘 */
+  restoreSnap(snap, '撤销').then(function(rep){
+    if(rep && rep.fail){
+      setSync('off');
+      toast('撤销未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新，可再点一次撤销）');
+    }else{
+      toast('已撤销上一步操作');
+    }
+  });
+}
+function redoShots(){
+  if(!state.redo || !state.redo.length){ toast('没有可重做的操作'); return; }
+  var snap = JSON.parse(state.redo.pop());
+  state.undo = state.undo || [];
+  state.undo.push(snapShots());                  /* 重做本身也占用一格撤销 */
+  saveUndo(); saveRedo();
+  toast('正在重做…');
+  restoreSnap(snap, '重做').then(function(rep){
+    if(rep && rep.fail){
+      setSync('off');
+      toast('重做未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（可再点一次重做）');
+    }else{
+      toast('已重做');
+    }
+  });
 }
 /* 重排后统一重编号（镜号即顺序，云端也只认这个字段） */
 function renumber(arr){
@@ -6250,7 +6327,7 @@ function saveExtracted(){
     return function(){
       return addAsset(Object.assign({ 参考图URL:'', 参考图2:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, p));
     };
-  })).then(function(r){
+  }), { label: '写入设定卡', tag: 'add' }).then(function(r){
     if(r.fail) toast('写入未完成：成功 ' + r.ok + ' 张、失败 ' + r.fail + ' 张');
     else toast('已写入 ' + r.ok + ' 张设定卡，去填描述并生成设定图');
     setView('asset');
@@ -6311,20 +6388,21 @@ function splitShots(){
     /* v2.30：改 runSerial，返回**实际成功条数**（原来固定返回 arr.length，失败也谎报「已写入 N 个」） */
     return runSerial(arr.map(function(it){
       return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(splitShotObj(it, sec)) }); };
-    }), { label: '写入分镜' }).then(function(r){
+    }), { label: '写入分镜', tag: 'split' }).then(function(r){
       if(r.fail) toast('拆镜未完成：成功写入 ' + r.ok + ' 个、失败 ' + r.fail + ' 个');
       return r.ok;
     });
   }).then(function(cnt){
-    return loadShots().then(function(){
-      var made = syncAssetsFromShots();
-      refreshAll();
-      box.className = 'result show ok';
-      box.textContent = '拆镜完成，已写入 ' + cnt + ' 个分镜' +
-        (made ? '；并自动建了 ' + made + ' 张设定卡（角色/场景）。下一步：去「② 角色与场景」填描述并生成设定图，然后再生分镜图。'
+    /* v2.32：等设定卡真的建完（syncAssetsFromShots 现在返回 Promise），
+       原来这里拿到的是同步的「计划张数」，提示里写的张数可能根本还没建出来 */
+    return loadShots().then(function(){ return syncAssetsFromShots().then(function(made){ return { cnt: cnt, made: made }; }); });
+  }).then(function(r){
+    refreshAll();
+    box.className = 'result show ok';
+    box.textContent = '拆镜完成，已写入 ' + r.cnt + ' 个分镜' +
+      (r.made ? '；并自动建了 ' + r.made + ' 张设定卡（角色/场景）。下一步：去「② 角色与场景」填描述并生成设定图，然后再生分镜图。'
               : '。下一步：去「② 角色与场景」确认设定卡，生成设定图后再生成分镜图。');
-      if(made) setView('asset');
-    });
+    if(r.made) setView('asset');
   }).catch(function(e){
     console.error(e);
     box.className = 'result show bad';
@@ -7002,7 +7080,7 @@ function splitChapter(c, n){
     /* v2.30：改 runSerial——原来一条失败整链断且对外谎报「全部成功」（固定返回 objs.length） */
     return runSerial(objs.map(function(o){
       return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(o) }); };
-    })).then(function(r){
+    }), { label: '写入分镜', tag: 'add' }).then(function(r){
       if(r.fail) toast('新增未完成：成功 ' + r.ok + ' 镜、失败 ' + r.fail + ' 镜');
       return r.ok;
     });
@@ -7071,8 +7149,9 @@ function runChapterLoop(list){
       })
       .then(function(cnt){
         pipeTip('第 ' + (i + 1) + '/' + total + ' 章 · 拆出 ' + cnt + ' 镜 · 同步设定卡…');
-        var made = syncAssetsFromShots();
-        return loadAssets().then(function(){ return made; });
+        /* v2.32：必须等它真的写完——原来这里同步返回，紧接着的 fillNewAssets（AI 补全描述）
+           跑在 addRecord 之前，新建的角色卡/场景卡拿不到描述就直接进生图，一致性全崩 */
+        return syncAssetsFromShots();
       })
       .then(function(){
         if(!opt.doAsset) return;
@@ -7705,13 +7784,13 @@ function runImport(arr, data){
     .then(function(){
       return runSerial(incAssets.map(function(it){
         return function(){ return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(buildAsset(it)) }); };
-      }), { label: '导入设定卡' });
+      }), { label: '导入设定卡', tag: 'import' });
     })
     .then(function(r){ repA = r; return loadAssets(); })
     .then(function(){
       return runSerial(arr.map(function(it){
         return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(build(it)) }); };
-      }), { label: '导入分镜' });
+      }), { label: '导入分镜', tag: 'import' });
     }).then(function(r){ repS = r; if(data.novel) $('novel').value = data.novel; })
       .then(function(){ localStorage.setItem(LS+'novel', $('novel').value); })
       .then(function(){ return loadShots(); })
@@ -7865,6 +7944,8 @@ function bind(){
       case 'dup': dupShot(id); break;
       case 'ins': insertShotAfter(id); break;
       case 'undo': undoShots(); break;
+      case 'redo': redoShots(); break;                 /* v2.32 */
+      case 'serialstop': stopSerial(); break;          /* v2.32：批量跑到一半可以叫停 */
       case 'openshot': setView('gen'); state.expanded[id] = true; renderGenList();
         setTimeout(function(){ var el = document.querySelector('.gen[data-id="'+id+'"]'); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 80);
         break;
@@ -7958,14 +8039,8 @@ function bind(){
   $('btnNewScene').addEventListener('click', function(){
     addAsset({ 类型:'场景', 名称:'新场景', 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() });
   });
-  $('btnPickRoles').addEventListener('click', function(){
-    var n = syncAssetsFromShots();
-    toast(n ? '已从分镜提取 ' + n + ' 张设定卡' : '分镜里没有新的角色 / 场景名');
-  });
-  $('btnPickScenes').addEventListener('click', function(){
-    var n = syncAssetsFromShots();
-    toast(n ? '已从分镜提取 ' + n + ' 张设定卡' : '分镜里没有新的角色 / 场景名');
-  });
+  $('btnPickRoles').addEventListener('click', pickAssetsFromShots);
+  $('btnPickScenes').addEventListener('click', pickAssetsFromShots);
   $('btnBatchAsset').addEventListener('click', batchAssets);
   $('btnAiAnchor').addEventListener('click', aiAnchors);
 
@@ -8134,7 +8209,15 @@ function bind(){
     if((ev.ctrlKey || ev.metaKey) && String(ev.key).toLowerCase() === 'z'){
       var tag = (ev.target && ev.target.tagName || '').toLowerCase();
       if(tag === 'input' || tag === 'textarea') return;   /* 不抢输入框内的撤销 */
-      ev.preventDefault(); undoShots();
+      ev.preventDefault();
+      if(ev.shiftKey) redoShots();                        /* v2.32：Ctrl+Shift+Z = 重做 */
+      else undoShots();
+    }
+    /* v2.32：Ctrl+Y 也是重做（Windows 习惯） */
+    if((ev.ctrlKey || ev.metaKey) && String(ev.key).toLowerCase() === 'y'){
+      var tg2 = (ev.target && ev.target.tagName || '').toLowerCase();
+      if(tg2 === 'input' || tg2 === 'textarea') return;
+      ev.preventDefault(); redoShots();
     }
   });
   if($('btnResetUse')) $('btnResetUse').addEventListener('click', function(){
@@ -8326,6 +8409,7 @@ function init(){
   refreshAll();
   loadShots().then(function(){
     loadUndo();                        /* v2.31：镜头拉下来之后才能判断旧快照还作不作数 */
+    loadRedo();                        /* v2.32：重做栈同样跨刷新保留 */
     return loadAssets();
   }).then(function(){
     restoreChapters();          /* 用已保存的小说正文重切章节，恢复勾选与进度 */
