@@ -1757,13 +1757,19 @@ function clearAllShots(skipUndo){
   /* v2.30：逐条独立 catch——原来一条失败整链断（后面的都不删），且既不刷新也不提示 */
   return runSerial(shotIds.map(function(id){
     return function(){ return p.deleteRecord({ databaseId: DB_ID, recordId: id }); };
-  }), { label: '清空分镜', tag: 'clear' }).then(function(r){
+  }), { label: '清空分镜', tag: 'clear'   }).then(function(r){
     rep = r;
-    if(!r.fail) purgeAud(shotIds);   /* 有失败就先留着：没删掉的镜头仍要用到它的音频 */
+    /* v2.34：中途被叫停时也不能清音频——没删掉的镜头还要用 */
+    if(!r.fail && !r.stopped) purgeAud(shotIds);
     return loadShots();
   }).then(function(){
     refreshAll();
-    if(rep && rep.fail){ setSync('off'); toast('清空未完成：已删 ' + rep.ok + ' 条，' + rep.fail + ' 条删除失败（可再点一次清空）'); }
+    if(rep && (rep.fail || rep.stopped)){
+      setSync('off');
+      toast(rep.stopped
+        ? ('已停止清空：删了 ' + rep.ok + ' 条，还剩 ' + (shotIds.length - rep.ok) + ' 条没动（可再点一次清空继续）')
+        : ('清空未完成：已删 ' + rep.ok + ' 条，' + rep.fail + ' 条删除失败（可再点一次清空）'));
+    }
     else setSync('ok');
   });
 }
@@ -1997,7 +2003,13 @@ function clearAllAssets(){
     return function(){ return p.deleteRecord({ databaseId: ASSET_DB_ID, recordId: id }); };
   }), { label: '清空设定卡', tag: 'clear' }).then(function(r){ rep = r; return loadAssets(); })
     .then(function(){
-      if(rep && rep.fail){ setSync('off'); toast('设定卡清空未完成：已删 ' + rep.ok + ' 张，' + rep.fail + ' 张失败'); }
+      /* v2.34：叫停也要如实说（原来只有失败才提示，中途停了会被当成「完成」） */
+      if(rep && (rep.fail || rep.stopped)){
+        setSync('off');
+        toast(rep.stopped
+          ? ('已停止：删了 ' + rep.ok + ' 张，还剩 ' + (ids.length - rep.ok) + ' 张没动')
+          : ('设定卡清空未完成：已删 ' + rep.ok + ' 张，' + rep.fail + ' 张失败'));
+      }
       else setSync('ok');
     });
 }
@@ -2663,6 +2675,20 @@ function refreshAll(){
   renderChapters();
   renderLipTip();
   renderTimeline();
+  renderUndoBtns();                  /* v2.34：撤销 / 重做按钮的可用态 */
+}
+/* v2.34：撤销 / 重做按钮原来永远是可点状态（点了才知道「没有可撤销的操作」），
+   现在按栈里剩几步置灰，并把步数写进 title——尤其是刚跨刷新恢复出来的栈，用户根本看不出来有货。 */
+function renderUndoBtns(){
+  var u = (state.undo && state.undo.length) || 0, r = (state.redo && state.redo.length) || 0;
+  document.querySelectorAll('[data-act="undo"]').forEach(function(b){
+    b.disabled = !u;
+    b.title = u ? ('撤销上一次分镜改动（Ctrl+Z）· 还可撤销 ' + u + ' 步') : '没有可撤销的操作';
+  });
+  document.querySelectorAll('[data-act="redo"]').forEach(function(b){
+    b.disabled = !r;
+    b.title = r ? ('重做刚撤销的那一步（Ctrl+Shift+Z）· 可重做 ' + r + ' 步') : '没有可重做的操作';
+  });
 }
 
 /* ---------------- API 层 ---------------- */
@@ -6420,7 +6446,9 @@ function splitShots(){
     return runSerial(arr.map(function(it){
       return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(splitShotObj(it, sec)) }); };
     }), { label: '写入分镜', tag: 'split' }).then(function(r){
-      if(r.fail) toast('拆镜未完成：成功写入 ' + r.ok + ' 个、失败 ' + r.fail + ' 个');
+      /* v2.34：叫停也要说清楚（原来只报失败，中途停了会当成「拆镜完成」） */
+      if(r.stopped) toast('已停止写入：进了 ' + r.ok + ' 个分镜，剩下的没动');
+      else if(r.fail) toast('拆镜未完成：成功写入 ' + r.ok + ' 个、失败 ' + r.fail + ' 个');
       return r.ok;
     });
   }).then(function(cnt){
@@ -7827,8 +7855,12 @@ function runImport(arr, data){
       .then(function(){ return loadShots(); })
       .then(function(){
         var f = (repA ? repA.fail : 0) + (repS ? repS.fail : 0);
+        var stopped = (repA && repA.stopped) || (repS && repS.stopped);   /* v2.34 */
         restoreBackupAudio(data); refreshAll();
-        if(f){
+        if(stopped){
+          setSync('off');
+          toast('已停止导入：设定卡进了 ' + (repA ? repA.ok : 0) + ' 张、分镜进了 ' + (repS ? repS.ok : 0) + ' 镜（剩下的没动，可重新导入一次）');
+        }else if(f){
           setSync('off');
           toast('导入未完成：设定卡 ' + (repA ? repA.ok : 0) + ' 张、分镜 ' + (repS ? repS.ok : 0) + ' 镜成功，' + f + ' 条失败（已按云端实际状态刷新）');
         }else{
