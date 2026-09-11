@@ -497,6 +497,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
           <option value="all" data-page-node-id="HrBpVELa3KDyVISFaHVGQ2">全部镜头</option>
           <option value="noimg" data-page-node-id="hqnHKrPm9Um6jG2gzcBpGQ">待生成图片</option>
           <option value="novid" data-page-node-id="6Fh1HREmsqv5rHr0kNZUs5">待生成视频</option>
+          <option value="cand">候选待选</option>
           <option value="fail" data-page-node-id="KoUzxZbvEuB0fXeOTztCMp">失败的</option>
           <option value="done" data-page-node-id="rYFM3Wd3GZfOGoJiPFn4Uw">已完成</option>
           <option value="expr">按镜号选区（在导出中心的镜号预设上点「筛」）</option>
@@ -926,6 +927,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="all">全部状态</option>
         <option value="noimg">待生成图片</option>
         <option value="novid">待生成视频</option>
+        <option value="cand">候选待选</option>
         <option value="fail">失败的</option>
         <option value="done">已完成</option>
       </select>
@@ -1203,7 +1205,7 @@ var DEFAULT_CFG = {
   /* v2.23：filterViews = 命名筛选视图 [{n, mode, expr}]，把常用筛选存下来一键切回；
      bundlePick = 一键打包时「只打这些文件」的勾选（srt/md/csv/json/ff/xlsx）。
      v2.24：pipelinePick = 首页流水线可自定义要跑的步骤（图/视频/配音/对口型）；
-     bundleStatus = 一键打包时按镜头状态二次筛选（all/noimg/novid/fail/done）。 */
+     bundleStatus = 一键打包时按镜头状态二次筛选（all/noimg/novid/cand/fail/done）。 */
   filterViews:[],
   bundlePick:{ srt:true, md:true, csv:true, json:true, ff:true, xlsx:false },
   pipelinePick:{ img:true, vid:true, audio:true, lip:false },
@@ -1832,6 +1834,7 @@ function viewShots(list, mode, expr){
     if(mode === 'all' || !mode) return true;
     if(mode === 'noimg') return is === '未生成';
     if(mode === 'novid') return vs === '未生成' && is === '已完成';
+    if(mode === 'cand') return Array.isArray(x._imgCand) && x._imgCand.length > 0;   /* v2.26：有候选待挑 */
     if(mode === 'fail') return is === '失败' || vs === '失败';
     if(mode === 'done') return vs === '已完成';
     return true;
@@ -1966,24 +1969,22 @@ function renderToday(){
         (pipeKinds.length >= 2 ? '<button class="btn gh sm" data-act="piperesume">' + pipeKinds.map(batchLeftName).join('→') + ' 全串跑</button>' : '') +
       '</div></div>';
   }
-  /* v2.25：候选图待挑选——批量生图开了 A/B 时，跑完一堆镜都有候选没挑。给一个「批量选最高分」入口，免得逐镜点面板。 */
+  /* v2.25：候选图待挑选——批量生图开了 A/B 时，跑完一堆镜都有候选没挑。给一个「批量选最高分」入口，免得逐镜点面板。
+     v2.26：再给一个「去挑」——把生成页筛成只看有候选待挑的镜，想手挑的人不用自己翻。 */
   var pendCand = state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length;
   if(pendCand){
     html += '<div class="todo" style="background:#EAF7EE;border-color:#BFE6CB">' +
       '<span class="bad" style="color:#1F7A3D">选优</span>' +
-      '<span class="txt">有 ' + pendCand + ' 个镜头的候选图没挑（批量生图开了 A/B 时常见）。不想逐镜点面板，可按评分自动选最高分：</span>' +
-      '<button class="btn sm" data-act="autopick">批量选最高分</button></div>';
+      '<span class="txt">有 ' + pendCand + ' 个镜头的候选图没挑（批量生图开了 A/B 时常见）。可按评分自动选最高分，也可以只挑这几个镜手选：</span>' +
+      '<button class="btn sm" data-act="autopick">批量选最高分</button>' +
+      '<button class="btn gh sm" data-act="filtercand">去挑（只看待选）</button></div>';
   }
   /* v2.20：关键字段体检——只有出现「硬性缺料」（缺画面描述 / 没时长 / 无生图提示词）时才弹卡，
      免得「没章节」这类软性提示天天占着首页让人麻木。明细与报告里两种都会列。 */
   var hIss = shotHealth(state.shots), hHard = healthHardCount(hIss);
   if(hHard){
-    /* v2.25：能靠台词自动估时长的「没时长」镜数——有才显示「补齐时长」按钮 */
-    var durFix = hIss.filter(function(x){
-      if(x.issues.indexOf('没时长') < 0) return false;
-      var sh = shotById(x.id);
-      return sh && String(sh['台词旁白'] || '').trim();
-    }).length;
+    /* v2.26：能靠本地规则推定的缺料项（时长 / 章节 / 单角色）——有才显示「一键自动修复」 */
+    var fixSum = healthFixSummary();
     var hs = healthSummary(hIss);
     html += '<div class="todo" style="background:#F5F6F8;border-color:#E3E5EC">' +
       '<span class="bad" style="color:#4B5563">体检</span>' +
@@ -1991,7 +1992,7 @@ function renderToday(){
       hs.order.slice(0, 3).map(function(k){ return k + ' ' + hs.byType[k]; }).join('、') +
       (hs.order.length > 3 ? ' 等' : '') + '（会拖累出图与成片）</span>' +
       '<button class="btn sm" data-act="hjump">去修第一个</button>' +
-      (durFix ? '<button class="btn gh sm" data-act="hfixdur">补齐时长(' + durFix + ')</button>' : '') +
+      (fixSum.total ? '<button class="btn gh sm" data-act="hfixall" title="可自动推定：' + esc(fixSum.txt) + '">一键自动修复(' + fixSum.total + ')</button>' : '') +
       '<button class="btn gh sm" data-act="hcheck">查看明细</button>' +
       '<button class="btn gh sm" data-act="hexp">导出报告</button></div>';
   }
@@ -4917,7 +4918,7 @@ function filterByRangePreset(i){
     if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
   }, 80);
 }
-var FILTER_NAMES = { all:'全部镜头', noimg:'待生成图片', novid:'待生成视频', fail:'失败的', done:'已完成', expr:'按镜号选区' };
+var FILTER_NAMES = { all:'全部镜头', noimg:'待生成图片', novid:'待生成视频', cand:'候选待选', fail:'失败的', done:'已完成', expr:'按镜号选区' };
 function filterViews(){
   if(!Array.isArray(cfg.filterViews)) cfg.filterViews = [];
   return cfg.filterViews;
@@ -6227,21 +6228,71 @@ function estShotDurFromText(s){
   if(sum <= 0) return null;
   return Math.min(12, Math.max(4, sum));
 }
-/* v2.25：一键补齐时长——只补「没时长 + 有台词」的镜（这类才能靠台词估出来），空镜（无台词）不动，避免误改。
-   与面板「去修第一个」互补：能自动估的批量填，估不了的留给人。 */
-function fixDurationsAuto(){
-  var list = state.shots.filter(function(s){
-    return !(num(s['时长秒']) > 0) && estShotDurFromText(s) != null;
+/* v2.26：把「能靠本地规则确定推出的」缺料项挑出来——只做有确定依据的推断，猜不出的（缺画面描述 /
+   无生图提示词）一律留给人，绝不瞎填。三类：
+   ① 没时长 + 有台词 → 按台词字数估（estShotDurFromText，与字幕同一语速口径）
+   ② 没章节 → 承前：取该镜之前最近的一个非空章节（按全片顺序，与页面筛选无关）
+   ③ 有台词没角色 + 该镜「出场角色」恰好 1 人 → 只能是他，直接填
+   kinds 可只取其中几类（如 ['dur'] 就是 v2.25 的「只补时长」）。 */
+function healthFixables(kinds){
+  kinds = kinds || ['dur', 'chap', 'role'];
+  var want = {};
+  kinds.forEach(function(k){ want[k] = 1; });
+  var out = { dur: [], chap: [], role: [] }, prevChap = '';
+  state.shots.forEach(function(s){
+    var c = String(s['章节'] || '').trim();
+    /* 章节先记后判会把「自己」当成前一个，所以先判承接、再更新 prevChap */
+    if(want.chap && !c && prevChap) out.chap.push({ s: s, val: prevChap });
+    if(c) prevChap = c;
+    if(want.dur && !(num(s['时长秒']) > 0)){
+      var d = estShotDurFromText(s);
+      if(d != null) out.dur.push({ s: s, val: d });
+    }
+    if(want.role && String(s['台词旁白'] || '').trim() && !String(s['说话角色'] || '').trim()){
+      var cast = splitNames(s['出场角色']);
+      if(cast.length === 1) out.role.push({ s: s, val: cast[0] });
+    }
   });
-  if(!list.length){ toast('没有「既没时长、又有台词」的镜头可自动补（空镜不会动）'); return; }
-  if(!askConfirm('对 ' + list.length + ' 个「没时长但有台词」的镜头，按台词字数（语速 ' + (num(cfg.cnRate) || 4.5) + ' 字/秒）自动估算并填入时长（4–12 秒）？\n无台词的空镜不会改动。', '补齐时长')) return;
-  list.forEach(function(s){
-    var d = estShotDurFromText(s);
-    if(d != null) patchShot(s._id, { 时长秒: d, 更新时间: nowStr() });
-  });
-  toast('已自动补齐 ' + list.length + ' 个镜头的时长');
+  return out;
+}
+/* 可自动修复的总项数 + 分项摘要（首页体检卡用它决定按钮文案，不写库、无副作用） */
+function healthFixSummary(kinds){
+  var p = healthFixables(kinds);
+  var parts = [];
+  if(p.dur.length) parts.push('时长 ' + p.dur.length);
+  if(p.chap.length) parts.push('章节 ' + p.chap.length);
+  if(p.role.length) parts.push('角色 ' + p.role.length);
+  return { total: p.dur.length + p.chap.length + p.role.length, txt: parts.join('、') };
+}
+/* v2.26：一键自动修复——一次确认把上面三类能推定的项批量写入（patchShot 落库），修完分类汇报。
+   缺画面描述 / 无生图提示词 无法本地推定，会明确告诉用户还得手补。 */
+function fixHealthAuto(kinds){
+  var plan = healthFixables(kinds);
+  var total = plan.dur.length + plan.chap.length + plan.role.length;
+  if(!total){
+    toast(kinds && kinds.length === 1 && kinds[0] === 'dur'
+      ? '没有「既没时长、又有台词」的镜头可自动补（空镜不会动）'
+      : '没有可自动修复的项（缺画面描述 / 无生图提示词 只能人工补）');
+    return;
+  }
+  var parts = [];
+  if(plan.dur.length) parts.push('补时长 ' + plan.dur.length + ' 个');
+  if(plan.chap.length) parts.push('补章节 ' + plan.chap.length + ' 个');
+  if(plan.role.length) parts.push('补说话角色 ' + plan.role.length + ' 个');
+  var msg = '将自动修复 ' + total + ' 项：' + parts.join('、') + '。\n' +
+    '规则：时长按台词字数估算（语速 ' + (num(cfg.cnRate) || 4.5) + ' 字/秒，4–12 秒）；' +
+    '章节取该镜之前最近的非空章节；说话角色仅在出场角色恰为 1 人时填入。\n' +
+    '缺画面描述 / 无生图提示词 无法本地推定，会留给你手动补。';
+  if(!askConfirm(msg, '一键自动修复')) return;
+  var t = nowStr();
+  plan.dur.forEach(function(x){ patchShot(x.s._id, { 时长秒: x.val, 更新时间: t }); });
+  plan.chap.forEach(function(x){ patchShot(x.s._id, { 章节: x.val, 更新时间: t }); });
+  plan.role.forEach(function(x){ patchShot(x.s._id, { 说话角色: x.val, 更新时间: t }); });
+  toast('已自动修复 ' + total + ' 项（' + parts.join('、') + '）');
   renderToday();
 }
+/* v2.25 的细粒度入口：只补时长，等价于自动修复的一个子集（保留给「先补时长看看」的场景） */
+function fixDurationsAuto(){ fixHealthAuto(['dur']); }
 /* v2.22：体检报告的「表格行」——xlsx 与打包里的 CSV 共用同一份数据，两处口径不会打架。
    硬性 / 软性单独一列，用户在 Excel 里能直接按列排序、筛选。 */
 function buildHealthRows(){
@@ -7431,8 +7482,16 @@ function bind(){
       case 'fvren': renameFilterView(t.getAttribute('data-i')); break;        /* v2.24：重命名筛选视图 */
       case 'hcheck': showHealthBox(); break;                                 /* v2.20：关键字段体检明细 */
       case 'hexp': exportHealthReport(); break;                              /* v2.20：导出体检报告 */
-      case 'hfixdur': fixDurationsAuto(); break;                            /* v2.25：一键补齐时长（按台词估算） */
-      case 'autopick': autoPickAllCand(); break;                            /* v2.25：候选图批量选最高分 */
+      case 'hfixall': fixHealthAuto(); break;                              /* v2.26：一键自动修复（时长/章节/单角色） */
+      case 'hfixdur': fixDurationsAuto(); break;                           /* v2.25：只补时长（自动修复子集） */
+      case 'autopick': autoPickAllCand(); break;                           /* v2.25：候选图批量选最高分 */
+      case 'filtercand': {                                                 /* v2.26：只筛出「有候选待挑」的镜 */
+        state.filter = 'cand';
+        if($('filterSel')) $('filterSel').value = 'cand';
+        setView('gen');
+        toast('已只筛出有候选待挑的镜头，可点任一镜的「选图」手挑');
+        break;
+      }
       case 'guse': applyGenrePreset(t.getAttribute('data-i')); break;        /* v2.20：套用自定义类型套餐 */
       case 'gdel': delGenrePreset(t.getAttribute('data-i')); break;          /* v2.20：删除自定义类型套餐 */
       case 'del': {
