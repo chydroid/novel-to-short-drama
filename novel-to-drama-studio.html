@@ -7231,6 +7231,19 @@ function splitChapter(c, n){
     });
   });
 }
+/* v2.36：自愈「假死在生成中」的镜——页面加载时 init() 会调 resetStuck() 清一次，
+   但**同一次会话里**被叫停 / 中断留下的「生成中」没人再管：pipeStepList 见「生成中」就跳过，
+   而章节对账又一直说「还剩 N 项」→ 每次重跑都不动它，这一章永远跑不完（假死循环）。
+   图片 / 配音 / 口型都是同步请求，没在跑（state.busy 里没有）就一定是残留，直接复位成「未生成」。
+   视频不在此列：它有任务 ID，能靠 resumePolling 续轮询。 */
+function healStuckShot(s, kind){
+  if(!s || kind === 'vid') return s;
+  var f = batchStKey(kind);
+  if(s[f] !== '生成中' || state.busy[s._id]) return s;
+  var o = {}; o[f] = '未生成';
+  patchShot(s._id, o);
+  return shotById(s._id) || s;
+}
 /* 对某章的分镜依次跑某一类任务 */
 function pipeStepList(list, kind){
   var i = 0;
@@ -7239,6 +7252,7 @@ function pipeStepList(list, kind){
     var s = list[i]; i++;
     var cur = shotById(s._id);
     if(!cur) return nx();
+    cur = healStuckShot(cur, kind);
     if(!hasAgnesKey() && kind !== 'audio'){ return Promise.resolve(i); }
     if(kind === 'img'){
       if(cur['图片状态'] === '已完成' || cur['图片状态'] === '生成中') return nx();
