@@ -472,9 +472,12 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
           <button class="btn gh" id="btnAddShot" data-page-node-id="cdHVi0qSPOXE7XgYHlwOor">+ 手动加一镜</button>
           <button class="btn gh" data-act="undo" title="撤销上一次分镜改动（Ctrl+Z）">撤销</button>
           <button class="btn gh" data-act="redo" title="重做刚撤销的那一步（Ctrl+Shift+Z）">重做</button>
+          <button class="btn gh" data-act="undohist" title="一次退回好几步（撤销栈里最多留 20 版）">历史</button>
           <button class="btn gh" id="btnDemo" data-page-node-id="Drn4EgHQUL8ko67TLP92y4">载入示例分镜</button>
         </div>
         <div class="result" id="splitResult" data-page-node-id="5ajly6loKBA8CxK4joQrDF"></div>
+        <!-- v2.39：撤销栈的「跳到某一版」面板（点工具条上的「历史」展开） -->
+        <div id="undoHistBox" hidden style="margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card)"></div>
       </div>
     </section>
 
@@ -1044,6 +1047,7 @@ var state = {
   pipeOpts: null,
   undo: [],         // v2.31：撤销栈（整表快照，最近 UNDO_SAVE 条落本机）
   redo: [],         // v2.32：重做栈，与撤销栈同一套存法
+  undoHistOpen: false,   // v2.39：「历史」面板是否展开
   syncMsg: '',      // v2.31：同步条上的临时进度文案
   serialTag: '',    // v2.32：正在跑的批量任务名（有值才显示「停止」）
   stopSerial: '',   // v2.32：已请求停止的任务名
@@ -1953,7 +1957,8 @@ function statOf(){
     }
     if(is === '未生成' || is === '失败') s.noImg++;
     if(vs === '未生成' || vs === '失败') s.noVid++;
-    if(is === '失败' || vs === '失败') s.fail++;
+    /* v2.38：失败计数扩到配音 / 口型——原来只数图片与视频，配音失败时顶部永远是 0，看着像一切正常 */
+    if(is === '失败' || vs === '失败' || x['配音状态'] === '失败' || x['口型状态'] === '失败') s.fail++;
     if(is === '生成中' || vs === '生成中' || vs === '排队中') s.running++;
     if(vs === '已完成'){ s.done++; s.doneSec += sec; }
   });
@@ -1987,7 +1992,8 @@ function viewShots(list, mode, expr){
     if(mode === 'noimg') return is === '未生成';
     if(mode === 'novid') return vs === '未生成' && is === '已完成';
     if(mode === 'cand') return Array.isArray(x._imgCand) && x._imgCand.length > 0;   /* v2.26：有候选待挑 */
-    if(mode === 'fail') return is === '失败' || vs === '失败';
+    /* v2.38：筛「失败」要覆盖四类——否则点「只看失败」时配音 / 口型失败的镜根本不出现，等于假筛选 */
+    if(mode === 'fail') return is === '失败' || vs === '失败' || x['配音状态'] === '失败' || x['口型状态'] === '失败';
     if(mode === 'done') return vs === '已完成';
     return true;
   });
@@ -2123,6 +2129,20 @@ function renderToday(){
       '<span class="txt">有 ' + state.bulkFail.length + ' 条改动没写进云端（已存在本机）。现在重试，或先检查网络 / 数据表权限：</span>' +
       '<button class="btn sm" data-act="bulkretry">重试写入</button>' +
       '<button class="btn gh sm" data-act="bulkfailclear">忽略</button></div>';
+  }
+  /* v2.38：生成失败的清单卡——把「失败」从散在各镜卡里的错误信息，收成首页一条可点的账。
+     四类全覆盖（v2.37 及以前配音 / 口型失败在首页完全看不到），给分组摘要 + 首个失败镜的原因，
+     三个动作：全部重试 / 去看第一个 / 只看失败。 */
+  var fg = failGroups();
+  if(fg.length){
+    var ffirst = fg[0].list[0];
+    html += '<div class="todo" style="background:#FDECEC;border-color:#F3B7B7">' +
+      '<span class="bad" style="color:#B42318">生成失败</span>' +
+      '<span class="txt">' + esc(failBrief()) + '，共 ' + failCount() + ' 项、涉及 ' + failShots().length + ' 个镜头。' +
+      '第一个：第 ' + esc(ffirst['镜号']) + ' 镜 ' + esc(fg[0].name) + esc(failWhyTxt(ffirst)) + '</span>' +
+      '<button class="btn sm" data-act="failretry">全部重试</button>' +
+      '<button class="btn gh sm" data-act="failjump">去看第一个</button>' +
+      '<button class="btn gh sm" data-act="failfilter">只看失败</button></div>';
   }
   if(pendingAssets.length && state.shots.length){
     html += '<div class="todo" style="background:var(--warn-soft);border-color:#F5D9A0">' +
@@ -2697,11 +2717,43 @@ function refreshAll(){
   renderLipTip();
   renderTimeline();
   renderUndoBtns();                  /* v2.34：撤销 / 重做按钮的可用态 */
+  renderUndoHist();                  /* v2.39：撤销栈的「历史」面板 */
   renderRetryBtn();                  /* v2.37：失败镜数量实时显示在「重试失败项」上 */
 }
-/* v2.37：一键重试的名单口径只此一处——按钮上的数字必须与真正会重跑的那批镜一致 */
+/* v2.38：失败的判定只此一处——图片 / 视频 / 配音 / 口型**四类都要认**。
+   v2.37 及以前只认图片与视频，于是「配音失败」「口型失败」在首页完全不可见：
+   顶部计数不涨、没有任何一键重试入口，只有批量条还弹着的那一会儿能点到「重试失败」，
+   条一关就再也没地方找它们了（只能一镜一镜翻镜卡）。 */
+var FAIL_KINDS = [
+  { k:'img',   name:'分镜图', key:'图片状态' },
+  { k:'vid',   name:'视频',   key:'视频状态' },
+  { k:'audio', name:'配音',   key:'配音状态' },
+  { k:'lip',   name:'口型',   key:'口型状态' }
+];
+/* 按类型分组的失败清单（只保留非空组），顺序即重跑顺序：图 → 视频 → 配音 → 口型 */
+function failGroups(){
+  var out = [];
+  FAIL_KINDS.forEach(function(f){
+    var list = state.shots.filter(function(s){ return s[f.key] === '失败'; });
+    if(list.length) out.push({ k:f.k, name:f.name, key:f.key, list:list });
+  });
+  return out;
+}
+/* 涉及失败的镜头（四类去重）——重试名单、按钮数字、顶部计数共用这一份口径 */
 function failShots(){
-  return state.shots.filter(function(s){ return s['图片状态'] === '失败' || s['视频状态'] === '失败'; });
+  var ids = {}, out = [];
+  failGroups().forEach(function(g){
+    g.list.forEach(function(s){ if(!ids[s._id]){ ids[s._id] = 1; out.push(s); } });
+  });
+  return out;
+}
+/* 按「项」算（同一镜图片与配音都失败算两项），与分组明细逐条对得上 */
+function failCount(){ return failGroups().reduce(function(a, g){ return a + g.list.length; }, 0); }
+/* 「分镜图 2、配音 1」这样的分组摘要，用于首页卡与确认框 */
+function failBrief(){ return failGroups().map(function(g){ return g.name + ' ' + g.list.length; }).join('、'); }
+function failWhyTxt(s){
+  var m = String(s && s['错误信息'] || '').replace(/\s+/g, ' ').trim();
+  return m ? ('（' + m.slice(0, 36) + (m.length > 36 ? '…' : '') + '）') : '';
 }
 /* v2.37：「重试失败项」原来永远是干点（有没有失败都一个样，点了才知道）。
    现在把当前失败数写在按钮上、没有失败就置灰，跟撤销 / 重做按钮同一个口径。 */
@@ -2710,7 +2762,7 @@ function renderRetryBtn(){
   var n = failShots().length;
   b.disabled = !n;
   b.textContent = n ? ('重试失败项 (' + n + ')') : '重试失败项';
-  b.title = n ? ('把 ' + n + ' 个「图片或视频失败」的镜头重跑一遍（数量按镜卡状态实时统计）')
+  b.title = n ? ('重试 ' + failBrief() + '，共 ' + failCount() + ' 项、涉及 ' + n + ' 个镜头（按镜卡状态实时统计）')
               : '当前没有失败的镜头';
 }
 /* v2.34：撤销 / 重做按钮原来永远是可点状态（点了才知道「没有可撤销的操作」），
@@ -2724,6 +2776,11 @@ function renderUndoBtns(){
   document.querySelectorAll('[data-act="redo"]').forEach(function(b){
     b.disabled = !r;
     b.title = r ? ('重做刚撤销的那一步（Ctrl+Shift+Z）· 可重做 ' + r + ' 步') : '没有可重做的操作';
+  });
+  /* v2.39：「历史」也要跟撤销按钮一起置灰——没有历史版本时它点开只会是一片空 */
+  document.querySelectorAll('[data-act="undohist"]').forEach(function(b){
+    b.disabled = !u;
+    b.title = u ? ('一次退回好几步：栈里还留着 ' + u + ' 版（列表按「几步前 + 那时多少镜」认）') : '还没有可回到的历史版本';
   });
 }
 
@@ -2947,36 +3004,33 @@ function batchAssets(){
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return; }
   toast('开始生成设定图（这一步决定后面所有镜头的一致性）…');
   /* v2.31：①同步条上给进度（十几张设定图跑很久，原来只有一句 toast，中途完全没反馈）；
-     ②末端补 catch——loadAssets 之类的失败会让整条链静默 reject，用户一直等到天荒地老。 */
-  var i1 = 0, t1 = need1.length;
-  need1.reduce(function(chain, a){
-    return chain.then(function(){
-      setSync('busy', '设定图 ' + (++i1) + '/' + t1);
-      return genAsset(a._id, 1);
-    });
-  }, Promise.resolve()).then(function(){
+     ②末端补 catch——loadAssets 之类的失败会让整条链静默 reject，用户一直等到天荒地老。
+     v2.40：进度改由 runSerial 的 label 统一刷（原来这里有 i1/t1 两个计数器，现在不需要了）。 */
+  var r1 = null;
+  runSerial(need1.map(function(a){
+    return function(){ return genAsset(a._id, 1); };
+  }), { label: '设定图', min: 1 }).then(function(r){
+    r1 = r;
     if(!cfg.multiView) return;
     return loadAssets().then(function(){
       var need2 = state.assets.filter(function(a){ return a['参考图URL'] && !a['参考图2']; });
       if(!need2.length) return;
       toast('主图完成，继续生成 ' + need2.length + ' 张副视图（面部特写 / 反打机位）…');
-      var i2 = 0, t2 = need2.length;
-      return need2.reduce(function(c2, a){
-        return c2.then(function(){
-          setSync('busy', '副视图 ' + (++i2) + '/' + t2);
-          return genAsset(a._id, 2);
-        });
-      }, Promise.resolve());
+      return runSerial(need2.map(function(a){
+        return function(){ return genAsset(a._id, 2); };
+      }), { label: '副视图', min: 1 });
     });
   }).then(function(){ return loadAssets(); }).then(function(){
     /* v2.35：genAsset 自己吞错只把状态写成「失败」，链上永远 resolve——
        原来无论几张失败都报「设定图全部完成，现在可以去生成分镜图了」，
        用户真去了，出来的分镜图全都没有参考图（一致性 2.0 直接失效）。 */
     var bad = state.assets.filter(function(a){ return (a['状态'] || '未生成') === '失败'; }).length;
-    setSync(bad ? 'off' : 'ok');
+    var thrown = (r1 && r1.fail) || 0;          /* v2.40：runSerial 单独记「真正抛错」的条数，跟状态失败不是一回事 */
+    setSync(bad || thrown ? 'off' : 'ok');
     toast(bad ? ('设定图跑完，但有 ' + bad + ' 张失败（看卡上的错误信息，修好再点一次；' +
                  '带着失败的设定图去生分镜图会丢参考图）')
-              : '设定图全部完成，现在可以去生成分镜图了');
+              : (thrown ? ('设定图跑完，但有 ' + thrown + ' 项请求异常（看卡上的错误信息，可再点一次）')
+                        : '设定图全部完成，现在可以去生成分镜图了'));
   }).catch(function(e){
     console.error(e);
     setSync('off');
@@ -5739,6 +5793,62 @@ function snapShots(){
     var o = {}; for(var k in s){ if(k !== '_localOnly') o[k] = s[k]; } return o;
   }));
 }
+/* v2.39：撤销栈的「跳到某一版」——原来只能一步一步退（栈里最多 20 步），
+   退过头了还得一版一版重做回去。快照本身只是整表的 JSON 字符串、没有标签，
+   所以按「几步前 + 那一版的镜数」来认：镜数一变往往一眼就知道是「删之前 / 导入之前」。 */
+function undoPickList(){
+  var arr = state.undo || [];
+  return arr.map(function(str, i){
+    var n = 0;
+    try{ n = (JSON.parse(str) || []).length; }catch(e){}
+    var back = arr.length - i;                  /* 1 = 上一版 */
+    return { i:i, back:back, n:n, label:(back === 1 ? '上一版' : (back + ' 步前')) };
+  }).reverse();                                 /* 从最近往最早列，最上面就是「上一版」 */
+}
+/* 回到第 idx 版。被跳过的那些版本**按顺序压进重做栈**（后压的先出），
+   所以「重做」能一版一版往回走，不会像直接丢栈那样把中间几版弄丢。 */
+function undoTo(idx){
+  var arr = state.undo || [];
+  if(idx < 0 || idx >= arr.length){ toast('这一版已经不在栈里了'); return; }
+  var back = arr.length - idx, k;
+  var snap = JSON.parse(arr[idx]);
+  state.redo = state.redo || [];
+  state.redo.push(snapShots());                 /* 先压「现状」，重做到底就能回到最新 */
+  for(k = arr.length - 1; k > idx; k--) state.redo.push(arr[k]);
+  while(state.redo.length > UNDO_KEEP) state.redo.shift();
+  state.undo = arr.slice(0, idx);
+  saveUndo(); saveRedo();
+  renderUndoBtns(); renderUndoHist();
+  toast('正在回到' + (back === 1 ? '上一版' : (back + ' 步前')) + '…');
+  restoreSnap(snap, '回到历史版本').then(function(rep){
+    if(rep && rep.fail){
+      setSync('off');
+      toast('回到历史版本未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新，可再点一次）');
+    }else{
+      toast('已回到' + (back === 1 ? '上一版' : (back + ' 步前')));
+    }
+  });
+}
+/* 面板开关状态（state 里记，刷新界面不会自己合上） */
+function toggleUndoHist(){
+  state.undoHistOpen = !state.undoHistOpen;
+  renderUndoHist();
+}
+function renderUndoHist(){
+  var box = $('undoHistBox'); if(!box) return;
+  var list = undoPickList();
+  if(!state.undoHistOpen || !list.length){
+    box.hidden = true; box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = '<div class="hint" style="margin:0 0 8px">撤销栈里还有 ' + list.length + ' 版（每存一次「改动前」算一版）。' +
+    '点一下直接跳过去，中间的版本仍可用「重做」逐步走回来：</div>' +
+    list.map(function(v){
+      return '<button class="btn gh sm" data-act="undoto" data-i="' + v.i + '" style="margin:0 6px 6px 0">' +
+        esc(v.label) + ' · 那时 ' + v.n + ' 镜</button>';
+    }).join('');
+}
 function pushUndo(){
   try{
     state.undo = state.undo || [];
@@ -5747,6 +5857,7 @@ function pushUndo(){
     /* v2.32：一有新改动，之前那条「重做」就作废了（否则重做会跳到一个已经不存在的分支上） */
     state.redo = [];
     saveUndo(); saveRedo();                        /* v2.31：顺手落盘，刷新后还能撤 */
+    renderUndoBtns(); renderUndoHist();            /* v2.39：入栈后立刻刷新「历史」面板，别让列表是旧的 */
   }catch(e){}
 }
 /* v2.32：把「拿一张快照去对齐云端」抽出来，撤销 / 重做共用同一套 diff 逻辑（原来只有撤销一份）。
@@ -6918,6 +7029,10 @@ function batchRun(kind, list, opts){
     /* v2.35：同上，按 id 取当前对象再数失败——原来恒为 0，全失败也报「批量任务已全部完成」 */
     var bad = state.shots.filter(function(s){ return inIds[s._id] && s[stKey] === '失败'; }).length;
     state.lastBatchBad = bad;          /* v2.36：交给流水线对账（原来流水线看不到失败） */
+    /* v2.38：runPool 自己也记了一份失败数（state.poolFail，含「worker 吞错」与「重试到头」两条路径）。
+       它是**独立来源**，跟这里按数据源对账出来的 bad 不一致就说明有一边漏了——v2.35 那次「失败数恒为 0」
+       正是如此。留一条 warn 当探针，**显示用的数一律以数据源为准**（被叫停时剩余镜没跑到，天然不同，故排除）。 */
+    if(!left && state.poolFail !== bad) console.warn('批量失败计数不一致：runPool=' + state.poolFail + '，数据源对账=' + bad);
     var pend = multi ? state.shots.filter(function(s){ return Array.isArray(s._imgCand) && s._imgCand.length; }).length : 0;
     var tail = (bad ? '，失败 ' + bad + ' 条' + ((isAud || isLip) ? '（可点「重试失败」）' : '') : '') +
       (skipN ? '，跳过 ' + skipN + ' 个（' + skipTxt + '）' : '') +
@@ -6968,40 +7083,36 @@ function batch(kind){
       return batchRun(kind, list);
     });
 }
+/* v2.38：一键重试改成「按类型逐段走 batchRun」。
+   原来它只重跑图片 / 视频（配音与口型失败压根没有入口），而且自带的 runPool 调用绕过了
+   batchRun 的预检、剩余存档与失败对账——等于在项目里维护了第二套批量逻辑，两套迟早走岔。
+   现在四类统一交给 batchRun：预检、进度条、暂停/停止、失败对账全都与手动批量完全一致。 */
 function retryFailed(){
-  var list = failShots();                  /* v2.37：与按钮上的数字共用同一口径 */
-  if(!list.length){ toast('没有失败的镜头'); return; }
-  var est = costEstimateTxt(list, { img:1, vid:1 });
-  askConfirm((est || ('共 ' + list.length + ' 个失败镜头。')) + '确定一键重试？', '重试')
+  var groups = failGroups();
+  if(!groups.length){ toast('没有失败的镜头'); return; }
+  var n = failShots().length, items = failCount();
+  var est = costEstimateTxt(failShots(), { img:1, vid:1, audio:1, lip:1 });
+  askConfirm('失败：' + failBrief() + '（共 ' + items + ' 项、涉及 ' + n + ' 个镜头）。' +
+    (est ? est + '。' : '') + '确定按「分镜图 → 视频 → 配音 → 口型」逐类重跑？', '重试')
     .then(function(ok){
       if(!ok) return;
       state.stopBatch = false;
-      /* v2.35：原来这里没有进度条（不能暂停/停止），收尾也永远是一句「重试完成」——
-         genImage / genVideo 内部吞错只改状态，所以无论成功失败都是一个说法。
-         现在开批量条拿到暂停权，并按**当前状态**如实汇报仍有几个没成。 */
-      var ids = {};
-      list.forEach(function(s){ ids[s._id] = 1; });
-      var stFail = function(s){ return s['图片状态'] === '失败' || s['视频状态'] === '失败'; };
-      batchBarOpen('重试失败项（共 ' + list.length + ' 个）');
-      return runPool(list, function(s){
-        if(s['图片状态'] === '失败') return genImage(s._id);
-        if(s['视频状态'] === '失败' && s['图片URL']) return genVideo(s._id);
-        return Promise.resolve();
-      }, function(done, total, s){
-        var cur = s ? shotById(s._id) : null;
-        if(cur && stFail(cur)) batchBarFail();
-        batchBarStep(done, total);
-        batchBarMsg('正在重试第 ' + (cur ? cur['镜号'] : '?') + ' 镜');
-      }, { isFail: function(s){
-            var c = shotById(s._id); if(!c) return false;
-            if(c['图片状态'] === '失败') return true;
-            return c['视频状态'] === '失败' && !!c['图片URL'];   /* 没图的视频镜本来就跳过，不算失败 */
-          } }).then(function(left){
-        var bad = state.shots.filter(function(s){ return ids[s._id] && stFail(s); }).length;
-        batchBarClose(bad ? ('重试完成：仍有 ' + bad + ' 个失败') : ('重试完成：' + list.length + ' 个全部成功'), 'retry');
-        toast(bad ? ('重试完成，仍有 ' + bad + ' 个失败（可再点一次，或看镜卡里的错误信息）')
-                  : ('重试完成，' + list.length + ' 个全部成功'));
-        renderToday();
+      var i = 0, stopped = false;
+      function step(){
+        if(state.stopBatch || i >= groups.length) return Promise.resolve();
+        var g = groups[i++];
+        return batchRun(g.k, g.list).then(function(left){
+          if(left){ stopped = true; return null; }        /* 被暂停/叫停：别再往下开下一类 */
+          return step();
+        });
+      }
+      return step().then(function(){
+        /* 收尾按**数据源**对账（不是按跑批那一刻的引用）：剩下几项失败，问的就是 state.shots */
+        var leftN = failCount();
+        refreshAll(); renderToday();
+        if(stopped) toast('已停止重试：修好 ' + (items - leftN) + ' 项' + (leftN ? ('，仍有 ' + leftN + ' 项失败') : ''));
+        else if(leftN) toast('重试完成：修好 ' + (items - leftN) + ' 项，仍有 ' + leftN + ' 项失败（' + failBrief() + '，可再点一次或看镜卡里的错误信息）');
+        else toast('重试完成：' + items + ' 项全部成功');
       });
     });
 }
@@ -7756,16 +7867,18 @@ function batchAssetsQuiet(){
   var need1 = state.assets.filter(function(a){ return (a['状态'] || '未生成') === '未生成' || a['状态'] === '失败'; });
   if(!need1.length && !cfg.multiView) return Promise.resolve();
   if(!hasAgnesKey()) return Promise.resolve();
-  return need1.reduce(function(chain, a){
-    return chain.then(function(){ return genAsset(a._id, 1); });
-  }, Promise.resolve()).then(function(){
+  /* v2.40：同 batchAssets——两段 reduce 链换成逐条独立 catch，一条抛错不再中断整批设定图。
+     静默版不给同步条文案（流水线自己有步骤提示），也不往外抛（见下方 catch 的说明）。 */
+  return runSerial(need1.map(function(a){
+    return function(){ return genAsset(a._id, 1); };
+  })).then(function(){
     if(!cfg.multiView) return;
     return loadAssets().then(function(){
       var need2 = state.assets.filter(function(a){ return a['参考图URL'] && !a['参考图2']; });
       if(!need2.length) return;
-      return need2.reduce(function(c2, a){
-        return c2.then(function(){ return genAsset(a._id, 2); });
-      }, Promise.resolve());
+      return runSerial(need2.map(function(a){
+        return function(){ return genAsset(a._id, 2); };
+      }));
     });
   }).then(function(){ return loadAssets(); })
     .then(function(){
@@ -8144,6 +8257,20 @@ function bind(){
       case 'hfixall': fixHealthAuto(); break;                              /* v2.26：一键自动修复（时长/章节/单角色） */
       case 'bulkretry': retryBulkFail(); break;                            /* v2.29：重试没写成云端的批量改动 */
       case 'bulkfailclear': state.bulkFail = []; refreshAll(); toast('已忽略，改动仍在本机，切回云端数据源前不会同步'); break;
+      case 'failretry': retryFailed(); break;                              /* v2.38：四类失败逐类重跑 */
+      case 'failjump': {                                                   /* v2.38：跳到第一个失败镜 */
+        var fs = failShots();
+        if(!fs.length){ toast('当前没有失败的镜头'); break; }
+        locateShot(fs[0]);
+        break;
+      }
+      case 'failfilter': {                                                 /* v2.38：只看失败（四类） */
+        state.filter = 'fail';
+        if($('filterSel')) $('filterSel').value = 'fail';
+        setView('gen');
+        toast('已只筛出失败的镜头（图片 / 视频 / 配音 / 口型都算）');
+        break;
+      }
       case 'hfixdur': fixDurationsAuto(); break;                           /* v2.25：只补时长（自动修复子集） */
       case 'autopick': autoPickAllCand(); break;                           /* v2.25：候选图批量选最高分 */
       case 'filtercand': {                                                 /* v2.26：只筛出「有候选待挑」的镜 */
@@ -8167,6 +8294,8 @@ function bind(){
       case 'ins': insertShotAfter(id); break;
       case 'undo': undoShots(); break;
       case 'redo': redoShots(); break;                 /* v2.32 */
+      case 'undohist': toggleUndoHist(); break;        /* v2.39：展开 / 收起「跳到某一版」 */
+      case 'undoto': undoTo(num(t.getAttribute('data-i'))); break;   /* v2.39：一步跳到指定版本 */
       case 'serialstop': stopSerial(); break;          /* v2.32：批量跑到一半可以叫停 */
       case 'openshot': setView('gen'); state.expanded[id] = true; renderGenList();
         setTimeout(function(){ var el = document.querySelector('.gen[data-id="'+id+'"]'); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 80);
