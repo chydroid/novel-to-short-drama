@@ -1968,8 +1968,14 @@ function todoItems(){
   var out = [];
   state.shots.forEach(function(x){
     var is = x['图片状态'] || '未生成', vs = x['视频状态'] || '未生成';
-    if(is === '失败') out.push({ id:x._id, no:x['镜号'], kind:'img', text:'第 '+x['镜号']+' 镜 图片生成失败'+(x['错误信息'] ? '（'+x['错误信息']+'）' : '') });
-    else if(vs === '失败') out.push({ id:x._id, no:x['镜号'], kind:'vid', text:'第 '+x['镜号']+' 镜 视频生成失败'+(x['错误信息'] ? '（'+x['错误信息']+'）' : '') });
+    /* v2.41：失败一律先说「失败」，且四类都认——v2.38 把「失败」的口径扩到了图片 / 视频 / 配音 / 口型
+       （首页失败卡、顶部计数、筛选都跟着改了），这份待办列表没跟上：
+       · 配音失败会掉到最下面那条「台词还没配音」——把「跑失败了」说成「还没做」，
+         用户点一下「配音」以为正常排队，其实是失败要重试；
+       · 口型失败压根不出现在待办里，只能一镜一镜翻镜卡。
+       现在统一问 failKindOf()，文案也跟失败卡用同一份名字表。 */
+    var f = failKindOf(x);
+    if(f) out.push({ id:x._id, no:x['镜号'], kind:f.k, text:'第 '+x['镜号']+' 镜 '+f.name+'失败'+failWhyTxt(x) });
     else if(is === '未生成') out.push({ id:x._id, no:x['镜号'], kind:'img', text:'第 '+x['镜号']+' 镜 还没生成图片' });
     else if(vs === '未生成' && is === '已完成') out.push({ id:x._id, no:x['镜号'], kind:'vid', text:'第 '+x['镜号']+' 镜 图已就绪，待生成视频' });
     else if(String(x['台词旁白'] || '').trim() && (x['配音状态'] || '未生成') !== '已完成')
@@ -2231,7 +2237,7 @@ function renderToday(){
     return;
   }
   box.innerHTML = html + items.map(function(it){
-      var label = it.kind === 'img' ? '生图' : (it.kind === 'audio' ? '配音' : '生视频');
+      var label = batchLeftName(it.kind);   /* v2.41：跟批量取名表同一份，免得再加一类就用错文案 */
       return '<div class="todo"><span class="bad">第'+esc(it.no)+'镜</span><span class="txt">'+esc(it.text)+'</span>' +
         '<button class="btn sm" data-act="fixone" data-id="'+it.id+'" data-kind="'+it.kind+'">'+label+'</button></div>';
     }).join('');
@@ -2738,6 +2744,15 @@ function failGroups(){
     if(list.length) out.push({ k:f.k, name:f.name, key:f.key, list:list });
   });
   return out;
+}
+/* v2.41：这一镜「第一个失败的类型」（按 图 → 视频 → 配音 → 口型 取第一个）。
+   首页待办列表里一镜只写一行，所以要有先后；用同一份 FAIL_KINDS 保证与失败卡 / 筛选口径一致。 */
+function failKindOf(s){
+  if(!s) return null;
+  for(var i = 0; i < FAIL_KINDS.length; i++){
+    if(s[FAIL_KINDS[i].key] === '失败') return FAIL_KINDS[i];
+  }
+  return null;
 }
 /* 涉及失败的镜头（四类去重）——重试名单、按钮数字、顶部计数共用这一份口径 */
 function failShots(){
@@ -5783,6 +5798,16 @@ function loadSnaps(key){
     return null;
   }catch(e){ return null; }
 }
+/* v2.41：撤销 / 重做 / 跳版都是「先动栈、再拿快照去对齐云端」。可一旦对齐时写入有失败，
+   提示写着「可再点一次」，栈却已经被消费掉了——再点就是**静悄悄多退一步**，
+   用户以为在重试，实际退到了更早的版本上。
+   所以动栈之前先把两个栈拍个平铺副本（元素都是字符串，浅拷就够），失败时原样还回去。 */
+function undoStackSnap(){ return { u:(state.undo || []).slice(), r:(state.redo || []).slice() }; }
+function undoStackBackup(bak){
+  if(!bak) return;
+  state.undo = bak.u; state.redo = bak.r;
+  saveUndo(); saveRedo(); renderUndoBtns(); renderUndoHist();
+}
 function saveUndo(){ saveSnaps(undoLsKey(), state.undo); }
 function saveRedo(){ saveSnaps(redoLsKey(), state.redo); }
 function loadUndo(){ var a = loadSnaps(undoLsKey()); if(a) state.undo = a; }
@@ -5796,13 +5821,36 @@ function snapShots(){
 /* v2.39：撤销栈的「跳到某一版」——原来只能一步一步退（栈里最多 20 步），
    退过头了还得一版一版重做回去。快照本身只是整表的 JSON 字符串、没有标签，
    所以按「几步前 + 那一版的镜数」来认：镜数一变往往一眼就知道是「删之前 / 导入之前」。 */
+/* v2.41：「几步前 + 那时的镜数」分不清相邻两版——改字段 / 批量改 / 选最高分这类不动镜数的操作，
+   前后两版的镜数一模一样，面板上看就是两条长得一样的按钮。
+   这里再算一个「与之后那一版比，增删了几个镜」：id 差异是两份快照直接比出来的，
+   不需要给快照加时间戳，也就不用动存储格式（老快照照样能认）。 */
+function snapIdsOf(str){
+  try{ return (JSON.parse(str) || []).map(function(x){ return String(x && x._id); }); }
+  catch(e){ return []; }
+}
+function snapDiffTxt(here, next){
+  if(!here || !next) return '';
+  var h = {}, nx = {}, del = 0, add = 0;
+  here.forEach(function(k){ h[k] = 1; });
+  next.forEach(function(k){ nx[k] = 1; });
+  here.forEach(function(k){ if(!nx[k]) del++; });   /* 这一版有、之后没了 = 之后被删掉 */
+  next.forEach(function(k){ if(!h[k]) add++; });    /* 之后才出现 = 之后新增进来 */
+  if(del && add) return '之后删 ' + del + ' 增 ' + add;
+  if(del) return '之后删 ' + del + ' 镜';
+  if(add) return '之后增 ' + add + ' 镜';
+  return '之后只改内容';
+}
 function undoPickList(){
   var arr = state.undo || [];
+  var ids = arr.map(snapIdsOf);                 /* 一次解析够两个用途：镜数 + 差异 */
+  var cur = state.shots.map(function(s){ return String(s && s._id); });
   return arr.map(function(str, i){
-    var n = 0;
-    try{ n = (JSON.parse(str) || []).length; }catch(e){}
     var back = arr.length - i;                  /* 1 = 上一版 */
-    return { i:i, back:back, n:n, label:(back === 1 ? '上一版' : (back + ' 步前')) };
+    /* 这一版「之后」的那一版：最后一版的「之后」就是现在 */
+    var next = (i + 1 < ids.length) ? ids[i + 1] : cur;
+    return { i:i, back:back, n:ids[i].length, diff:snapDiffTxt(ids[i], next),
+             label:(back === 1 ? '上一版' : (back + ' 步前')) };
   }).reverse();                                 /* 从最近往最早列，最上面就是「上一版」 */
 }
 /* 回到第 idx 版。被跳过的那些版本**按顺序压进重做栈**（后压的先出），
@@ -5810,6 +5858,7 @@ function undoPickList(){
 function undoTo(idx){
   var arr = state.undo || [];
   if(idx < 0 || idx >= arr.length){ toast('这一版已经不在栈里了'); return; }
+  var bak = undoStackSnap();                    /* v2.41：失败要把塌掉的这几版还回去 */
   var back = arr.length - idx, k;
   var snap = JSON.parse(arr[idx]);
   state.redo = state.redo || [];
@@ -5823,7 +5872,8 @@ function undoTo(idx){
   restoreSnap(snap, '回到历史版本').then(function(rep){
     if(rep && rep.fail){
       setSync('off');
-      toast('回到历史版本未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新，可再点一次）');
+      undoStackBackup(bak);          /* v2.41：塌掉的那几版全还回栈里，重试才是同一个目标版本 */
+      toast('回到历史版本未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新；撤销栈已还原，可再点一次重试）');
     }else{
       toast('已回到' + (back === 1 ? '上一版' : (back + ' 步前')));
     }
@@ -5836,17 +5886,20 @@ function toggleUndoHist(){
 }
 function renderUndoHist(){
   var box = $('undoHistBox'); if(!box) return;
-  var list = undoPickList();
-  if(!state.undoHistOpen || !list.length){
+  /* v2.41：先看面板开没开再解析——refreshAll 每次都会调到这儿，
+     而 undoPickList 要把栈里几十万字符的快照全部 JSON.parse 一遍，关着还白算一遍。 */
+  if(!state.undoHistOpen || !(state.undo && state.undo.length)){
     box.hidden = true; box.innerHTML = '';
     return;
   }
+  var list = undoPickList();
   box.hidden = false;
   box.innerHTML = '<div class="hint" style="margin:0 0 8px">撤销栈里还有 ' + list.length + ' 版（每存一次「改动前」算一版）。' +
+    '每版后面那句是「相对之后那一版，增删了几个镜」——镜数一样的两版靠它区分。' +
     '点一下直接跳过去，中间的版本仍可用「重做」逐步走回来：</div>' +
     list.map(function(v){
       return '<button class="btn gh sm" data-act="undoto" data-i="' + v.i + '" style="margin:0 6px 6px 0">' +
-        esc(v.label) + ' · 那时 ' + v.n + ' 镜</button>';
+        esc(v.label) + ' · 那时 ' + v.n + ' 镜' + (v.diff ? ' · ' + esc(v.diff) : '') + '</button>';
     }).join('');
 }
 function pushUndo(){
@@ -5899,6 +5952,7 @@ function restoreSnap(snap, label){
 }
 function undoShots(){
   if(!state.undo || !state.undo.length){ toast('没有可撤销的操作'); return; }
+  var bak = undoStackSnap();                     /* v2.41：失败要把这一步还回栈里 */
   var snap = JSON.parse(state.undo.pop());
   /* v2.32：撤销前把「现状」压进重做栈，撤销就不再是单程票 */
   state.redo = state.redo || [];
@@ -5908,7 +5962,8 @@ function undoShots(){
   restoreSnap(snap, '撤销').then(function(rep){
     if(rep && rep.fail){
       setSync('off');
-      toast('撤销未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新，可再点一次撤销）');
+      undoStackBackup(bak);          /* v2.41：这一步仍在栈顶，所以「再点一次」说的是同一件事 */
+      toast('撤销未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（已按云端实际状态刷新；这一步退回撤销栈了，可再点一次重试）');
     }else{
       toast('已撤销上一步操作');
     }
@@ -5916,6 +5971,7 @@ function undoShots(){
 }
 function redoShots(){
   if(!state.redo || !state.redo.length){ toast('没有可重做的操作'); return; }
+  var bak = undoStackSnap();                     /* v2.41：同撤销——失败就把这一步还回重做栈 */
   var snap = JSON.parse(state.redo.pop());
   state.undo = state.undo || [];
   state.undo.push(snapShots());                  /* 重做本身也占用一格撤销 */
@@ -5924,7 +5980,8 @@ function redoShots(){
   restoreSnap(snap, '重做').then(function(rep){
     if(rep && rep.fail){
       setSync('off');
-      toast('重做未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（可再点一次重做）');
+      undoStackBackup(bak);
+      toast('重做未完成：' + rep.ok + ' 项成功、' + rep.fail + ' 项失败（这一步退回重做栈了，可再点一次重做）');
     }else{
       toast('已重做');
     }
@@ -8199,7 +8256,13 @@ function bind(){
       case 'fixone': {
         var kind = t.getAttribute('data-kind');
         setView('gen'); state.expanded[id] = true;
-        setTimeout(function(){ if(kind === 'img') genImage(id); else if(kind === 'audio') genAudio(id); else genVideo(id); }, 60);
+        /* v2.41：补上口型——待办列表现在会列口型失败，这里不认的话点了按钮会静默走成「生视频」 */
+        setTimeout(function(){
+          if(kind === 'img') genImage(id);
+          else if(kind === 'audio') genAudio(id);
+          else if(kind === 'lip') genLipsync(id);
+          else genVideo(id);
+        }, 60);
         break;
       }
       /* v2.17：首页「去续跑」——切到对应筛选、展开并滚动到第一个剩余镜头 */
