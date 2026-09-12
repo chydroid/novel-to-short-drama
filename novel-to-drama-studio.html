@@ -234,6 +234,12 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
 .dlgmask.on{opacity:1;pointer-events:auto}
 .dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-46%) scale(.96);width:min(400px,88vw);background:#fff;border-radius:16px;z-index:91;opacity:0;pointer-events:none;transition:.18s;box-shadow:0 18px 50px rgba(20,22,40,.24);overflow:hidden}
 .dialog.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+/* v2.42：确认/输入弹窗（#dialog/#dlgMask）必须盖在所有功能面板之上。
+   各面板（提示词/体检/导出/组合/台词/预设）与本弹窗共用 .dialog/.dlgmask 类、同为 z-index 91/90，
+   而 #dialog 在 DOM 中排在最前 → 面板打开时会把确认弹窗整块盖住（点「一键打包」等毫无反应）。
+   这里用 ID 选择器（优先级高于类）把弹窗单独抬高，仍低于 toast(95)/进度条(96)。 */
+#dlgMask{z-index:92}
+#dialog{z-index:93}
 .dlg-t{font-size:16px;font-weight:700;padding:18px 18px 0}
 .dlg-m{padding:10px 18px 18px;font-size:14px;color:var(--tx2);line-height:1.6;white-space:pre-wrap;word-break:break-word}
 .dlg-f{display:flex;gap:10px;padding:0 18px 18px}
@@ -8654,6 +8660,9 @@ function bind(){
   $('btnSplit').addEventListener('click', splitShots);
   $('btnAddShot').addEventListener('click', function(){
     var no = state.shots.length ? (num(state.shots[state.shots.length-1]['镜号']) + 1) : 1;
+    /* v2.42：手动加一镜也必须入撤销栈——复制/插入/删除都已入栈，唯独这里漏了，
+       导致「加一镜 → 撤销」会跳过这次新增、直接退到更早的快照（静默丢数据）。 */
+    pushUndo();
     addShotObj({ 镜号:no, 画面描述:'', 英文提示词:'', 运镜:'', 台词旁白:'', 时长秒:num($('shotSec').value)||5,
       图片状态:'未生成', 视频状态:'未生成', 图片URL:'', 视频URL:'', 任务ID:'', 错误信息:'', 更新时间:nowStr() });
   });

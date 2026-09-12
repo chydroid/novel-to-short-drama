@@ -6,6 +6,8 @@ _*.js
 _*.sh
 _*.html
 _*.json
+# 临时验证的输出目录（E2E 产出的 xlsx/zip/json 样例）
+_*/
 
 # 密钥与本地配置（API Key 均在页面设置里填写，不入库）
 .env
