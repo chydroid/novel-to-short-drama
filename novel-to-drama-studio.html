@@ -4657,7 +4657,7 @@ function buildSrtText(scope){   /* v2.17：可选 scope 只导出指定范围；
 }
 function exportSrt(){
   if(!state.shots.length){ toast('还没有分镜'); return; }
-  var r = buildSrtText();
+  var r = buildSrtText(exportScopeShots());
   if(!r){ toast('没有任何台词，无法生成字幕'); return; }
   download('分镜字幕.srt', r.text, 'text/plain;charset=utf-8');
   toast('字幕已导出，共 ' + r.n + ' 条' + (r.cueTotal > r.n ? '（按逐句 cue 拆分）' : '') +
@@ -8081,7 +8081,7 @@ function buildMdText(scope){
   return lines.join('\n');
 }
 function exportMd(){
-  download('分镜脚本_' + nowStr().replace(/[: ]/g,'-') + '.md', buildMdText(), 'text/markdown');
+  download('分镜脚本_' + nowStr().replace(/[: ]/g,'-') + '.md', buildMdText(exportScopeShots()), 'text/markdown');
   toast('已导出分镜脚本');
 }
 function buildCsvRows(scope){
@@ -8113,7 +8113,7 @@ function buildXlsxSheets(scope){
   return sheets;
 }
 function exportCsv(){
-  download('视频清单_' + nowStr().replace(/[: ]/g,'-') + '.csv', '\ufeff' + buildCsvText(), 'text/csv;charset=utf-8');
+  download('视频清单_' + nowStr().replace(/[: ]/g,'-') + '.csv', '\ufeff' + buildCsvText(exportScopeShots()), 'text/csv;charset=utf-8');
   toast('已导出视频清单');
 }
 function importJson(file){
