@@ -955,6 +955,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div class="tools" style="margin-bottom:16px">
       <button class="btn" id="btnExpRender">一键合成包（FFmpeg 脚本，出成片）</button>
       <button class="btn gh" id="btnExpFcp">导出剪辑时间线 .fcpxml</button>
+      <button class="btn" id="btnExpPreview" title="不导出也能直接在浏览器里看一遍成片效果：图片轮播（带缓慢推近运镜）+ 字幕 + 配音，按导出范围与状态筛选播放">▶ 成片预览（浏览器内播放）</button>
     </div>
 
     <div class="sec-t">② 字幕与音频</div>
@@ -991,6 +992,51 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   </div>
   <div class="dlg-f">
     <button class="btn gh" id="expClose">关闭</button>
+  </div>
+</div>
+
+<!-- v2.44：浏览器内成片预览播放器（不导出即可在网页里看一遍成片效果）。
+     复用导出中心的「打包范围」+「状态筛选」决定播放哪些镜；音轨复用 buildTrackWav、字幕复用 buildSrtText。
+     视频元素静音播放，声音统一由合成整轨（Web Audio）输出，避免与视频自带音轨叠加。 -->
+<div class="dlgmask" id="pvMask"></div>
+<div id="pvBox" role="dialog" aria-label="成片预览">
+  <style>
+    #pvBox{position:fixed;inset:0;z-index:98;display:flex;flex-direction:column;background:#0b0c10;opacity:0;pointer-events:none;transition:opacity .18s}
+    #pvBox.on{opacity:1;pointer-events:auto}
+    #pvBox #pvStage{position:relative;flex:1 1 auto;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
+    #pvBox #pvVid,#pvBox #pvImg{max-width:100%;max-height:100%;display:none;background:#000}
+    #pvBox #pvImg.kb{animation:pvkb 7s ease-in-out infinite alternate;transform-origin:center}
+    #pvBox #pvNoMedia{display:none;color:#8a90a6;text-align:center;font-size:16px;padding:0 24px}
+    #pvBox #pvSub{position:absolute;left:0;right:0;bottom:5%;text-align:center;padding:0 8%;line-height:1.35;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.7);font-family:'Microsoft YaHei',sans-serif}
+    #pvBox #pvMeta{position:absolute;left:12px;top:10px;color:#fff;background:rgba(0,0,0,.45);padding:3px 9px;border-radius:6px;font-size:12px;pointer-events:none}
+    #pvBox #pvSeek{flex:1;accent-color:#5B5BD6;height:4px}
+    #pvBox .bar{display:flex;align-items:center;gap:10px;padding:10px 16px;color:#fff;background:#15161c;flex:0 0 auto}
+    #pvBox .top{flex:0 0 auto}
+    @keyframes pvkb{from{transform:scale(1)}to{transform:scale(1.08)}}
+    #pvBox.kbimg #pvImg{display:block}
+    #pvBox.showvid #pvVid{display:block}
+    #pvBox.shownom #pvNoMedia{display:block}
+  </style>
+  <div class="bar top">
+    <b style="font-size:15px">成片预览</b>
+    <span id="pvScope" style="color:#aab;font-size:13px;margin-left:6px"></span>
+    <span style="flex:1"></span>
+    <button class="btn gh sm" id="pvClose">关闭 ✕</button>
+  </div>
+  <div id="pvStage">
+    <video id="pvVid" playsinline muted></video>
+    <img id="pvImg" alt="">
+    <div id="pvNoMedia"></div>
+    <div id="pvSub"></div>
+    <div id="pvMeta"></div>
+  </div>
+  <div class="bar">
+    <button class="btn gh sm" id="pvPrev">⏮ 上一镜</button>
+    <button class="btn sm" id="pvPlay">▶ 播放</button>
+    <button class="btn gh sm" id="pvNext">下一镜 ⏭</button>
+    <span id="pvTime" style="font-variant-numeric:tabular-nums;font-size:13px;min-width:104px;text-align:center">00:00 / 00:00</span>
+    <input id="pvSeek" type="range" min="0" max="1000" value="0">
+    <button class="btn gh sm" id="pvFull">⛶ 全屏</button>
   </div>
 </div>
 
@@ -4662,6 +4708,200 @@ function exportSrt(){
   download('分镜字幕.srt', r.text, 'text/plain;charset=utf-8');
   toast('字幕已导出，共 ' + r.n + ' 条' + (r.cueTotal > r.n ? '（按逐句 cue 拆分）' : '') +
     (r.alignN ? '，其中 ' + r.alignN + ' 镜按配音真实句长对齐' : ''));
+}
+/* ================= v2.44：浏览器内成片预览播放器 =================
+   不导出即可在网页里看一遍成片：图片轮播（带 Ken Burns 缓慢推近）+ 字幕 + 配音整轨。
+   播放范围与「导出中心」的「打包范围 + 状态筛选」完全一致（viewShots(exportScopeShots(),...)），
+   保证「预览什么 = 导出什么」；声音复用 buildTrackWav 合成的整轨（含 BGM），字幕复用 buildSrtText 的时间轴。 */
+function pvFmt(sec){
+  sec = Math.max(0, Math.floor(sec || 0));
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+}
+/* 把 buildSrtText 产出的标准 SRT 文本解析成 {t0,t1,text} 片段（与导出字幕同一套时间轴，不会算错） */
+function parseSrt(txt){
+  if(!txt) return [];
+  var out = [], blocks = String(txt).replace(/\r/g, '').split(/\n\n+/);
+  blocks.forEach(function(b){
+    var lines = b.split('\n');
+    if(lines.length < 2) return;
+    var m = lines[1].match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/);
+    if(!m) return;
+    var t0 = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + (+m[4]) / 1000;
+    var t1 = (+m[5]) * 3600 + (+m[6]) * 60 + (+m[7]) + (+m[8]) / 1000;
+    var text = lines.slice(2).join('\n').trim();
+    if(text) out.push({ t0:t0, t1:t1, text:text });
+  });
+  return out;
+}
+/* 字幕样式：与 render.sh 的 force_style 同一套（字体/字号/颜色/描边/边距/加粗），按舞台高度等比缩放 */
+function pvSubStyle(){
+  var stage = $('pvStage');
+  var h = stage ? (stage.clientHeight || 600) : 600;
+  var size = Math.max(8, Math.min(48, num(cfg.subSize) || 14));
+  var margin = Math.max(0, num(cfg.subMargin) || 36);
+  var el = $('pvSub'); if(!el) return;
+  el.style.fontFamily = (cfg.subFont || 'Microsoft YaHei') + ', sans-serif';
+  el.style.fontSize = Math.round(h * size / 540) + 'px';
+  el.style.color = '#' + (cfg.subColor || 'FFFFFF').replace(/^#/, '');
+  el.style.fontWeight = cfg.subBold ? 'bold' : 'normal';
+  el.style.bottom = Math.round(h * margin / 540) + 'px';
+  var ow = Math.max(0, Math.min(6, num(cfg.subOutline) || 1));
+  var oc = '#' + (cfg.subOutlineColor || '000000').replace(/^#/, '');
+  el.style.webkitTextStroke = ow + 'px ' + oc;
+  el.style.textStroke = ow + 'px ' + oc;
+  el.style.background = cfg.subBg ? 'rgba(0,0,0,.45)' : 'transparent';
+  el.style.padding = cfg.subBg ? '2px 10px' : '0';
+  el.style.borderRadius = cfg.subBg ? '6px' : '0';
+}
+function pvSubAt(subs, e){
+  for(var i = 0; i < subs.length; i++){ if(e >= subs[i].t0 && e < subs[i].t1) return subs[i].text; }
+  return '';
+}
+var PV = null;   /* 播放器运行态 */
+function openPreview(){
+  var list = viewShots(exportScopeShots(), cfg.bundleStatus || 'all', '');
+  if(!list.length){ toast('当前范围没有可预览的镜头'); return; }
+  var seq = list.map(function(s){
+    return {
+      s:s,
+      vid:String(s['口型视频URL'] || s['视频URL'] || ''),
+      img:String(s['图片URL'] || ''),
+      dur:shotDur(s),
+      no:num(s['镜号']),
+      ch:String(s['章节'] || '')
+    };
+  });
+  var acc = 0;
+  seq.forEach(function(x){ x.t0 = acc; acc += x.dur; x.t1 = acc; });
+  var srt = buildSrtText(list);
+  var subs = parseSrt(srt && srt.text);
+  var stLabel = (cfg.bundleStatus && cfg.bundleStatus !== 'all')
+    ? (typeof FILTER_NAMES !== 'undefined' ? (FILTER_NAMES[cfg.bundleStatus] || cfg.bundleStatus) : cfg.bundleStatus)
+    : '';
+  PV = { seq:seq, subs:subs, total:acc, playing:false, pausedAt:0, startWall:0, raf:null, src:null, shownId:null, buf:null,
+         title:(scopeLabel() || '全部镜头') + (stLabel ? ' · ' + stLabel : '') };
+  $('pvScope').textContent = '范围：' + PV.title + '（' + seq.length + ' 镜 · ' + pvFmt(acc) + '）';
+  pvSubStyle();
+  $('pvMask').classList.add('on');
+  $('pvBox').classList.add('on');
+  renderPvShot(seq[0], true);
+  updatePvUI(0);
+  /* 异步合成整轨（含 BGM）作声音；无声/失败也不影响画面与字幕 */
+  try{
+    buildTrackWav(list).then(function(r){ if(PV && r && r.mix) PV.buf = r.mix; }).catch(function(){});
+  }catch(e){}
+}
+function pvCurAt(e){
+  var seq = PV.seq;
+  for(var i = 0; i < seq.length; i++){ if(e < seq[i].t1) return seq[i]; }
+  return seq[seq.length - 1];
+}
+function renderPvShot(x, force){
+  if(!x || !PV) return;
+  if(!force && PV.shownId === x.s._id) return;
+  PV.shownId = x.s._id;
+  var box = $('pvBox'), vid = $('pvVid'), img = $('pvImg'), nom = $('pvNoMedia');
+  box.classList.remove('showvid', 'kbimg', 'shownom');
+  if(x.vid){
+    vid.src = x.vid; try{ vid.currentTime = 0; }catch(_){}
+    box.classList.add('showvid');
+    try{ vid.play().catch(function(){}); }catch(_){}
+  } else if(x.img){
+    img.src = x.img; box.classList.add('kbimg');
+  } else {
+    nom.textContent = '第 ' + x.no + ' 镜' + (x.ch ? '（' + x.ch + '）' : '') + '\n（本镜还没有图或视频）';
+    box.classList.add('shownom');
+  }
+  $('pvMeta').textContent = '第 ' + x.no + ' 镜' + (x.ch ? ' · ' + x.ch : '');
+}
+function updatePvUI(e){
+  if(!PV) return;
+  renderPvShot(pvCurAt(e));
+  $('pvSub').textContent = pvSubAt(PV.subs, e);
+  $('pvTime').textContent = pvFmt(e) + ' / ' + pvFmt(PV.total);
+  $('pvSeek').value = PV.total ? Math.round(e / PV.total * 1000) : 0;
+  $('pvPlay').textContent = PV.playing ? '⏸ 暂停' : '▶ 播放';
+}
+function pvTick(){
+  if(!PV || !PV.playing) return;
+  var e = (performance.now() - PV.startWall) / 1000 + PV.pausedAt;
+  if(e >= PV.total){ pvStop(true); return; }
+  updatePvUI(e);
+  PV.raf = requestAnimationFrame(pvTick);
+}
+function pvAudioStart(){
+  if(!PV || !PV.buf) return;
+  try{
+    var ctx = audioCtx(); if(!ctx) return;
+    if(ctx.state === 'suspended'){ ctx.resume().catch(function(){}); }
+    var n = ctx.createBufferSource(); n.buffer = PV.buf; n.connect(ctx.destination);
+    n.start(0, Math.min(PV.pausedAt, Math.max(0, PV.buf.duration - 0.02)));
+    PV.src = n;
+  }catch(e){ PV.src = null; }
+}
+function pvAudioStop(){
+  if(PV && PV.src){ try{ PV.src.stop(); PV.src.disconnect(); }catch(_){} PV.src = null; }
+}
+function pvPlay(){
+  if(!PV || PV.playing) return;
+  PV.playing = true; PV.startWall = performance.now();
+  pvAudioStart(); updatePvUI(PV.pausedAt);
+  PV.raf = requestAnimationFrame(pvTick);
+}
+function pvPause(){
+  if(!PV || !PV.playing) return;
+  PV.pausedAt = (performance.now() - PV.startWall) / 1000 + PV.pausedAt;
+  PV.playing = false; pvAudioStop();
+  if(PV.raf) cancelAnimationFrame(PV.raf);
+  updatePvUI(PV.pausedAt);
+}
+function pvToggle(){ if(PV) PV.playing ? pvPause() : pvPlay(); }
+function pvStop(reset){
+  if(!PV) return;
+  PV.playing = false; pvAudioStop();
+  if(PV.raf) cancelAnimationFrame(PV.raf);
+  if(reset) PV.pausedAt = 0;
+  updatePvUI(PV.pausedAt);
+}
+function pvSeekTo(t){
+  if(!PV) return;
+  t = Math.max(0, Math.min(PV.total, t));
+  var was = PV.playing;
+  pvAudioStop(); PV.pausedAt = t; PV.shownId = null;
+  if(was){ PV.startWall = performance.now(); pvAudioStart(); }
+  updatePvUI(t);
+}
+function pvGotoShot(dir){
+  if(!PV) return;
+  var e = PV.pausedAt + (PV.playing ? (performance.now() - PV.startWall) / 1000 : 0);
+  var cur = pvCurAt(e), idx = PV.seq.indexOf(cur);
+  var ni = Math.max(0, Math.min(PV.seq.length - 1, idx + dir));
+  pvSeekTo(PV.seq[ni].t0 + 0.01);
+}
+function closePreview(){
+  if(!PV) return;
+  pvStop(false); PV = null;
+  $('pvMask').classList.remove('on');
+  $('pvBox').classList.remove('on');
+  var vid = $('pvVid'); if(vid){ try{ vid.pause(); }catch(_){} try{ vid.removeAttribute('src'); vid.load(); }catch(_){} }
+}
+function wirePreview(){
+  var b = $('btnExpPreview'); if(b) b.addEventListener('click', function(){ closeExportPanel(); openPreview(); });
+  var play = $('pvPlay'); if(play) play.addEventListener('click', pvToggle);
+  var prev = $('pvPrev'); if(prev) prev.addEventListener('click', function(){ pvGotoShot(-1); });
+  var next = $('pvNext'); if(next) next.addEventListener('click', function(){ pvGotoShot(1); });
+  var seek = $('pvSeek'); if(seek) seek.addEventListener('input', function(){ if(PV) pvSeekTo(num(this.value) / 1000 * PV.total); });
+  var full = $('pvFull'); if(full) full.addEventListener('click', function(){ var st = $('pvStage'); if(st && st.requestFullscreen) st.requestFullscreen().catch(function(){}); });
+  var close = $('pvClose'); if(close) close.addEventListener('click', closePreview);
+  var mask = $('pvMask'); if(mask) mask.addEventListener('click', closePreview);
+  document.addEventListener('keydown', function(e){
+    if(!PV) return;
+    if(e.code === 'Space'){ e.preventDefault(); pvToggle(); }
+    else if(e.key === 'Escape'){ closePreview(); }
+    else if(e.key === 'ArrowLeft'){ pvGotoShot(-1); }
+    else if(e.key === 'ArrowRight'){ pvGotoShot(1); }
+  });
 }
 function encodeWav(buffer){
   var sr = buffer.sampleRate, len = buffer.length, bytes = 44 + len*2;
@@ -8616,6 +8856,8 @@ function bind(){
     renderRangePresets();   /* v2.20：把存过的镜号预设列出来 */
   }
   if($('btnExpRender')) $('btnExpRender').addEventListener('click', exportRenderPack);
+  /* v2.44：成片预览入口与播放器控件一次性绑定 */
+  wirePreview();
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
   if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
     state.stopBatch = true; toast('已请求停止，正在跑的这几个会跑完');
