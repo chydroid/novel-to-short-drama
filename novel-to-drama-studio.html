@@ -1690,24 +1690,27 @@ function patchShot(id, obj){
    v2.29 修健壮性问题：原先云端是「一条 reject 整条链断掉」——后面的条目全不推、内存却已改，
    而本地又只在无云时落盘，于是刷新页面改动全丢、用户还不知道。现在每条独立 catch：
    失败项收进 state.bulkFail（首页出重试卡），其余继续推；且**先落一次本地**做兜底。 */
+/* v2.45：改返回 Promise<写入镜数>——原来同步返回 n，导致「先排镜号再插复制/插入空镜」这种
+   有顺序依赖的结构性操作没法等云写完成就 addShotObj，loadShots 会读到旧镜号造成重复。
+   现在调用方可以 `bulkPatch(ups).then(...)` 等重排落云后再插镜。无更新/无云时返回 Promise.resolve(0/n)。 */
 function bulkPatch(updates){
-  if(!updates || !updates.length) return 0;
+  if(!updates || !updates.length) return Promise.resolve(0);
   var byId = {}, order = [];
   updates.forEach(function(u){
     if(!u || !u.id || !u.obj) return;
     if(!byId[u.id]){ byId[u.id] = {}; order.push(u.id); }
     Object.assign(byId[u.id], u.obj);   /* 同镜多条更新合并，后写覆盖前写 */
   });
-  if(!order.length) return 0;
+  if(!order.length) return Promise.resolve(0);
   var hit = {}, n = 0;
   state.shots = state.shots.map(function(s){
     if(!byId[s._id]) return s;
     hit[s._id] = 1; n++;
     return Object.assign({}, s, byId[s._id]);
   });
-  if(!n) return 0;                      /* 目标镜全被删了：既不落盘也不推云 */
+  if(!n) return Promise.resolve(0);     /* 目标镜全被删了：既不落盘也不推云 */
   localSave(state.shots);               /* v2.29：先落本地兜底，云写失败也不至于「改了没存」 */
-  if(!hasCloud()){ refreshAll(); return n; }
+  if(!hasCloud()){ refreshAll(); return Promise.resolve(n); }
   setSync('busy');
   var fails = [], chain = Promise.resolve();
   order.forEach(function(id){
@@ -1717,7 +1720,7 @@ function bulkPatch(updates){
         .catch(function(e){ console.error(e); fails.push({ id: id, obj: byId[id], err: e }); });
     });
   });
-  chain.then(function(){
+  return chain.then(function(){
     state.bulkFail = fails.slice();     /* 留给首页「重试」入口 */
     if(fails.length){
       setSync('off');
@@ -1726,8 +1729,8 @@ function bulkPatch(updates){
       setSync('ok');
     }
     refreshAll();
+    return n;
   });
-  return n;
 }
 /* v2.30：串行执行一组云端写操作——每条**独立 catch**，失败不中断，跑完给出成功/失败数。
    与 bulkPatch 是同一类问题的两面：bulkPatch 管「改」，这里管「增 / 删 / 撤销」这类结构性操作。
@@ -1772,9 +1775,11 @@ function retryBulkFail(){
   var f = state.bulkFail || [];
   if(!f.length){ toast('没有待重试的云端写入'); return; }
   state.bulkFail = [];
-  var n = bulkPatch(f.map(function(x){ return { id: x.id, obj: x.obj }; }));
-  if(n) toast('正在重试 ' + n + ' 条云端写入…');
-  else { toast('这些镜头已不在表中，无需重试'); refreshAll(); }
+  /* v2.45：bulkPatch 返回 Promise，按写入镜数给提示 */
+  bulkPatch(f.map(function(x){ return { id: x.id, obj: x.obj }; })).then(function(n){
+    if(n) toast('正在重试 ' + n + ' 条云端写入…');
+    else { toast('这些镜头已不在表中，无需重试'); refreshAll(); }
+  });
 }
 function addShotObj(obj){
   if(!hasCloud()){
@@ -6246,30 +6251,11 @@ function moveShot(id, dir){
   pushUndo();
   var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
   renumber(arr);
-  var p = db();
-  /* v2.33：改 runSerial——原来是 `arr.reduce(chain...)`（一条失败整链断，后面的镜号全不重排），
-     而 catch 里只 `console.error`，收尾照样 toast「已移动，镜号已重排」：
-     镜号其实已经乱了却报成功，用户要过很久才会发现顺序不对。 */
-  var rep = null;
-  runSerial(arr.map(function(s){
-    return function(){
-      state.shots = state.shots.map(function(x){ return x._id === s._id ? Object.assign({}, x, { 镜号: s['镜号'] }) : x; });
-      return p ? p.updateRecord({ databaseId: DB_ID, recordId: s._id, properties: toProps({ 镜号: s['镜号'] }) }) : null;
-    };
-  }), { label: '重排镜号' }).then(function(r){
-    rep = r;
-    if(!hasCloud()) localSave(state.shots);
-    /* 只有真失败才重新拉云端（成功的常见路径不多花一次请求） */
-    if(rep.fail) return loadShots();
-  }).then(function(){
-    refreshAll();
-    if(rep && rep.fail){
-      setSync('off');
-      toast('移动未完成：镜号重排 ' + rep.ok + ' 条成功、' + rep.fail + ' 条失败（已按云端实际状态刷新，可再移一次）');
-    }else{
-      toast('已移动，镜号已重排');
-    }
-  });
+  /* v2.45：镜号重排改 bulkPatch——原来 runSerial 在循环里先改内存再写云，部分失败会留下镜号不一致
+     却照样报「已移动」；bulkPatch 一次性合并内存 + 串行写云 + 失败进 bulkFail（首页可重试），内存始终一致。 */
+  var ups = arr.map(function(s){ return { id: s._id, obj: { 镜号: s['镜号'], 更新时间: nowStr() } }; });
+  bulkPatch(ups);
+  toast('已移动，镜号已重排');
 }
 function dupShot(id){
   var s = shotById(id); if(!s) return;
@@ -6281,25 +6267,12 @@ function dupShot(id){
   o['图片状态'] = '未生成'; o['视频状态'] = '未生成'; o['配音状态'] = '未生成';
   o['图片URL'] = ''; o['视频URL'] = ''; o['音频URL'] = ''; o['任务ID'] = ''; o['满意锁定'] = '否';
   o['更新时间'] = nowStr();
-  /* v2.33：改 runSerial 串行 + 失败可见——原来是 `Promise.all` 配一个空 catch：
-     ① 几十条 updateRecord 并发轰接口（容易撞限流，且顺序无保证）；
-     ② catch 是空的，重排失败**完全静默**，照样提示「已复制该镜」，结果镜号直接重复。
-     现在重排有一条失败就**取消复制**：镜号乱了比少一镜更难收拾。 */
-  var pend = arr.filter(function(x){ return num(x['镜号']) >= o['镜号']; })
-    .map(function(x){ return { id: x._id, no: num(x['镜号']) + 1 }; });
-  runSerial(pend.map(function(it){
-    return function(){
-      state.shots = state.shots.map(function(y){ return y._id === it.id ? Object.assign({}, y, { 镜号: it.no }) : y; });
-      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: it.id, properties: toProps({ 镜号: it.no }) }) : null;
-    };
-  }), { label: '重排镜号' }).then(function(r){
-    if(r.fail){
-      setSync('off');
-      toast('镜号重排失败 ' + r.fail + ' 条，已取消复制（镜号重复更难收拾，请刷新后重试）');
-      return;
-    }
+  /* v2.45：重排镜号改 bulkPatch——先等重排云写全部完成，再插入复制镜，
+     避免 addShotObj 的 loadShots 在重排写云前读到旧镜号造成镜号重复。 */
+  var ups = arr.filter(function(x){ return num(x['镜号']) >= o['镜号']; })
+    .map(function(x){ return { id: x._id, obj: { 镜号: num(x['镜号']) + 1, 更新时间: nowStr() } }; });
+  bulkPatch(ups).then(function(){
     addShotObj(o);
-    if(!hasCloud()) localSave(state.shots);
     toast('已复制该镜（生成状态已重置）');
   });
 }
@@ -6309,26 +6282,14 @@ function insertShotAfter(id){
   pushUndo();
   renumber(arr);
   var no = idx >= 0 ? idx + 2 : arr.length + 1;
-  /* v2.33：同 dupShot——原来是「并发写 + 空 catch」，重排失败完全静默；
-     现在串行 + 失败可见，重排没成功就不插这一镜（否则镜号重复）。 */
-  var pend = arr.filter(function(x){ return num(x['镜号']) >= no; })
-    .map(function(x){ return { id: x._id, no: num(x['镜号']) + 1 }; });
-  runSerial(pend.map(function(it){
-    return function(){
-      state.shots = state.shots.map(function(y){ return y._id === it.id ? Object.assign({}, y, { 镜号: it.no }) : y; });
-      return db() ? db().updateRecord({ databaseId: DB_ID, recordId: it.id, properties: toProps({ 镜号: it.no }) }) : null;
-    };
-  }), { label: '重排镜号' }).then(function(r){
-    if(r.fail){
-      setSync('off');
-      toast('镜号重排失败 ' + r.fail + ' 条，已取消插入（镜号重复更难收拾，请刷新后重试）');
-      return;
-    }
+  /* v2.45：重排镜号改 bulkPatch，逻辑同 dupShot——先等重排云写完成，再插入空镜，避免镜号重复。 */
+  var ups = arr.filter(function(x){ return num(x['镜号']) >= no; })
+    .map(function(x){ return { id: x._id, obj: { 镜号: num(x['镜号']) + 1, 更新时间: nowStr() } }; });
+  bulkPatch(ups).then(function(){
     addShotObj({ 镜号:no, 画面描述:'', 英文提示词:'', 运镜:'', 台词旁白:'', 时长秒:num($('shotSec') ? $('shotSec').value : 0) || 5,
       出场角色:'', 场景:'', 景别:'中景', 说话角色:'', 角色情绪:'',
       图片状态:'未生成', 视频状态:'未生成', 配音状态:'未生成', 满意锁定:'否',
       口型风险:'低', 口型状态:'不需要', 图片URL:'', 视频URL:'', 音频URL:'', 音频时长:0, 任务ID:'', 错误信息:'', 更新时间:nowStr() });
-    if(!hasCloud()) localSave(state.shots);
     toast('已在该镜后插入空镜');
   });
 }
@@ -9061,10 +9022,11 @@ function resetStuck(){
     if(a['状态'] === '生成中') ajobs.push({ id:a._id, o:{ 状态:'未生成', 更新时间:nowStr() } });
   });
   /* v2.29：镜头侧走 bulkPatch（一次落盘一次刷新），设定图侧通常只有几条，保持逐条 */
-  var n = jobs.length ? bulkPatch(jobs) : 0;
+  /* v2.45：bulkPatch 返回 Promise，用 .then 取写入镜数决定资产侧是否额外刷新 */
+  var n = jobs.length ? bulkPatch(jobs) : Promise.resolve(0);
   /* v2.31：设定卡侧也走 runSerial（原来一条失败整链断，后面的卡一直卡在「生成中」） */
   runSerial(ajobs.map(function(j){ return function(){ return patchAsset(j.id, j.o); }; }))
-    .then(function(){ if(ajobs.length && !n) refreshAll(); });
+    .then(function(){ n.then(function(cnt){ if(ajobs.length && !cnt) refreshAll(); }); });
 }
 function init(){
   loadCfg();
