@@ -219,6 +219,13 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
 .dw-bd{flex:1;overflow-y:auto;padding:16px}
 .dw-ft{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:10px}
 .sec-t{font-size:12.5px;font-weight:800;color:var(--main);letter-spacing:.4px;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px dashed var(--line)}
+/* v2.46：字幕样式实时预览框——9:16 手机画面，字幕渲染与 pvSubStyle 同源 */
+.sub-prev-wrap{margin-top:4px}
+.sub-prev-box{position:relative;width:300px;max-width:100%;aspect-ratio:9/16;background:linear-gradient(155deg,#1b2233 0%,#2b3550 46%,#3a2c44 100%);border-radius:14px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.25);margin:0 auto}
+.sub-prev-box::after{content:'';position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 0%,transparent 55%,rgba(0,0,0,.35) 100%);pointer-events:none}
+.sub-prev-frame{position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;padding-top:14%;color:rgba(255,255,255,.28);font-size:13px;letter-spacing:2px}
+.sub-prev-sub{position:absolute;left:6%;right:6%;text-align:center;line-height:1.25;margin:0;pointer-events:none;word-break:break-word;font-family:'Microsoft YaHei',sans-serif;color:#FFF;font-weight:bold;font-size:14px;-webkit-text-stroke:1px #000;text-stroke:1px #000}
+.sub-prev-tip{font-size:12px;color:var(--tx3);margin:10px 0 0;text-align:center;line-height:1.6}
 .sec-t:first-child{margin-top:0}
 .result{margin-top:10px;font-size:12.5px;padding:10px 12px;border-radius:10px;background:var(--line2);color:var(--tx2);word-break:break-all;display:none}
 .result.show{display:block}
@@ -794,6 +801,18 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input type="checkbox" id="cf_cueAlign" style="width:18px;height:18px;flex:0 0 auto"><span>用配音真实句长对齐（v2.11：跑过逐句配音的镜头，字幕按每句实际念了多少秒切分，嘴型与字幕严丝合缝；没配音的镜头仍按字数估算）</span>
     </label>
     <div class="hint" style="margin-top:6px">颜色用 ASS 的 <b>BGR</b> 顺序：白色 = <code>FFFFFF</code>，黄色 = <code>00FFFF</code>。改完重新导出合成包即可，不影响的 .srt 本身。</div>
+
+    <div class="sec-t">字幕样式实时预览（v2.46）</div>
+    <div class="sub-prev-wrap">
+      <div class="sub-prev-box" id="subPrevBox">
+        <div class="sub-prev-frame">示例画面</div>
+        <div class="sub-prev-sub" id="subPrevSub"></div>
+      </div>
+      <div class="sub-prev-tip">上方为示例画面（9:16，与「成片预览」播放器同一套字幕渲染）。调上面任意一项，字幕会<b>实时</b>重渲染，所见即导出。</div>
+      <div class="row3" style="margin-top:10px">
+        <div class="fld" style="grid-column:1 / -1"><label>预览文案（可改成自己的台词试效果）</label><input class="inp" id="subPrevText" value="示例字幕：今天，我们要揭开真相。"></div>
+      </div>
+    </div>
 
     <div class="sec-t">用量与成本追踪（对标 ArcReel）</div>
     <div class="hint" style="margin-bottom:10px">每次生成成功自动计数。单价按你的套餐折算填写，填 0 就只计数不算钱。</div>
@@ -2701,6 +2720,7 @@ function fillSettings(){
   if($('cf_usedLip')) $('cf_usedLip').value = num(cfg.usedLip);
   if(typeof updGenreStyleHint === 'function') updGenreStyleHint();   /* v2.18：类型旁显示建议画风 */
   if(typeof renderGenrePresets === 'function') renderGenrePresets(); /* v2.20：套餐库列表也要跟着刷新 */
+  if(typeof renderSubPreview === 'function') renderSubPreview();     /* v2.46：字幕样式实时预览先渲染一帧 */
 }
 function readSettings(){
   cfg.agnesKey = $('cf_agnesKey').value.trim();
@@ -4758,6 +4778,35 @@ function pvSubStyle(){
   el.style.background = cfg.subBg ? 'rgba(0,0,0,.45)' : 'transparent';
   el.style.padding = cfg.subBg ? '2px 10px' : '0';
   el.style.borderRadius = cfg.subBg ? '6px' : '0';
+}
+/* v2.46：字幕样式实时预览——与 pvSubStyle 同一套缩放公式，但读的是设置输入框（实时，不必先保存），
+   渲染到 #subPrevSub，保证「设置预览 = 成片预览 = 导出字幕」。 */
+function renderSubPreview(){
+  var box = $('subPrevBox'); if(!box) return;
+  var el = $('subPrevSub'); if(!el) return;
+  var h = box.clientHeight || 533;   /* 9:16 在 300px 宽时约 533px 高 */
+  var gv = function(id, d){ var e = $(id); return e ? e.value : d; };
+  var gvC = function(id, d){ var e = $(id); return e ? e.checked : d; };
+  var size = Math.max(8, Math.min(48, num(gv('cf_subSize', cfg.subSize)) || 14));
+  var margin = Math.max(0, num(gv('cf_subMargin', cfg.subMargin)) || 36);
+  var font = (gv('cf_subFont', cfg.subFont) || 'Microsoft YaHei').toString().trim() || 'Microsoft YaHei';
+  var color = ((gv('cf_subColor', cfg.subColor) || 'FFFFFF').toString().trim() || 'FFFFFF').replace(/^#/, '').toUpperCase();
+  var bold = gvC('cf_subBold', cfg.subBold);
+  var ow = Math.max(0, Math.min(6, num(gv('cf_subOutline', cfg.subOutline)) || 1));
+  var oc = ((gv('cf_subOutlineColor', cfg.subOutlineColor) || '000000').toString().trim() || '000000').replace(/^#/, '').toUpperCase();
+  var bg = gvC('cf_subBg', cfg.subBg);
+  var txt = $('subPrevText') ? $('subPrevText').value : '';
+  el.textContent = txt || '示例字幕：今天，我们要揭开真相。';
+  el.style.fontFamily = font + ', sans-serif';
+  el.style.fontSize = Math.round(h * size / 540) + 'px';
+  el.style.color = '#' + color;
+  el.style.fontWeight = bold ? 'bold' : 'normal';
+  el.style.bottom = Math.round(h * margin / 540) + 'px';
+  el.style.webkitTextStroke = ow + 'px #' + oc;
+  el.style.textStroke = ow + 'px #' + oc;
+  el.style.background = bg ? 'rgba(0,0,0,.45)' : 'transparent';
+  el.style.padding = bg ? '2px 10px' : '0';
+  el.style.borderRadius = bg ? '6px' : '0';
 }
 function pvSubAt(subs, e){
   for(var i = 0; i < subs.length; i++){ if(e >= subs[i].t0 && e < subs[i].t1) return subs[i].text; }
@@ -8716,6 +8765,12 @@ function bind(){
   if($('btnGenreStyle')) $('btnGenreStyle').addEventListener('click', applyGenreStyle);
   if($('cf_globalStyle')) $('cf_globalStyle').addEventListener('input', function(){ updGenreStyleHint(); });
   if($('cf_genrePrompt')) $('cf_genrePrompt').addEventListener('change', function(){ updGenreStyleHint(); });
+  /* v2.46：字幕样式实时预览——输入框/勾选框变动即重渲染示例框（input+change 双绑，覆盖文本/数字/勾选） */
+  ['cf_subFont','cf_subSize','cf_subMargin','cf_subColor','cf_subOutlineColor','cf_subOutline','cf_subBold','cf_subBg','subPrevText'].forEach(function(id){
+    var e = $(id); if(!e) return;
+    e.addEventListener('input', renderSubPreview);
+    e.addEventListener('change', renderSubPreview);
+  });
   if($('btnGenreSave')) $('btnGenreSave').addEventListener('click', saveGenrePreset);
   /* v2.22：套餐导出 / 导入（JSON），便于换设备或多人共用同一套配方 */
   if($('btnGenreExport')) $('btnGenreExport').addEventListener('click', exportGenrePresets);
