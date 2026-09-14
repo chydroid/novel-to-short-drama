@@ -989,6 +989,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div class="tools" style="margin-bottom:16px">
       <button class="btn" id="btnExpRender">一键合成包（FFmpeg 脚本，出成片）</button>
       <button class="btn gh" id="btnExpFcp">导出剪辑时间线 .fcpxml</button>
+      <button class="btn gh" id="btnExpDraft" title="导出剪映专业版草稿（draft_content.json + draft_meta_info.json），解压后放进剪映草稿目录即可直接进时间线">导出剪映草稿 .zip</button>
       <button class="btn" id="btnExpPreview" title="不导出也能直接在浏览器里看一遍成片效果：图片轮播（带缓慢推近运镜）+ 字幕 + 配音，按导出范围与状态筛选播放">▶ 成片预览（浏览器内播放）</button>
     </div>
 
@@ -6605,6 +6606,157 @@ function xmlEsc(t){
     .replace(/"/g, '&quot;');
 }
 function fcpDur(sec, fps){ return Math.max(1, Math.round(num(sec) * fps)) + '/' + fps + 's'; }
+/* ================= v2.48：导出剪映草稿（draft_content.json + draft_meta_info.json） =================
+   与「打包 / 成片预览」同一套范围与筛选（viewShots(exportScopeShots(), cfg.bundleStatus||'all','')），
+   生成剪映专业版草稿包（zip）：视频轨（视频优先 → 静帧图片 → 空占位）+ 音频轨（逐镜配音 URL）+ 文本轨
+   （复用 buildSrtText 时间轴，与导出 .srt 完全一致）。时间单位微秒（1s = 1e6）。
+   因在线 / 浏览器内媒体无法直接给剪映本地路径，导入后若提示媒体丢失，可先用「一键合成包」把素材下到本地
+   再「重新链接媒体」；时间轴与字幕已是完整的。 */
+function jyId(){
+  var h = '0123456789ABCDEF', s = '';
+  for(var i=0;i<8;i++) s += h[Math.floor(Math.random()*16)];
+  return 'JY' + s + '-' + Date.now().toString(16).toUpperCase() + '-' + Math.floor(Math.random()*65536).toString(16).toUpperCase();
+}
+function jyMicro(sec){ return Math.max(0, Math.round((num(sec)||0) * 1000000)); }
+function jyCrop(){ return { lower_left_x:0.0, lower_left_y:1.0, lower_right_x:1.0, lower_right_y:1.0,
+  upper_left_x:0.0, upper_left_y:0.0, upper_right_x:1.0, upper_right_y:0.0, crop_ratio:'free', crop_scale:1.0 }; }
+function jyClip(){ return { alpha:1.0, flip:{ horizontal:false, vertical:false }, rotation:0.0, scale:{ x:1.0, y:1.0 }, transform:{ x:0.0, y:0.0 } }; }
+function jyHexRgb01(hex){
+  var h = String(hex || 'FFFFFF').replace(/^#/, '');
+  var r = parseInt(h.slice(0,2),16)/255, g = parseInt(h.slice(2,4),16)/255, b = parseInt(h.slice(4,6),16)/255;
+  if(isNaN(r)||isNaN(g)||isNaN(b)) return [1.0,1.0,1.0];
+  return [Math.round(r*1000)/1000, Math.round(g*1000)/1000, Math.round(b*1000)/1000];
+}
+function jyTextContent(txt, size, colorRGB){
+  var o = { text: txt, styles: [ { fill: { content: { solid: { color: colorRGB || [1.0,1.0,1.0] } } },
+    range: [0, String(txt).length], size: num(size) || 8.0, bold: !!cfg.subBold,
+    font: { path: '', id: '' },
+    strokes: [ { content: { solid: { color: [0.0,0.0,0.0] } }, width: 0.08 } ] } ] };
+  return JSON.stringify(o);
+}
+function exportJianyingDraft(){
+  if(!state.shots.length){ toast('还没有分镜'); return; }
+  var list = viewShots(exportScopeShots(), cfg.bundleStatus || 'all', '') || [];
+  if(!list.length){ toast('当前范围 / 筛选下没有镜头'); return; }
+  var fps = num(cfg.fps) || 30;
+  var rr = String(cfg.imgRatio || '9:16').split(':');
+  var vw = (num(rr[1])||16) > (num(rr[0])||9) ? 720 : 1280;
+  var vh = Math.round(vw * (num(rr[1])||16) / (num(rr[0])||9) / 2) * 2;
+
+  var mats = { videos:[], audios:[], texts:[], speeds:[], canvases:[], sound_channel_mappings:[], vocal_separations:[], material_animations:[] };
+  var vTrack = { id: jyId(), type:'video', attribute:0, is_default_name:true, name:'', segments:[] };
+  var aTrack = { id: jyId(), type:'audio', attribute:0, is_default_name:true, name:'', segments:[] };
+  var tTrack = { id: jyId(), type:'text',  attribute:0, is_default_name:true, name:'', segments:[] };
+  var t = 0, nV = 0, nA = 0;
+
+  list.forEach(function(s, idx){
+    var dM = jyMicro(shotDur(s)), startM = jyMicro(t);
+    var urlV = String(s['口型视频URL'] || s['视频URL'] || '').trim();
+    var urlI = String(s['图片URL'] || '').trim();
+    var mtype = urlV ? 'video' : 'photo';
+    var vmid = jyId();
+    mats.videos.push({ id: vmid, type: mtype, path: (urlV || urlI || ''), material_name: '第' + s['镜号'] + '镜',
+      width: vw, height: vh, duration: dM, has_audio: !!urlV, category_name:'local', check_flag: 63487,
+      crop: jyCrop(), crop_ratio:'free', crop_scale:1.0, audio_fade: null, extra_type_option: 0 });
+    var spId = jyId(), scmId = jyId(), vsId = jyId(), cvId = jyId();
+    mats.speeds.push({ id: spId, type:'speed', curve_speed: null, mode: 0, speed: 1.0 });
+    mats.sound_channel_mappings.push({ id: scmId, type:'none', audio_channel_mapping: 0, is_config_open:false });
+    mats.vocal_separations.push({ id: vsId, type:'vocal_separation', choice: 0, production_path:'', removed_sounds: [] });
+    mats.canvases.push({ id: cvId, type:'canvas_color', album_image:'', blur:0.0, color:'', image:'', image_id:'', image_name:'' });
+    vTrack.segments.push({ id: jyId(), material_id: vmid,
+      target_timerange:{ start:startM, duration:dM }, source_timerange:{ start:0, duration:dM },
+      speed:1.0, volume:1.0, visible:true, reverse:false, clip: jyClip(),
+      render_index: idx, track_render_index: 0, extra_material_refs: [spId, scmId, vsId, cvId],
+      uniform_scale:{ on:true, value:1.0 }, cartoon:false, intensifies_audio:false, is_placeholder:false,
+      is_tone_modify:false, last_nonzero_volume:1.0, template_id:'', template_scene:'default', track_attribute:0,
+      enable_adjust:true, enable_color_curves:true, enable_color_wheels:true, enable_lut:true, enable_smart_color_adjust:false });
+    nV++;
+    var urlA = String(s['音频URL'] || '').trim();
+    if(urlA && urlA !== 'local'){
+      var amid = jyId(), aspId = jyId();
+      mats.audios.push({ id: amid, type:'extract_music', path: urlA, name: '第' + s['镜号'] + '镜配音',
+        duration: dM, category_name:'local', check_flag: 1, wave_points: [] });
+      mats.speeds.push({ id: aspId, type:'speed', curve_speed: null, mode: 0, speed: 1.0 });
+      aTrack.segments.push({ id: jyId(), material_id: amid,
+        target_timerange:{ start:startM, duration:dM }, source_timerange:{ start:0, duration:dM },
+        speed:1.0, volume:1.0, visible:true, clip: null, render_index: idx, track_render_index: 1,
+        extra_material_refs: [aspId], cartoon:false, intensifies_audio:false, is_placeholder:false,
+        is_tone_modify:false, last_nonzero_volume:1.0, reverse:false, template_id:'', template_scene:'default', track_attribute:0 });
+      nA++;
+    }
+    t += shotDur(s);
+  });
+
+  var srt = buildSrtText(list);
+  var cues = srt ? parseSrt(srt.text) : [];
+  var fSize = Math.max(8, Math.min(48, num(cfg.subSize) || 14));
+  var fColor = jyHexRgb01(cfg.subColor);
+  cues.forEach(function(c, i){
+    var tmid = jyId(), am = jyId();
+    var cd = Math.max(0.1, c.t1 - c.t0);
+    mats.texts.push({ id: tmid, type:'subtitle', content: jyTextContent(c.text, fSize, fColor),
+      text_size: fSize, text_color:'#FFFFFF', alignment: 1, background_color:'', letter_spacing: 0, line_spacing: 0.02,
+      fonts: [], force_apply_line_max_width:false, global_alpha:1.0, layout:0, line_feed:1, original_size:[vw,vh],
+      preset_id:'', preset_name:'', sub_type:0, text_alpha:1.0, text_align:1, typesetting:0, underline:false,
+      words:{ text:[], start_time:[], end_time:[] }, rich_text:'' });
+    mats.material_animations.push({ id: am, type:'text_animation', animations: [], multi_language_current:'none' });
+    tTrack.segments.push({ id: jyId(), material_id: tmid,
+      target_timerange:{ start: jyMicro(c.t0), duration: jyMicro(cd) }, source_timerange:{ start:0, duration: jyMicro(cd) },
+      speed:1.0, volume:1.0, visible:true, clip: jyClip(), render_index: 30000 + i, track_render_index: 2,
+      extra_material_refs: [am], cartoon:false, intensifies_audio:false, is_placeholder:false, is_tone_modify:false,
+      last_nonzero_volume:1.0, reverse:false, template_id:'', template_scene:'default', track_attribute:0 });
+  });
+
+  var draftId = jyId();
+  var name = '短剧成片_' + String(nowStr()).replace(/[^0-9]/g,'').slice(0,14);
+  var plat = { app_id:3704, app_source:'lv', app_version:'5.9.0', device_id:'', hard_disk_id:'', mac_address:'', os:'windows', os_version:'' };
+  var content = {
+    canvas_config:{ width: vw, height: vh, ratio:'original' },
+    color_space: 0,
+    config:{ maintrack_adsorb:true, video_mute:false, subtitle_sync:false, lyrics_sync:false, material_save_mode:0 },
+    cover: null, create_time: 0, duration: jyMicro(t), fps: fps, id: draftId,
+    keyframes:{ adjusts:[], audios:[], effects:[], filters:[], handwrites:[], stickers:[], texts:[], videos:[] },
+    last_modified_platform: plat, materials: mats, name: name, new_version:'110.0.0', platform: plat,
+    relationships:[], render_index_track_mode_on:false, source:'default',
+    tracks: [vTrack, aTrack, tTrack], version: 360000
+  };
+  var meta = {
+    draft_cloud_last_action_download:false, draft_cover:'draft_cover.jpg', draft_id: draftId, draft_name: name,
+    draft_fold_path:'', draft_root_path:'', draft_is_cloud_draft:false, draft_is_ai_shorts:false,
+    draft_materials:[ { type:0, value:[] }, { type:1, value:[] }, { type:2, value:[] } ],
+    draft_materials_copied_info:[], draft_segment_extra_info:[], draft_timeline_materials_size_:0, draft_type:'',
+    draft_need_rename_folder:false, draft_new_version:'', draft_removable_storage_device:'', draft_watermark_path:'',
+    draft_enterprise_info:{ draft_enterprise_extra:'', draft_enterprise_id:'', draft_enterprise_name:'', enterprise_draft_material_id:'' },
+    tm_draft_create: Date.now()*1000, tm_draft_modified: Date.now()*1000, tm_draft_removed:0, tm_duration:0
+  };
+  var readme = [
+    '剪映草稿（' + name + '）',
+    '==================================================',
+    '本 zip 含 draft_content.json 与 draft_meta_info.json，对应「导出范围 + 状态筛选」下的 ' + nV + ' 个镜头。',
+    '',
+    '【如何导入剪映专业版】',
+    '1) 解压本 zip 到一个文件夹（文件夹名随意，如 ' + name + '）。',
+    '2) 把整个文件夹放进剪映的草稿目录：',
+    '   Windows: C:/Users/<你>/AppData/Local/JianyingPro/User Data/Projects/com.lveditor.draft/',
+    '   macOS:   ~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft/',
+    '3) 重启剪映，在「本地草稿」里就能看到它。',
+    '',
+    '【关于素材】',
+    '时间轴（视频轨 / 音频轨）与字幕轨已完整，字幕时间与导出 .srt 完全一致。',
+    '本工作台的素材多为在线地址或浏览器内音频，剪映需要本地文件路径；导入后若提示「媒体丢失」：',
+    '   - 先用「一键合成包（FFmpeg 脚本）」把镜头素材下载到本地；',
+    '   - 在剪映里对丢失片段右键「重新链接媒体」指向本地文件即可。',
+    '字幕无需重新链接，可直接使用（也可用导出的 .srt 覆盖）。',
+    '',
+    '本次导出：视频轨 ' + nV + ' 段 · 音频轨 ' + nA + ' 段 · 字幕 ' + cues.length + ' 条 · 总时长 ' + fmtSec(Math.round(t)) + '。'
+  ].join('\r\n');
+  downloadZip('剪映草稿_' + name + '.zip', [
+    { name: 'draft_content.json', data: JSON.stringify(content) },
+    { name: 'draft_meta_info.json', data: JSON.stringify(meta) },
+    { name: 'README.txt', data: readme }
+  ]);
+  toast('剪映草稿已导出：视频轨 ' + nV + ' 段 / 配音 ' + nA + ' 条 / 字幕 ' + cues.length + ' 条');
+}
 function exportFcpXml(){
   if(!state.shots.length){ toast('还没有分镜'); return; }
   var fps = num(cfg.fps) || 30;
@@ -8930,6 +9082,7 @@ function bind(){
   /* v2.44：成片预览入口与播放器控件一次性绑定 */
   wirePreview();
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
+  if($('btnExpDraft')) $('btnExpDraft').addEventListener('click', exportJianyingDraft);   /* v2.48：导出剪映草稿 */
   if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
     state.stopBatch = true; toast('已请求停止，正在跑的这几个会跑完');
   });
