@@ -45,6 +45,21 @@ svg{display:block}
 .serial-stop{border:0;background:transparent;color:var(--err);font-size:12px;font-weight:600;cursor:pointer;padding:0 2px}
 .serial-stop:hover{text-decoration:underline}
 .serial-stop[hidden]{display:none}
+/* v2.49：多剧目 */
+.proj{display:flex;align-items:center;gap:6px}
+.proj-sel{height:34px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--tx);font-size:13px;padding:0 8px;max-width:150px}
+.proj-list{display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto}
+.proj-row{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--line);border-radius:10px}
+.proj-row.cur{border-color:var(--main);background:var(--main-soft)}
+.proj-row .pinfo{flex:1;min-width:0}
+.proj-row .pn{font-weight:600;font-size:14px}
+.proj-row .pt{font-size:12px;color:var(--tx3);margin-top:2px}
+.proj-row .btn{height:30px;padding:0 10px;font-size:12.5px}
+#projMask{position:fixed;inset:0;background:rgba(16,18,35,.45);opacity:0;pointer-events:none;transition:.18s;z-index:92}
+#projMask.on{opacity:1;pointer-events:auto}
+#projDlg{z-index:93}
+.dialog-hd .x{margin-left:auto;cursor:pointer;font-size:18px;line-height:1;color:var(--tx3);padding:0 4px}
+.dialog-hd .x:hover{color:var(--err)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 14px;border-radius:10px;background:var(--main);color:#fff;font-weight:600;font-size:14px;transition:.15s}
 .btn:hover{background:var(--main-dk)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -317,12 +332,30 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </div>
     <div class="hd-sp" data-page-node-id="RKF8iXShKOYLjvjsWvCCO7"></div>
     <div class="sync" id="syncBox" data-page-node-id="6b9fQ5kf29sR91pJHUV96A"><span class="dot" id="syncDot" data-page-node-id="NZ2IRkZITRk9IbwOSrjIeW"></span><span id="syncTxt" data-page-node-id="qE0s1M4gZDfyQXOawqGxQ4">已同步</span><button class="serial-stop" id="serialStop" data-act="serialstop" hidden>停止</button></div>
+    <div class="proj" id="projWrap">
+      <select id="projSel" class="proj-sel" title="切换剧目"></select>
+      <button class="btn gh sm" id="btnProjNew" data-act="projnew" title="新建剧目">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="hide-sm">剧目</span>
+      </button>
+      <button class="btn gh sm" id="btnProjMgr" data-act="projmgr" title="管理剧目">管理</button>
+    </div>
     <button class="btn gh sm" id="btnSet" title="设置" data-page-node-id="dB4CZAmxM8afGG9lwzRfBi">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" data-page-node-id="5ZBTBmZAXqR4R7fQoPzlla"><circle cx="12" cy="12" r="3" data-page-node-id="xwqpgQM2zKpnGf3VMNstvv"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" data-page-node-id="anjFiqKXQafPCwWpk7rtPU"/></svg>
       <span class="hide-sm" data-page-node-id="osZhpzyBgCueJ4b1cVitBq">设置</span>
     </button>
   </div>
 </header>
+
+<div class="dialog" id="projDlg" aria-hidden="true">
+  <div class="dialog-hd">剧目管理<a class="x" data-act="projclose">×</a></div>
+  <div class="dialog-bd"><div id="projList" class="proj-list"></div></div>
+  <div class="dialog-ft">
+    <button class="btn" data-act="projnew">+ 新建剧目</button>
+    <button class="btn gh" data-act="projclose">关闭</button>
+  </div>
+</div>
+<div id="projMask" data-act="projclose"></div>
 
 <main class="wrap" data-page-node-id="8fRWN6fgba9ZGF4X8YHjSd">
   <!-- ============ 今天要处理 ============ -->
@@ -1128,6 +1161,8 @@ var LS = 'wb_novel2drama_';
 var state = {
   shots: [],
   assets: [],   // 角色卡 + 场景卡
+  pid: 'prj_default',   // v2.49：当前剧目 id
+  projects: [],         // v2.49：剧目列表 [{id,name,createdAt,updatedAt}]
   view: 'script',
   filter: 'all',
   expanded: {},
@@ -1334,12 +1369,12 @@ var DEFAULT_CFG = {
 function loadCfg(){
   cfg = JSON.parse(JSON.stringify(DEFAULT_CFG));
   try{
-    var raw = localStorage.getItem(LS+'cfg');
+    var raw = localStorage.getItem(pk('cfg'));
     if(raw){ var o = JSON.parse(raw); for(var k in o){ if(k in cfg) cfg[k] = o[k]; } }
   }catch(e){}
 }
 function saveCfg(){
-  try{ localStorage.setItem(LS+'cfg', JSON.stringify(cfg)); }catch(e){}
+  try{ localStorage.setItem(pk('cfg'), JSON.stringify(cfg)); }catch(e){}
   fillSettings();
 }
 /* ---------- 多 API Key 轮询（对标 moyin-creator 的 API key rotation） ----------
@@ -1427,7 +1462,7 @@ function batchBarClose(msg, kind){
    批量入口本来就按「未生成 / 失败」筛选，所以点一下批量就是按未完成项续跑。
    v2.19：按类型分条存，三类任务互不挤占，可各自续跑。 */
 var BATCH_KIND_NAME = { img:'生图', vid:'生视频', audio:'配音', lip:'对口型' };
-function batchLeftKey(){ return LS + 'batchLeft'; }
+function batchLeftKey(){ return pk('batchLeft'); }
 function batchLeftName(kind){ return BATCH_KIND_NAME[kind] || '任务'; }
 /* v2.23：状态字段名与「缺什么」判定都收敛到这两处——以前散在批量和清单好几处 if-else 里，
    加「口型」这个新类型时最容易漏改其中一处，导致清单里的状态列读错字段。 */
@@ -1680,12 +1715,15 @@ function db(){
 }
 function hasCloud(){ return !!db(); }
 function newId(){ return 'loc_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+/* v2.49：多剧目——本机 key 全部按 pid 命名空间隔离；无 pid 的旧记录归默认剧目 */
+function pk(s){ return LS + (state.pid || 'prj_default') + ':' + s; }
+function pidOk(r){ return (r.pid === state.pid) || (!r.pid && state.pid === 'prj_default'); }
 function localLoad(){
-  try{ var v = JSON.parse(localStorage.getItem(LS+'shots')); return Array.isArray(v) ? v : []; }
+  try{ var v = JSON.parse(localStorage.getItem(pk('shots'))); return Array.isArray(v) ? v : []; }
   catch(e){ return []; }
 }
 function localSave(list){
-  try{ localStorage.setItem(LS+'shots', JSON.stringify(list)); }
+  try{ localStorage.setItem(pk('shots'), JSON.stringify(list)); }
   catch(e){ toast('本地存储写入失败，数据量可能过大，建议导出备份后清理'); }
 }
 /* v2.31：msg 是「正在进行的第几步」这类临时文案，只在本条链路跑完前显示 */
@@ -1715,6 +1753,7 @@ function loadShots(){
   state.hasCloud = true;
   setSync('busy');
   return loadPage().then(function(list){
+    list = list.filter(pidOk);          /* v2.49：只取当前剧目（旧记录无 pid 归默认剧目） */
     list.sort(function(a,b){ return (num(a['镜号']) - num(b['镜号'])); });
     state.shots = list; state.online = true; setSync('ok');
     return list;
@@ -1850,13 +1889,14 @@ function retryBulkFail(){
   });
 }
 function addShotObj(obj){
+  var o = Object.assign({ pid: state.pid }, obj);   /* v2.49：每条分镜归属当前剧目 */
   if(!hasCloud()){
-    var rec = Object.assign({ _id: newId() }, obj);
+    var rec = Object.assign({ _id: newId() }, o);
     state.shots.push(rec); localSave(state.shots); refreshAll();
     return Promise.resolve();
   }
   setSync('busy');
-  return db().addRecord({ databaseId: DB_ID, properties: toProps(obj) })
+  return db().addRecord({ databaseId: DB_ID, properties: toProps(o) })
     .then(function(){ return loadShots(); })
     .then(function(){ refreshAll(); })
     .catch(function(e){ console.error(e); setSync('off'); toast('新增失败：'+(e && e.message ? e.message : e)); });
@@ -1938,17 +1978,17 @@ function loadAssetsPage(cursor, acc, guard){
 }
 function loadAssets(){
   if(!hasCloud()){
-    try{ var v = JSON.parse(localStorage.getItem(LS+'assets')); state.assets = Array.isArray(v) ? v : []; }
+    try{ var v = JSON.parse(localStorage.getItem(pk('assets'))); state.assets = Array.isArray(v) ? v : []; }
     catch(e){ state.assets = []; }
     return Promise.resolve(state.assets);
   }
-  return loadAssetsPage().then(function(list){ state.assets = list; return list; })
+  return loadAssetsPage().then(function(list){ state.assets = list.filter(pidOk); return state.assets; })
     .catch(function(e){ console.error(e); return []; });
 }
 function patchAsset(id, obj){
   state.assets = state.assets.map(function(a){ return (a._id === id) ? Object.assign({}, a, obj) : a; });
   if(!hasCloud()){
-    try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
+    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
     refreshAll(); return Promise.resolve();
   }
   setSync('busy');
@@ -1957,13 +1997,14 @@ function patchAsset(id, obj){
     .catch(function(e){ console.error(e); setSync('off'); toast('保存失败：'+(e&&e.message?e.message:e)); });
 }
 function addAsset(obj){
+  var o = Object.assign({ pid: state.pid }, obj);   /* v2.49：设定卡归属当前剧目 */
   if(!hasCloud()){
-    state.assets.push(Object.assign({ _id: newId() }, obj));
-    try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
+    state.assets.push(Object.assign({ _id: newId() }, o));
+    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
     refreshAll(); return Promise.resolve();
   }
   setSync('busy');
-  return db().addRecord({ databaseId: ASSET_DB_ID, properties: toProps(obj) })
+  return db().addRecord({ databaseId: ASSET_DB_ID, properties: toProps(o) })
     .then(function(){ return loadAssets(); })
     .then(function(){ refreshAll(); })
     .catch(function(e){ console.error(e); setSync('off'); toast('新增失败：' + (e && e.message ? e.message : e)); });
@@ -1971,7 +2012,7 @@ function addAsset(obj){
 function delAsset(id){
   if(!hasCloud()){
     state.assets = state.assets.filter(function(a){ return a._id !== id; });
-    try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
+    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
     refreshAll(); return Promise.resolve();
   }
   return db().deleteRecord({ databaseId: ASSET_DB_ID, recordId: id })
@@ -2148,7 +2189,7 @@ function charStr(v){
 function clearAllAssets(){
   if(!hasCloud()){
     state.assets = [];
-    try{ localStorage.setItem(LS+'assets', '[]'); }catch(e){}
+    try{ localStorage.setItem(pk('assets'), '[]'); }catch(e){}
     return Promise.resolve();
   }
   var p = db();
@@ -2195,7 +2236,7 @@ function syncAssetsFromShots(){
     return runSerial(todo.map(function(a){
       return function(){
         return db().addRecord({ databaseId: ASSET_DB_ID, properties: toProps(
-          Object.assign({ 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, a)
+          Object.assign({ 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr(), pid: state.pid }, a)
         )});
       };
     }), { label: '补设定卡' })
@@ -2209,9 +2250,9 @@ function syncAssetsFromShots(){
   }else{
     todo.forEach(function(a){
       state.assets.push(Object.assign(
-        { _id: newId(), 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr() }, a));
+        { _id: newId(), 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr(), pid: state.pid }, a));
     });
-    try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
+    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
     refreshAll();
   }
   return Promise.resolve(todo.length);
@@ -4010,7 +4051,7 @@ function pickAudioUrl(j){
 }
 /* 音频本体只存本机 localStorage：base64 太大，不适合进数据表；数据表只存状态与时长 */
 var AUD = {};
-function audKey(id){ return LS + 'aud_' + id; }
+function audKey(id){ return pk('aud_' + id); }
 function audLoad(id){
   if(AUD[id]) return AUD[id];
   try{
@@ -4041,7 +4082,7 @@ function audSave(id, b64, mime, dur){
 /* v2.11：逐句配音的「每句真实时长」本地账本——只有它才能让字幕与口型严丝合缝。
    与 AUD 一样只存本机（下划线字段不落资料库），删镜时一并清掉。 */
 var CUE_DUR = {};
-function cueDurKey(id){ return LS + 'cuedur_' + id; }
+function cueDurKey(id){ return pk('cuedur_' + id); }
 function cueDurLoad(id){
   if(CUE_DUR[id]) return CUE_DUR[id];
   try{
@@ -6114,8 +6155,8 @@ function padSeg(n){ return ('00' + n).slice(-3); }
    只落最近 UNDO_SAVE 条，总字符数过 UNDO_MAX 就从旧往新丢，写爆配额再逐条丢到能塞下为止。
    UNDO_KEEP 是内存里保留的条数（比落盘的多，反正内存便宜）。 */
 var UNDO_KEEP = 20, UNDO_SAVE = 3, UNDO_MAX = 600000;
-function undoLsKey(){ return LS + 'undo'; }
-function redoLsKey(){ return LS + 'redo'; }        /* v2.32：重做栈，与撤销栈同一套存法 */
+function undoLsKey(){ return pk('undo'); }
+function redoLsKey(){ return pk('redo'); }        /* v2.32：重做栈，与撤销栈同一套存法 */
 function saveSnaps(key, list){
   try{
     var arr = (list || []).slice(-UNDO_SAVE), total = 0, cut = 0, i;
@@ -6606,7 +6647,7 @@ function xmlEsc(t){
     .replace(/"/g, '&quot;');
 }
 function fcpDur(sec, fps){ return Math.max(1, Math.round(num(sec) * fps)) + '/' + fps + 's'; }
-/* ================= v2.48：导出剪映草稿（draft_content.json + draft_meta_info.json） =================
+/* ================= v2.49：导出剪映草稿（draft_content.json + draft_meta_info.json） =================
    与「打包 / 成片预览」同一套范围与筛选（viewShots(exportScopeShots(), cfg.bundleStatus||'all','')），
    生成剪映专业版草稿包（zip）：视频轨（视频优先 → 静帧图片 → 空占位）+ 音频轨（逐镜配音 URL）+ 文本轨
    （复用 buildSrtText 时间轴，与导出 .srt 完全一致）。时间单位微秒（1s = 1e6）。
@@ -7089,7 +7130,7 @@ function splitShotObj(it, sec){
     光影氛围: String(it.lighting || it.light || '').trim(),
     图片状态:'未生成', 视频状态:'未生成', 配音状态:'未生成', 满意锁定:'否',
     口型风险: '低', 口型状态: '不需要',
-    图片URL:'', 视频URL:'', 音频URL:'', 音频时长:0, 任务ID:'', 错误信息:'', 更新时间:nowStr()
+    图片URL:'', 视频URL:'', 音频URL:'', 音频时长:0, 任务ID:'', 错误信息:'', 更新时间:nowStr(), pid: state.pid
   };
   o['口型风险'] = lipRiskOf(o);
   return o;
@@ -7688,7 +7729,7 @@ function onParseChapters(){
 }
 function saveChapters(){
   try{
-    localStorage.setItem(LS + 'chs', JSON.stringify(state.chapters.map(function(c){
+    localStorage.setItem(pk('chs'), JSON.stringify(state.chapters.map(function(c){
       /* adapted（AI 剧本化结果）必须持久化，否则刷新后全部丢失、流水线会退回原文拆镜 */
       return { no: c.no, title: c.title, len: c.len, sel: c.sel, st: c.st, adapted: c.adapted || '' };
     })));
@@ -7697,7 +7738,7 @@ function saveChapters(){
 /* 正文体积大不进 localStorage，页面重开时用已保存的小说正文重新切一次再对上状态 */
 function restoreChapters(){
   try{
-    var raw = localStorage.getItem(LS + 'chs');
+    var raw = localStorage.getItem(pk('chs'));
     if(!raw) return;
     var meta = JSON.parse(raw);
     var texts = chaptersOf();
@@ -8444,9 +8485,9 @@ function seedDemo(){
   var shotBase = { 图片URL:'', 视频URL:'', 音频URL:'', 音频时长:0, 任务ID:'',
                    配音状态:'未生成', 满意锁定:'否', 错误信息:'', 更新时间:nowStr() };
   if(!p){
-    assets.forEach(function(a){ state.assets.push(Object.assign({ _id: newId() }, base, a)); });
-    try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
-    demo.forEach(function(d){ state.shots.push(Object.assign({ _id: newId() }, shotBase, d)); });
+    assets.forEach(function(a){ state.assets.push(Object.assign({ _id: newId(), pid: state.pid }, base, a)); });
+    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+    demo.forEach(function(d){ state.shots.push(Object.assign({ _id: newId(), pid: state.pid }, shotBase, d)); });
     localSave(state.shots); refreshAll();
     toast('已载入示例：2 张角色卡 + 1 张场景卡 + 4 个分镜');
     return;
@@ -8457,13 +8498,13 @@ function seedDemo(){
      现在设定卡 / 分镜各自汇总，缺哪部分说清楚，且分镜段不会被设定卡段的失败连累。 */
   runSerial(assets.map(function(a){
     return function(){
-      return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(Object.assign({ 参考图URL:'', 错误信息:'', 更新时间:nowStr() }, a)) });
+      return p.addRecord({ databaseId: ASSET_DB_ID, properties: toProps(Object.assign({ 参考图URL:'', 错误信息:'', 更新时间:nowStr(), pid: state.pid }, a)) });
     };
   }))
     .then(function(ra){ return loadAssets().then(function(){ return ra; }); })
     .then(function(ra){
       return runSerial(demo.map(function(d){
-        return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(Object.assign({}, shotBase, d)) }); };
+        return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(Object.assign({ pid: state.pid }, shotBase, d)) }); };
       })).then(function(rs){ return { a: ra, s: rs }; });
     })
     .then(function(r){ return loadShots().then(function(){ return r; }); })
@@ -8619,9 +8660,9 @@ function runImport(arr, data){
       state.shots = arr.map(function(it){ return Object.assign({ _id: newId() }, build(it)); });
       state.assets = incAssets.map(function(it){ return Object.assign({ _id: newId() }, buildAsset(it)); });
       localSave(state.shots);
-      try{ localStorage.setItem(LS+'assets', JSON.stringify(state.assets)); }catch(e){}
+      try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
       if(data.novel) $('novel').value = data.novel;
-      localStorage.setItem(LS+'novel', $('novel').value);
+      localStorage.setItem(pk('novel'), $('novel').value);
       restoreBackupAudio(data);                // v2.7：把随备份的配音写回本机
       refreshAll(); toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡');
       return;
@@ -8643,7 +8684,7 @@ function runImport(arr, data){
         return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(build(it)) }); };
       }), { label: '导入分镜', tag: 'import' });
     }).then(function(r){ repS = r; if(data.novel) $('novel').value = data.novel; })
-      .then(function(){ localStorage.setItem(LS+'novel', $('novel').value); })
+      .then(function(){ localStorage.setItem(pk('novel'), $('novel').value); })
       .then(function(){ return loadShots(); })
       .then(function(){
         var f = (repA ? repA.fail : 0) + (repS ? repS.fail : 0);
@@ -8822,6 +8863,13 @@ function bind(){
       case 'redo': redoShots(); break;                 /* v2.32 */
       case 'undohist': toggleUndoHist(); break;        /* v2.39：展开 / 收起「跳到某一版」 */
       case 'undoto': undoTo(num(t.getAttribute('data-i'))); break;   /* v2.39：一步跳到指定版本 */
+      /* v2.49：多剧目 */
+      case 'projmgr': openProjMgr(); break;
+      case 'projnew': askInput('给新剧目起个名字', '新剧目').then(function(n){ if(n) createProject(n); }); break;
+      case 'projswitch': { var sp = t.getAttribute('data-pid'); if(sp) switchProject(sp); closeProjMgr(); break; }
+      case 'projrename': { var rp = t.getAttribute('data-pid'); if(rp) askInput('重命名剧目', projName(rp) || '剧目').then(function(n){ if(n) renameProject(rp, n); }); break; }
+      case 'projdelete': { var dp = t.getAttribute('data-pid'); if(dp) askConfirm('删除剧目「' + (projName(dp) || '') + '」？该剧目下的分镜与设定卡会一并清除（不可恢复）。', '删除', true).then(function(ok){ if(ok) deleteProject(dp); }); break; }
+      case 'projclose': closeProjMgr(); break;
       case 'serialstop': stopSerial(); break;          /* v2.32：批量跑到一半可以叫停 */
       case 'openshot': setView('gen'); state.expanded[id] = true; renderGenList();
         setTimeout(function(){ var el = document.querySelector('.gen[data-id="'+id+'"]'); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 80);
@@ -8924,7 +8972,7 @@ function bind(){
   $('novel').addEventListener('input', function(){
     clearTimeout(window._nvTm);
     window._nvTm = setTimeout(function(){
-      try{ localStorage.setItem(LS+'novel', $('novel').value); }catch(e){}
+      try{ localStorage.setItem(pk('novel'), $('novel').value); }catch(e){}
     }, 500);
   });
 
@@ -8962,6 +9010,7 @@ function bind(){
     });
   })();
   $('btnSet').addEventListener('click', openDrawer);
+  if($('projSel')) $('projSel').addEventListener('change', function(){ var v = $('projSel').value; if(v && v !== state.pid) switchProject(v); });  /* v2.49：头部下拉切换剧目 */
   $('btnCloseSet').addEventListener('click', closeDrawer);
   $('mask').addEventListener('click', closeDrawer);
   $('btnSaveSet').addEventListener('click', function(){ readSettings(); toast('设置已保存到本机'); closeDrawer(); });
@@ -9082,7 +9131,7 @@ function bind(){
   /* v2.44：成片预览入口与播放器控件一次性绑定 */
   wirePreview();
   if($('btnExpFcp')) $('btnExpFcp').addEventListener('click', exportFcpXml);
-  if($('btnExpDraft')) $('btnExpDraft').addEventListener('click', exportJianyingDraft);   /* v2.48：导出剪映草稿 */
+  if($('btnExpDraft')) $('btnExpDraft').addEventListener('click', exportJianyingDraft);   /* v2.49：导出剪映草稿 */
   if($('btnStopBatch')) $('btnStopBatch').addEventListener('click', function(){
     state.stopBatch = true; toast('已请求停止，正在跑的这几个会跑完');
   });
@@ -9152,7 +9201,7 @@ function bind(){
   $('fileNovel').addEventListener('change', function(){
     var f = this.files && this.files[0]; if(!f) return;
     var fr = new FileReader();
-    fr.onload = function(){ $('novel').value = fr.result; localStorage.setItem(LS+'novel', fr.result); toast('已导入 ' + f.name); };
+    fr.onload = function(){ $('novel').value = fr.result; localStorage.setItem(pk('novel'), fr.result); toast('已导入 ' + f.name); };
     fr.readAsText(f, 'utf-8');
     this.value = '';
   });
@@ -9293,11 +9342,115 @@ function resetStuck(){
   runSerial(ajobs.map(function(j){ return function(){ return patchAsset(j.id, j.o); }; }))
     .then(function(){ n.then(function(cnt){ if(ajobs.length && !cnt) refreshAll(); }); });
 }
+/* ============== v2.49：多剧目管理 ============== */
+function projName(id){ var p = (state.projects||[]).filter(function(x){ return x.id === id; })[0]; return p ? p.name : ''; }
+function saveProjects(){
+  try{ localStorage.setItem(LS+'projects', JSON.stringify(state.projects)); localStorage.setItem(LS+'lastpid', state.pid); }catch(e){}
+}
+function ensureProjects(){
+  var raw = null;
+  try{ raw = JSON.parse(localStorage.getItem(LS+'projects') || 'null'); }catch(e){ raw = null; }
+  if(Array.isArray(raw) && raw.length){
+    state.projects = raw;
+    var lp = ''; try{ lp = localStorage.getItem(LS+'lastpid') || ''; }catch(e){}
+    var cur = raw.filter(function(p){ return p.id === lp; })[0];
+    state.pid = (cur || raw[0]).id;
+    return;
+  }
+  /* 首次运行 / 从旧版升级：把旧的全局本机数据迁到默认剧目命名空间，避免丢数据 */
+  state.pid = 'prj_default';
+  var def = { id:'prj_default', name:'默认剧目', createdAt:Date.now(), updatedAt:Date.now() };
+  ['shots','chs','novel','cfg','assets'].forEach(function(k){
+    var old = null; try{ old = localStorage.getItem(LS + k); }catch(e){}
+    if(old != null){ try{ localStorage.setItem(pk(k), old); }catch(e){} }
+  });
+  state.projects = [def];
+  saveProjects();
+}
+function renderProjSel(){
+  var sel = $('projSel'); if(!sel) return;
+  sel.innerHTML = (state.projects || []).map(function(p){
+    return '<option value="' + esc(p.id) + '"' + (p.id === state.pid ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+  }).join('');
+}
+function renderProjDlg(){
+  var box = $('projList'); if(!box) return;
+  box.innerHTML = (state.projects || []).map(function(p){
+    var cur = p.id === state.pid;
+    return '<div class="proj-row' + (cur ? ' cur' : '') + '">' +
+      '<div class="pinfo"><div class="pn">' + esc(p.name) + '</div><div class="pt">创建于 ' + new Date(p.createdAt||Date.now()).toLocaleDateString() + '</div></div>' +
+      '<button class="btn gh sm" data-act="projswitch" data-pid="' + esc(p.id) + '"' + (cur ? ' disabled' : '') + '>切换</button>' +
+      '<button class="btn gh sm" data-act="projrename" data-pid="' + esc(p.id) + '">重命名</button>' +
+      '<button class="btn sm danger" data-act="projdelete" data-pid="' + esc(p.id) + '"' + (state.projects.length <= 1 ? ' disabled' : '') + '>删除</button>' +
+      '</div>';
+  }).join('');
+}
+function openProjMgr(){ renderProjDlg(); $('projDlg').classList.add('on'); $('projMask').classList.add('on'); }
+function closeProjMgr(){ $('projDlg').classList.remove('on'); $('projMask').classList.remove('on'); }
+function createProject(name){
+  name = (name || '新剧目').trim() || '新剧目';
+  var id = 'prj_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  state.projects.push({ id:id, name:name, createdAt:Date.now(), updatedAt:Date.now() });
+  saveProjects();
+  /* 新建剧目必然是空的：直接把当前剧目切成它，清空内存并拉一次空数据 */
+  state.pid = id; saveProjects();
+  state.shots = []; state.assets = []; state.chapters = []; state.undo = []; state.redo = [];
+  try{ AUD = {}; }catch(e){}
+  try{ localStorage.removeItem(pk('batchLeft')); }catch(e){}
+  try{ if($('novel')) $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}
+  renderProjSel(); renderProjDlg();
+  return loadShots().then(function(){ return loadAssets(); }).then(function(){
+    restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    return id;
+  });
+}
+function switchProject(pid){
+  if(!pid || pid === state.pid) return Promise.resolve();
+  state.pid = pid; saveProjects();
+  state.shots = []; state.assets = []; state.chapters = []; state.undo = []; state.redo = [];
+  try{ AUD = {}; }catch(e){}
+  try{ localStorage.removeItem(pk('batchLeft')); }catch(e){}
+  try{ if($('novel')) $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}
+  refreshAll(); renderProjSel(); renderProjDlg();
+  return loadShots().then(function(){ return loadAssets(); }).then(function(){
+    restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    return true;
+  });
+}
+function renameProject(pid, name){
+  name = (name || '').trim(); if(!name) return;
+  state.projects.forEach(function(p){ if(p.id === pid){ p.name = name; p.updatedAt = Date.now(); } });
+  saveProjects(); renderProjSel(); renderProjDlg();
+  toast('已重命名为「' + name + '」');
+}
+function deleteProject(pid){
+  if(!pid || state.projects.length <= 1){ toast('至少保留一个剧目'); return Promise.resolve(); }
+  var wasCurrent = state.pid === pid;
+  state.projects = state.projects.filter(function(p){ return p.id !== pid; });
+  saveProjects();
+  try{ var pre = LS + pid + ':'; var kill = []; for(var i=0;i<localStorage.length;i++){ var kk = localStorage.key(i); if(kk && kk.indexOf(pre) === 0) kill.push(kk); } kill.forEach(function(kk){ localStorage.removeItem(kk); }); }catch(e){}
+  if(!hasCloud()){ if(wasCurrent) return switchProject(state.projects[0].id); renderProjSel(); renderProjDlg(); return Promise.resolve(); }
+  var jobs = [];
+  return loadPage().then(function(all){
+    all.filter(function(r){ return r.pid === pid; }).forEach(function(r){ jobs.push(function(){ return db().deleteRecord({ databaseId: DB_ID, recordId: r._id }); }); });
+    return loadAssetsPage();
+  }).then(function(all){
+    all.filter(function(r){ return r.pid === pid; }).forEach(function(r){ jobs.push(function(){ return db().deleteRecord({ databaseId: ASSET_DB_ID, recordId: r._id }); }); });
+    if(!jobs.length){ if(wasCurrent) return switchProject(state.projects[0].id); renderProjSel(); renderProjDlg(); return; }
+    return runSerial(jobs, { label:'删除剧目数据', tag:'delproj' });
+  }).then(function(){
+    if(wasCurrent) return switchProject(state.projects[0].id);
+    renderProjSel(); renderProjDlg();
+  });
+}
+
 function init(){
+  ensureProjects();                 /* v2.49：先确定当前剧目，再按 pid 命名空间加载数据 */
   loadCfg();
   fillSettings();
-  try{ $('novel').value = localStorage.getItem(LS+'novel') || ''; }catch(e){}
+  try{ $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}
   bind();
+  renderProjSel();                  /* v2.49：头部剧目下拉 */
   refreshAll();
   loadShots().then(function(){
     loadUndo();                        /* v2.31：镜头拉下来之后才能判断旧快照还作不作数 */
