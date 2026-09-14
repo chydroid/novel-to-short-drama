@@ -219,6 +219,17 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
 .dw-bd{flex:1;overflow-y:auto;padding:16px}
 .dw-ft{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:10px}
 .sec-t{font-size:12.5px;font-weight:800;color:var(--main);letter-spacing:.4px;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px dashed var(--line)}
+/* v2.47：预算硬上限横幅 */
+.budget-banner{position:fixed;top:0;left:0;right:0;z-index:80;display:flex;align-items:center;gap:14px;
+  background:linear-gradient(90deg,#e23b3b,#c62828);color:#fff;font-size:13.5px;font-weight:600;
+  padding:10px 16px;box-shadow:0 2px 10px rgba(0,0,0,.18);transform:translateY(-120%);transition:transform .25s ease;
+  padding-top:calc(10px + env(safe-area-inset-top));}
+.budget-banner.show{transform:translateY(0)}
+.budget-banner .txt{flex:1;line-height:1.4}
+.budget-banner .bb-close{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.5);color:#fff;
+  border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;white-space:nowrap}
+.budget-banner .bb-close:hover{background:rgba(255,255,255,.3)}
+@media (max-width:768px){ .budget-banner{font-size:12.5px;padding:9px 12px} .budget-banner .bb-close{padding:5px 10px} }
 /* v2.46：字幕样式实时预览框——9:16 手机画面，字幕渲染与 pvSubStyle 同源 */
 .sub-prev-wrap{margin-top:4px}
 .sub-prev-box{position:relative;width:300px;max-width:100%;aspect-ratio:9/16;background:linear-gradient(155deg,#1b2233 0%,#2b3550 46%,#3a2c44 100%);border-radius:14px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.25);margin:0 auto}
@@ -832,6 +843,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <div class="fld"><label>已生成配音（条）</label><input class="inp" id="cf_usedTts" readonly></div>
       <div class="fld"><label>已做口型（次）</label><input class="inp" id="cf_usedLip" readonly></div>
     </div>
+    <div class="row2" style="margin-top:8px">
+      <div class="fld"><label>预算上限（元，0 = 不限制）</label><input class="inp" type="number" id="cf_budgetCap" min="0" step="0.01" placeholder="0"></div>
+      <div class="fld" style="justify-content:flex-end"><span class="hint" id="cf_budgetNow" style="margin:0"></span></div>
+    </div>
     <div style="margin-top:10px"><button class="btn gh sm" id="btnResetUse">清零用量统计</button></div>
 
     <div class="sec-t" data-page-node-id="4PFawykUFgSym09mjKaBFl">文本模型（写小说 / 拆镜）</div>
@@ -1059,6 +1074,12 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   </div>
 </div>
 
+<!-- v2.47：预算硬上限横幅（超额时固定顶部红色提示，关闭后下次生成仍会拦） -->
+<div id="budgetBanner" class="budget-banner">
+  <span class="txt"></span>
+  <button class="bb-close" id="budgetClose" title="知道了（生成仍会被拦截，直到提高上限或清零用量）">知道了</button>
+</div>
+
 <!-- v2.9：多版本候选 A/B 选优弹窗 -->
 <div class="dlgmask" id="cbMask"></div>
 <div class="dialog" id="cbBox" style="max-width:920px">
@@ -1112,6 +1133,7 @@ var state = {
   online: true,
   hasCloud: true,
   syncing: false,
+  budgetWarned: false,   // v2.47：预算横幅是否已弹过提示（避免批量生成时反复 toast）
   busy: {},      // shotId -> true 表示正在生成中
   chapters: [],  // 长篇：识别出的章节（含正文，只存内存）
   pipe: { running: false, stop: false },
@@ -1249,6 +1271,9 @@ var DEFAULT_CFG = {
   subFont:'Microsoft YaHei', subSize:14, subMargin:36, subColor:'FFFFFF', subOutlineColor:'000000', subOutline:1, subBold:true, subBg:false,
   costImg:0.1, costVidSec:0.5, costTts:0, costLip:0.1,
   usedImg:0, usedVidSec:0, usedTts:0, usedLip:0,
+  /* v2.47：budgetCap = 预算硬上限（元）。填正数即开启，0 = 不限制。
+     当前预估花费 = usageCost()（用量 × 单价）越过上限后，五个 AI 生成入口一律拦截，不再发请求。 */
+  budgetCap:0,
   /* v2.5：并发队列 / 多 Key 轮换 / 成片输出参数 */
   agnesKeys:'', conc:2, retry:1,
   trans:'fade', transDur:0.5, kb:'in', fps:30, bitrate:'8M', stylePreset:'',
@@ -1594,7 +1619,30 @@ function runPool(list, worker, onOne, opts){   /* v2.17：补回第 4 个参数 
 }
 
 /* ---------- 用量与成本追踪（对标 ArcReel 成本追踪） ---------- */
-function bumpUse(k, n){ cfg[k] = num(cfg[k]) + (n || 1); saveCfg(); }
+function bumpUse(k, n){ cfg[k] = num(cfg[k]) + (n || 1); saveCfg(); if(budgetExceeded()) showBudgetBanner(); }
+/* v2.47：预算硬上限（成本闸）——防止昂贵的 AI 生成（图 / 视频 / 配音 / 口型）在不知情下超额。
+   预算上限在设置里填一个正数开启，0 = 不限制。判定口径与成本追踪完全一致：预估花费 = usageCost()（用量 × 单价）。 */
+function budgetExceeded(){
+  /* 用 1e-9 容差，避免浮点边界（如 ¥0.30 上限、花费正好 0.30）被误判为未超 */
+  return num(cfg.budgetCap) > 0 && usageCost() >= num(cfg.budgetCap) - 1e-9;
+}
+function showBudgetBanner(){
+  var b = $('budgetBanner'); if(!b) return;
+  var t = b.querySelector('.txt');
+  if(t) t.textContent = '已达预算上限 ¥' + num(cfg.budgetCap).toFixed(2) + '（已花费 ¥' + usageCost().toFixed(2) +
+    '）。在「设置 → 用量与成本追踪」提高上限，或清空用量后可继续生成。';
+  b.classList.add('show');
+}
+function hideBudgetBanner(){ var b = $('budgetBanner'); if(b) b.classList.remove('show'); }
+function guardBudget(){
+  if(!budgetExceeded()) return false;
+  showBudgetBanner();
+  if(!state.budgetWarned){
+    state.budgetWarned = true;
+    toast('已达预算上限 ¥' + num(cfg.budgetCap).toFixed(2) + '，已停止生成（花费 ¥' + usageCost().toFixed(2) + '）');
+  }
+  return true;
+}
 function usageCost(){
   return num(cfg.usedImg) * num(cfg.costImg) + num(cfg.usedVidSec) * num(cfg.costVidSec) +
          num(cfg.usedTts) * num(cfg.costTts) + num(cfg.usedLip) * num(cfg.costLip);
@@ -2786,6 +2834,7 @@ function readSettings(){
   if($('cf_costVidSec')) cfg.costVidSec = Math.max(0, num($('cf_costVidSec').value));
   if($('cf_costTts')) cfg.costTts = Math.max(0, num($('cf_costTts').value));
   if($('cf_costLip')) cfg.costLip = Math.max(0, num($('cf_costLip').value));
+  if($('cf_budgetCap')) cfg.budgetCap = Math.max(0, num($('cf_budgetCap').value));   /* v2.47：预算上限读取 */
   saveCfg();
 }
 /* ---- 统一刷新入口：唯一允许调用多个渲染函数的地方 ---- */
@@ -2802,6 +2851,7 @@ function refreshAll(){
   renderUndoBtns();                  /* v2.34：撤销 / 重做按钮的可用态 */
   renderUndoHist();                  /* v2.39：撤销栈的「历史」面板 */
   renderRetryBtn();                  /* v2.37：失败镜数量实时显示在「重试失败项」上 */
+  if(!budgetExceeded()) hideBudgetBanner();   /* v2.47：预算没超就收起横幅（超额由生成事件弹） */
 }
 /* v2.38：失败的判定只此一处——图片 / 视频 / 配音 / 口型**四类都要认**。
    v2.37 及以前只认图片与视频，于是「配音失败」「口型失败」在首页完全不可见：
@@ -3197,6 +3247,7 @@ function aiAnchors(){
 }
 function genImage(id){
   var s = shotById(id); if(!s) return Promise.resolve();
+  if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截图片生成 */
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   state.busy[id] = true;
   return patchShot(id, { 图片状态:'生成中', 错误信息:'', 更新时间:nowStr() })
@@ -3257,6 +3308,7 @@ function markImageChanged(s){
    与 v2.7 的 ⇄ 回退共用同一套历史，绝不静默覆盖任何一张已经花钱生成的图。 */
 function genImageCand(id, silent, nOverride){
   var s = shotById(id); if(!s) return Promise.resolve();
+  if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截候选图生成 */
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   var n = Math.min(3, Math.max(2, num(nOverride) || num(cfg.imgN) || 2));
   state.busy[id] = true;
@@ -3890,6 +3942,7 @@ function startPoll(id){
 }
 function genVideo(id){
   var s = shotById(id); if(!s) return Promise.resolve();
+  if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截视频生成 */
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   if(!s['图片URL']){ toast('请先生成这一镜的图片'); return Promise.resolve(); }
   state.busy[id] = true; refreshAll();
@@ -4237,6 +4290,7 @@ function genAudioCue(id){
 function genAudio(id){
   var s = shotById(id);
   if(!s) return Promise.resolve();
+  if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截配音生成 */
   if(!cfg.ttsKey){ toast('请先在设置里填小米 TTS API Key'); openDrawer(); return Promise.resolve(); }
   var text = String(s['台词旁白'] || '').trim();
   if(!text){ toast('这一镜还没写台词 / 旁白'); return Promise.resolve(); }
@@ -8039,6 +8093,7 @@ function avoidLipCore(list){
 /* 单镜对口型：把视频 URL + 音频 URL 交给唇形服务 */
 function genLipsync(id){
   var s = shotById(id); if(!s) return Promise.resolve();
+  if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截口型生成 */
   if(!cfg.lipBase){ toast('请先在设置里填唇形服务 Base URL'); openDrawer(); return Promise.resolve(); }
   var vid = s['口型视频URL'] || s['视频URL'];
   if(!vid) return Promise.resolve();
@@ -8906,6 +8961,8 @@ function bind(){
         saveCfg(); refreshAll(); toast('用量统计已清零');
       });
   });
+  /* v2.47：预算横幅「知道了」——只关横幅，生成仍会被拦（warned 复位，下次拦截再提示一次） */
+  if($('budgetClose')) $('budgetClose').addEventListener('click', function(){ hideBudgetBanner(); state.budgetWarned = false; });
   if($('btnBatchAudio')) $('btnBatchAudio').addEventListener('click', batchAudio);
   if($('btnTestLip')) $('btnTestLip').addEventListener('click', function(){ readSettings(); testLip(); });
   if($('btnLipScan')) $('btnLipScan').addEventListener('click', scanLipRisk);
