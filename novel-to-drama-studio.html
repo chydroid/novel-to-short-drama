@@ -1204,7 +1204,11 @@ select.inp{cursor:pointer}
     #pvBox.kbimg #pvImg{display:block}
     #pvBox.showvid #pvVid{display:block}
     #pvBox.shownom #pvNoMedia{display:block}
-  </style>
+  
+/* v2.52：内联图标与文字混排时对齐——SVG 默认贴底，按钮里会显得往下掉 */
+.ic{vertical-align:-2px;flex:none;display:inline-block}
+button .ic,.btn .ic{margin-right:2px}
+</style>
   <div class="bar top">
     <b style="font-size:15px">成片预览</b>
     <span id="pvScope" style="color:#aab;font-size:13px;margin-left:6px"></span>
@@ -1313,6 +1317,40 @@ function esc(s){
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+/* v2.52：本机存储写入统一走这里。
+   localStorage 在配额写满、或 Safari 隐私模式下 setItem 会直接抛异常。
+   小说正文是唯一只存本地、云端没有副本的输入——写入失败还闷声不响的话，
+   用户就会「以为存住了，刷新后整篇没了」。所以失败必须显式告知本人。 */
+var _lsWarn = {};
+function lsSet(k, v, opt){
+  opt = opt || {};
+  try{ localStorage.setItem(k, v); return true; }
+  catch(e){
+    if(opt.warn && !_lsWarn[k]){
+      _lsWarn[k] = 1;
+      toast(opt.msg || '本机存储写入失败（空间已满或浏览器限制）：当前内容没能存下来，请先导出备份');
+    }
+    return false;
+  }
+}
+/* v2.52：内联图标。v2.50 只换了播放器与剧目弹窗，这里补齐剩余按钮上的字符图标。 */
+var ICONS = {
+  up:'<path d="M12 19V5M5 12l7-7 7 7"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>',
+  x:'<path d="M18 6L6 18M6 6l12 12"/>',
+  pen:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/>',
+  star:'<path d="M12 2l3.1 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.9-1.01L12 2z" fill="currentColor" stroke="none"/>',
+  starO:'<path d="M12 2l3.1 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.9-1.01L12 2z"/>',
+  dot:'<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
+  dotO:'<circle cx="12" cy="12" r="5.5"/>'
+};
+function svgIc(n, sz){
+  var p = ICONS[n]; if(!p) return '';
+  sz = sz || 14;
+  return '<svg class="ic" width="'+sz+'" height="'+sz+'" viewBox="0 0 24 24" fill="none"'
+    + ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+    + ' aria-hidden="true">'+p+'</svg>';
 }
 function toast(msg){
   var t = $('toast'); t.textContent = msg; t.classList.add('on');
@@ -2479,7 +2517,7 @@ function renderToday(){
     var chips = pipeSteps.map(function(s){
       var sel = !!pp[s.k];
       return '<button class="btn ' + (sel ? '' : 'gh ') + 'sm" data-act="piptoggle" data-k="' + s.k + '" title="' + esc(s.tip) + (s.on ? '' : '（当前无剩余）') + '">' +
-        (sel ? '✓ ' : '') + s.n + (s.on ? (' ' + (s.k === 'lip' ? lipN : allLeft[s.k].ids.length) + ' 个') : '') + '</button>';
+        (sel ? svgIc('check',13) + ' ' : '') + s.n + (s.on ? (' ' + (s.k === 'lip' ? lipN : allLeft[s.k].ids.length) + ' 个') : '') + '</button>';
     }).join('');
     html += '<div class="todo" style="background:#EEF0FF;border-color:#DCD9FB">' +
       '<span class="bad" style="color:#5B5BD6">流水线</span>' +
@@ -2675,7 +2713,7 @@ function renderGenList(){
             '<button class="btn gh sm" data-act="imgcand" data-id="'+s._id+'"'+(busy?' disabled':'')+' title="一次生成多版候选图，弹出面板挑最满意的一版（候选数在设置里调）">A/B 选优</button>' +
             (Array.isArray(s._imgCand) && s._imgCand.length ? '<button class="btn gh sm" data-act="pickcand" data-id="'+s._id+'" title="还有 '+s._imgCand.length+' 张候选图没挑，点开继续选">选图('+s._imgCand.length+')</button>' : '') +
             '<button class="btn gh sm" data-act="viewimg" data-id="'+s._id+'"'+(iu?'':' disabled')+'>看大图</button>' +
-            '<button class="btn gh sm" data-act="lock" data-id="'+s._id+'"'+(iu?'':' disabled')+' style="'+(locked?'color:#B46B00;border-color:#F5D9A0':'')+'">'+(locked?'★ 基准帧':'☆ 标为满意')+'</button>' +
+            '<button class="btn gh sm" data-act="lock" data-id="'+s._id+'"'+(iu?'':' disabled')+' style="'+(locked?'color:#B46B00;border-color:#F5D9A0':'')+'">'+(locked? svgIc('star',13)+' 基准帧' : svgIc('starO',13)+' 标为满意')+'</button>' +
             (Array.isArray(s._imgHist) && s._imgHist.length ? '<button class="btn gh sm" data-act="rollimg" data-id="'+s._id+'" title="回退到上一版图片（当前图保留在历史里）">⇄ 上一版('+s._imgHist.length+')</button>' : '') +
             '</div>' +
           '<div class="media" style="aspect-ratio:'+ar+';margin-top:12px">'+vidHtml+'</div>' +
@@ -3527,7 +3565,7 @@ function openCandPanel(id){
       '<div class="media" style="aspect-ratio:'+ar+'"><img src="'+esc(u)+'" referrerpolicy="no-referrer"></div>' +
       '<div class="cscore" data-ci="'+i+'" style="font-size:12px;margin-top:5px;min-height:34px;line-height:1.4;color:var(--tx2)">' +
         (cfg.imgScore === false ? '' : '评分中…') + '</div>' +
-      '<button class="btn sm" style="margin-top:6px;width:100%" data-cbact="pick" data-i="'+i+'">✓ 选 ' + String.fromCharCode(65+i) + '</button>' +
+      '<button class="btn sm" style="margin-top:6px;width:100%" data-cbact="pick" data-i="'+i+'">'+svgIc('check',13)+' 选 ' + String.fromCharCode(65+i) + '</button>' +
       '</div>';
   }).join('');
   $('cbTitle').textContent = '第 ' + s['镜号'] + ' 镜 · ' + s._imgCand.length + ' 版候选（A/B 选优）';
@@ -3914,9 +3952,9 @@ function runCandScore(id){
         (r.safe != null ? '<span style="opacity:.7"> · 构图 ' + r.safe + '</span>' : '') +
         (r.subj != null ? '<span style="opacity:.7"> · 主体 ' + r.subj + '</span>' : '') +
         '<div style="opacity:.8">' + esc(r.tags.length ? r.tags.join('、') : '清晰度 / 曝光 / 色彩均正常') + '</div>' +
-        (rec ? '<div style="color:#4ade80;font-weight:600">★ 推荐</div>' : '');
+        (rec ? '<div style="color:#4ade80;font-weight:600">'+svgIc('star',13)+' 推荐</div>' : '');
       var btn = box.querySelector('[data-cbact="pick"][data-i="' + i + '"]');
-      if(btn && rec) btn.textContent = '✓ 选 ' + String.fromCharCode(65 + i) + '（推荐）';
+      if(btn && rec) btn.innerHTML = svgIc('check',13) + ' 选 ' + String.fromCharCode(65 + i) + '（推荐）';
     });
   }).catch(function(){});
 }
@@ -4789,7 +4827,7 @@ function cueRowHtml(c){
     '<select class="inp" data-cf="type">' + opts + '</select>' +
     '<input class="inp" data-cf="emo" value="' + esc(c.emotion || '') + '" placeholder="情绪，如：强忍眼泪">' +
     '<input class="inp" data-cf="txt" value="' + esc(c.text || '') + '" placeholder="这一句的台词">' +
-    '<button class="btn gh sm" data-cact="delrow" title="删除这一句">✕</button>' +
+    '<button class="btn gh sm" data-cact="delrow" title="删除这一句">'+svgIc('x',13)+'</button>' +
     '</div>';
 }
 function openCueBox(id){
@@ -5677,7 +5715,7 @@ function renderRangePresets(){
       '<button class="btn gh sm" data-act="rnguse" data-i="' + i + '" title="' + esc(p.v || '') + '（命中 ' + hits + ' 镜）">' +
         esc(p.n || ('预设 ' + (i + 1))) + ' <span style="color:var(--tx3)">(' + hits + ')</span></button>' +
       '<button class="btn gh sm" data-act="rngfilter" data-i="' + i + '" title="切到「③ 生成图 / 视频」页，按这个选区只看这几个镜">筛</button>' +
-      (i > 0 ? '<button class="btn gh sm" data-act="rngup" data-i="' + i + '" title="上移一位（列表顺序 = 常用度，自己排）">↑</button>' : '') +
+      (i > 0 ? '<button class="btn gh sm" data-act="rngup" data-i="' + i + '" title="上移一位（列表顺序 = 常用度，自己排）">'+svgIc('up',13)+'</button>' : '') +
       '<button class="btn gh sm" data-act="rngdel" data-i="' + i + '" title="删除该预设">×</button>' +
     '</span>';
   }).join('');
@@ -5824,7 +5862,7 @@ function renderFilterViews(){
   var box = $('filterViews'); if(!box) return;
   var arr = filterViews();
   if(!arr.length){
-    box.innerHTML = '<span class="hint" style="margin:0">还没有筛选视图——调好右边的筛选（或按镜号选区）后点「存为视图」，以后一键切回；拖拽可排序、✎ 可重命名</span>';
+    box.innerHTML = '<span class="hint" style="margin:0">还没有筛选视图——调好右边的筛选（或按镜号选区）后点「存为视图」，以后一键切回；拖拽可排序，点铅笔图标可重命名</span>';
     return;
   }
   var cur = curFilterKey();
@@ -5835,7 +5873,7 @@ function renderFilterViews(){
       '<span style="cursor:grab;color:var(--tx3);user-select:none" title="拖拽排序">⋮⋮</span>' +
       '<button class="btn ' + (on ? '' : 'gh ') + 'sm" data-act="fvuse" data-i="' + i + '" title="' + esc(tip) + '">' +
         esc(filterViewLabel(v)) + ' <span style="color:var(--tx3)">(' + filterViewHits(v) + ')</span></button>' +
-      '<button class="btn gh sm" data-act="fvren" data-i="' + i + '" title="重命名该视图">✎</button>' +
+      '<button class="btn gh sm" data-act="fvren" data-i="' + i + '" title="重命名该视图">'+svgIc('pen',13)+'</button>' +
       '<button class="btn gh sm" data-act="fvdel" data-i="' + i + '" title="删除该视图">×</button></span>';
   }).join('');
 }
@@ -6641,7 +6679,7 @@ function curGlobalStyle(){
 }
 /* v2.20：套餐从「内置三套 + 只能用类型触发」升级为「可编辑的多套」——
    用户可以把调好的配方（画风预设 + 全局令牌 + 是否注入提示词）存成自己的套餐，
-   下次不必从零再配一遍。内置三套仍按类型自动推荐，自定义的以 ⭐ 标注。 */
+   下次不必从零再配一遍。内置三套仍按类型自动推荐，自定义的以星标图标标注。 */
 function genrePresets(){
   if(!Array.isArray(cfg.genrePresets)) cfg.genrePresets = [];
   return cfg.genrePresets;
@@ -6660,10 +6698,10 @@ function renderGenrePresets(){
   var box = $('genrePresets'), hint = $('genrePresetsHint');
   if(!box) return;
   var arr = genrePresetList(), mine = genrePresets().length;
-  if(hint) hint.textContent = '共 ' + arr.length + ' 套（内置 3 套 + 你自己存的 ' + mine + ' 套）；点名称即套用' + (mine ? '，带 ⭐ 的可点 × 删除' : '');
+  if(hint) hint.textContent = '共 ' + arr.length + ' 套（内置 3 套 + 你自己存的 ' + mine + ' 套）；点名称即套用' + (mine ? '，自定义的可点 × 删除' : '');
   box.innerHTML = arr.map(function(p, i){
     var tip = p.style + (p.globalStyle ? ' ｜ ' + p.globalStyle : '') + (p.prompt ? ' ｜ 注入提示词' : ' ｜ 不注入');
-    return '<button class="btn gh sm" data-act="guse" data-i="' + i + '" title="' + esc(tip) + '">' + esc(p.n) + (p.custom != null ? ' ⭐' : '') + '</button>' +
+    return '<button class="btn gh sm" data-act="guse" data-i="' + i + '" title="' + esc(tip) + '">' + esc(p.n) + (p.custom != null ? ' ' + svgIc('star',12) : '') + '</button>' +
       (p.custom != null ? '<button class="btn gh sm" data-act="gdel" data-i="' + i + '" title="删除该自定义套餐">×</button>' : '');
   }).join('');
 }
@@ -7521,7 +7559,7 @@ function showHealthBox(){
   var rows = healthGroupRows(shown).map(function(g){
     var openIt = (g.type in hgOpen) ? !!hgOpen[g.type] : !!g.hard;
     var head = '<summary style="cursor:pointer;padding:6px 2px;font-weight:600">' +
-      (g.hard ? '<span style="color:#B45309">●</span> ' : '<span style="color:var(--tx3)">○</span> ') +
+      (g.hard ? '<span style="color:#B45309">'+svgIc('dot',12)+'</span> ' : '<span style="color:var(--tx3)">'+svgIc('dotO',12)+'</span> ') +
       esc(g.type) +
       ' <span style="font-weight:400;color:var(--tx3)">' + g.rows.length + ' 条</span>' +
       (g.fixKind ? ' <span style="font-weight:400;color:#1F7A3D">可自动修复</span>' : '') +
@@ -8861,7 +8899,7 @@ function runImport(arr, data){
       localSave(state.shots);
       try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
       if(data.novel) $('novel').value = data.novel;
-      localStorage.setItem(pk('novel'), $('novel').value);
+      lsSet(pk('novel'), $('novel').value, { warn:true });
       restoreBackupAudio(data);                // v2.7：把随备份的配音写回本机
       refreshAll(); toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡');
       return;
@@ -8883,7 +8921,7 @@ function runImport(arr, data){
         return function(){ return p.addRecord({ databaseId: DB_ID, properties: toProps(build(it)) }); };
       }), { label: '导入分镜', tag: 'import' });
     }).then(function(r){ repS = r; if(data.novel) $('novel').value = data.novel; })
-      .then(function(){ localStorage.setItem(pk('novel'), $('novel').value); })
+      .then(function(){ lsSet(pk('novel'), $('novel').value, { warn:true }); })
       .then(function(){ return loadShots(); })
       .then(function(){
         var f = (repA ? repA.fail : 0) + (repS ? repS.fail : 0);
@@ -9171,7 +9209,7 @@ function bind(){
   $('novel').addEventListener('input', function(){
     clearTimeout(window._nvTm);
     window._nvTm = setTimeout(function(){
-      try{ localStorage.setItem(pk('novel'), $('novel').value); }catch(e){}
+      lsSet(pk('novel'), $('novel').value, { warn:true });
     }, 500);
   });
 
@@ -9400,7 +9438,7 @@ function bind(){
   $('fileNovel').addEventListener('change', function(){
     var f = this.files && this.files[0]; if(!f) return;
     var fr = new FileReader();
-    fr.onload = function(){ $('novel').value = fr.result; localStorage.setItem(pk('novel'), fr.result); toast('已导入 ' + f.name); };
+    fr.onload = function(){ $('novel').value = fr.result; lsSet(pk('novel'), fr.result, { warn:true }); toast('已导入 ' + f.name); };
     fr.readAsText(f, 'utf-8');
     this.value = '';
   });
@@ -9427,8 +9465,14 @@ function bind(){
   $('dialog').addEventListener('keydown', function(e){
     if(e.key === 'Enter' && _dlgInput){ e.preventDefault(); closeDlg(true); }
   });
+  /* v2.52：Esc 关掉「最上层」那个浮层。原来只有确认框和成片播放器响应，
+     设置抽屉 / 剧目管理 / 字幕编辑都只能去找关闭按钮。按层级从上往下判定。 */
   document.addEventListener('keydown', function(e){
-    if(e.key === 'Escape' && $('dialog').classList.contains('on')) closeDlg(false);
+    if(e.key !== 'Escape') return;
+    if($('dialog').classList.contains('on')){ closeDlg(false); return; }
+    if($('projDlg').classList.contains('on')){ closeProjMgr(); return; }
+    if($('cueBox').classList.contains('on')){ closeCueBox(); return; }
+    if($('drawer').classList.contains('on')){ closeDrawer(); return; }
   });
 
   /* 提示词调试弹窗 */
