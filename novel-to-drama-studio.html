@@ -57,9 +57,14 @@ svg{display:block}
 .proj-row .btn{height:30px;padding:0 10px;font-size:12.5px}
 #projMask{position:fixed;inset:0;background:rgba(16,18,35,.45);opacity:0;pointer-events:none;transition:.18s;z-index:92}
 #projMask.on{opacity:1;pointer-events:auto}
-#projDlg{z-index:93}
+#projDlg{z-index:93;width:min(440px,90vw)}
 .dialog-hd .x{margin-left:auto;cursor:pointer;font-size:18px;line-height:1;color:var(--tx3);padding:0 4px}
 .dialog-hd .x:hover{color:var(--err)}
+/* v2.49：剧目管理弹窗四周留白，避免圆角裁切内容；头部 flex 让关闭叉归位 */
+#projDlg .dialog-hd{padding:12px 14px;display:flex;align-items:center;font-size:15px;font-weight:700;border-bottom:1px solid var(--line)}
+#projDlg .dialog-bd{padding:10px 12px}
+#projDlg .dialog-ft{padding:10px 12px;display:flex;gap:10px}
+#projDlg .dialog-ft .btn{flex:1;height:42px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 14px;border-radius:10px;background:var(--main);color:#fff;font-weight:600;font-size:14px;transition:.15s}
 .btn:hover{background:var(--main-dk)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
