@@ -323,6 +323,114 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   .tab{height:44px}
 }
 </style>
+<style>
+/* ============================================================
+   v2.50 · 视觉系统升级
+   去 AI 味：统一圆角 / 阴影 / 间距 / 交互态；重做弹窗与出片播放器；
+   收敛渐变与字符图标。本层追加在样式表末尾，按顺序覆盖上方同名规则。
+   ============================================================ */
+:root{
+  --bg:#F5F6FA; --bg2:#ECEFF7; --card:#FFFFFF; --line:#E4E7F0; --line2:#EFF1F8;
+  --tx:#15171F; --tx2:#50566E; --tx3:#868CA3;
+  --main:#5A5AD8; --main-soft:#EEEEFC; --main-dk:#4646BE; --main-line:#DCDCF9;
+  --r:14px; --r-xs:8px; --r-sm:10px; --r-lg:18px;
+  --sh:0 1px 2px rgba(20,22,40,.04),0 8px 24px rgba(20,22,40,.06);
+  --sh-1:0 1px 2px rgba(20,22,40,.05);
+  --sh-2:0 2px 8px rgba(20,22,40,.06),0 16px 40px rgba(20,22,40,.10);
+  --sh-3:0 24px 70px rgba(14,16,30,.30);
+  --ring:0 0 0 3px rgba(90,90,216,.15);
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+::selection{background:#E3E3FB;color:#3B3BB0}
+*::-webkit-scrollbar{width:11px;height:11px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:#D2D6E4;border:3px solid transparent;border-radius:20px;background-clip:padding-box}
+*::-webkit-scrollbar-thumb:hover{background:#BCC2D6}
+
+/* ---------- 顶栏 ---------- */
+.hd{box-shadow:0 1px 0 rgba(20,22,40,.05)}
+.hd-in{height:62px;gap:12px}
+.logo{border-radius:10px;background:linear-gradient(150deg,#5B5BD6,#7C5CF0);box-shadow:0 3px 10px rgba(91,91,214,.30)}
+.hd h1{font-size:16.5px;letter-spacing:-.01em}
+.hd .sub{font-size:11.5px;letter-spacing:.02em}
+.sync{background:#F2F3F9;border:1px solid var(--line2)}
+.proj-sel{height:34px;border-radius:9px;background:#fff;transition:border-color .15s var(--ease),box-shadow .15s var(--ease)}
+.proj-sel:hover{border-color:#D7DBE7}
+.proj-sel:focus{outline:none;border-color:var(--main);box-shadow:var(--ring)}
+
+/* ---------- 按钮 ---------- */
+.btn{border-radius:10px;box-shadow:0 1px 2px rgba(90,90,216,.22);
+  transition:background .16s var(--ease),box-shadow .16s var(--ease),transform .12s var(--ease),border-color .16s var(--ease)}
+.btn:hover{box-shadow:0 2px 7px rgba(90,90,216,.30)}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{outline:none;box-shadow:var(--ring)}
+.btn.gh{box-shadow:var(--sh-1)}
+.btn.gh:hover{background:#F6F7FB;border-color:#DADEEA}
+.btn.gh:active{background:#EDEFF6}
+.btn.sm{border-radius:9px}
+.btn.danger{box-shadow:0 1px 2px rgba(226,61,61,.26)}
+.btn.ok{box-shadow:0 1px 2px rgba(16,185,129,.26)}
+
+/* ---------- 表单 ---------- */
+.inp,textarea.inp,select.inp{border-radius:10px;
+  transition:border-color .15s var(--ease),box-shadow .15s var(--ease),background .15s var(--ease)}
+.inp:hover{border-color:#D7DBE7}
+.inp:focus{border-color:var(--main);box-shadow:var(--ring)}
+select.inp{cursor:pointer}
+
+/* ---------- 卡片 / 标签页 ---------- */
+.card{border-radius:var(--r);box-shadow:var(--sh)}
+.card-hd{padding:15px 18px}
+.card-bd{padding:18px}
+.card-hd h2{letter-spacing:-.01em}
+.tabs{border-radius:14px;box-shadow:var(--sh-1);gap:5px}
+.tab{border-radius:10px;transition:background .16s var(--ease),color .16s var(--ease)}
+.tab:hover{color:var(--tx)}
+.tab.on{color:var(--main-dk);box-shadow:inset 0 0 0 1px var(--main-line)}
+
+/* ---------- 分组标题（左侧竖条，替换原来的虚线底边） ---------- */
+.sec-t{position:relative;font-size:13px;font-weight:700;color:var(--tx);letter-spacing:0;
+  margin:24px 0 12px;padding:0 0 0 11px;border-bottom:0}
+.sec-t::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:3px;height:15px;border-radius:3px;background:linear-gradient(180deg,#5A5AD8,#8B5CF6)}
+.sec-t:first-child{margin-top:0}
+
+/* ---------- 分镜表 ---------- */
+.tbl-hd{color:var(--tx3);letter-spacing:.02em}
+.row{transition:background .14s var(--ease)}
+
+/* ---------- 弹窗（统一为弹性纵向布局，正文可滚动，杜绝圆角裁切） ---------- */
+.dlgmask{backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.dialog{border-radius:var(--r-lg);border:1px solid rgba(20,22,40,.06);box-shadow:var(--sh-3);
+  display:flex;flex-direction:column;max-height:min(90vh,940px)}
+.dlg-t{padding:17px 20px 13px;font-size:16px;letter-spacing:-.01em;border-bottom:1px solid var(--line2)}
+.dlg-m{padding:14px 20px 16px;flex:1 1 auto;min-height:0;overflow:auto}
+.dlg-f{padding:0 20px 18px}
+.dlg-link{border-radius:9px}
+.dlg-media{border-radius:12px}
+#projMask{backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+#projDlg .dialog-hd{padding:15px 18px;font-size:15.5px;letter-spacing:-.01em}
+#projDlg .dialog-bd{padding:12px 14px 6px;flex:1 1 auto;min-height:0;overflow:auto}
+#projDlg .dialog-ft{padding:12px 14px 16px}
+#projDlg .dialog-hd .x{font-size:20px;line-height:1;width:30px;height:30px;display:flex;
+  align-items:center;justify-content:center;border-radius:8px;transition:.15s var(--ease)}
+#projDlg .dialog-hd .x:hover{background:var(--err-soft);color:var(--err)}
+.proj-row{transition:background .14s var(--ease),border-color .14s var(--ease)}
+.proj-row:hover{background:#F8F9FE}
+
+/* ---------- 设置抽屉 ---------- */
+.drawer{box-shadow:-10px 0 42px rgba(20,22,40,.18)}
+.dw-hd{padding:16px 18px;box-shadow:0 1px 0 rgba(20,22,40,.03)}
+.dw-bd{padding:18px}
+.dw-ft{padding:14px 18px}
+
+/* ---------- 进度 / 提示 ---------- */
+.toast{border-radius:14px;box-shadow:0 10px 30px rgba(20,22,40,.22)}
+.bbar{border-radius:16px;box-shadow:0 12px 34px rgba(0,0,0,.42)}
+
+/* ---------- 响应式：窄屏收起按钮文字，只留图标 ---------- */
+@media(max-width:900px){ .hide-sm{display:none} }
+</style>
 </head>
 <body data-page-node-id="7xyArTFIFDMsQt62bSj2YB">
 
@@ -653,25 +761,25 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div class="fld"><label>生图候选数（点分镜卡「A/B 选优」一次生成多版，挑最满意的一版）</label><select class="inp" id="cf_imgN"><option value="1">1（不启用 A/B，单图最快）</option><option value="2">2 版（A/B 对比，推荐）</option><option value="3">3 版（三选一，费用×3）</option></select></div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_batchCand" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>批量生图 / 长篇流水线也按候选数生成（v2.10：批量时不出面板，候选存着，跑完逐镜点「选图(N)」挑，费用×候选数）</span>
+      <span>批量生图 / 长篇流水线也按候选数生成（批量时不出面板，候选存着，跑完逐镜点「选图(N)」挑，费用×候选数）</span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_imgScore" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>候选图<b>自动技术评分</b>（v2.11：在 A/B 选优面板里给每张候选算清晰度 / 曝光 / 饱和度得分并标「推荐」，先帮你滤掉糊片和废片，再凭审美挑；跨域取不到像素时自动跳过，不影响选图）</span>
+      <span>候选图<b>自动技术评分</b>（在 A/B 选优面板里给每张候选算清晰度 / 曝光 / 饱和度得分并标「推荐」，先帮你滤掉糊片和废片，再凭审美挑；跨域取不到像素时自动跳过，不影响选图）</span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin:-4px 0 12px 26px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_imgCons" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>并把<b>与全剧色调的一致性</b>计入评分（v2.12：拿候选图的色彩直方图和本剧已定稿镜头的平均色调比对，帮你挑出「看着像同一部剧」的那版）</span>
+      <span>并把<b>与全剧色调的一致性</b>计入评分（拿候选图的色彩直方图和本剧已定稿镜头的平均色调比对，帮你挑出「看着像同一部剧」的那版）</span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin:-4px 0 12px 26px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_imgSafe" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>并把<b>构图安全区</b>计入评分（v2.13：检查底部字幕区是否过挤、主体是否被画框切断、重心是否偏出画面，提前挑出「烧上字幕就看不清」「半张脸贴边」的那版）</span>
+      <span>并把<b>构图安全区</b>计入评分（检查底部字幕区是否过挤、主体是否被画框切断、重心是否偏出画面，提前挑出「烧上字幕就看不清」「半张脸贴边」的那版）</span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_imgSubj" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>再把<b>人物主体占比</b>计入评分（v2.15：取「肤色像素 ∪ 显著性前景」的较大者近似人在画面里占多大，挑掉「人物小得快看不见」和「怼脸贴满画框」两头的废片；<b>只是像素统计、不是人脸检测</b>——暗调、古装、强色偏靠显著性兜底，不会像只看肤色那样误报空镜，仅作提示）</span>
+      <span>再把<b>人物主体占比</b>计入评分（取「肤色像素 ∪ 显著性前景」的较大者近似人在画面里占多大，挑掉「人物小得快看不见」和「怼脸贴满画框」两头的废片；<b>只是像素统计、不是人脸检测</b>——暗调、古装、强色偏靠显著性兜底，不会像只看肤色那样误报空镜，仅作提示）</span>
     </label>
-    <div class="fld"><label>剧集画面类型（v2.16：按类型调主体/构图的判定阈值，避免古装厚衣、动画高饱和被误判成「空镜」）</label>
+    <div class="fld"><label>剧集画面类型（按类型调主体/构图的判定阈值，避免古装厚衣、动画高饱和被误判成「空镜」）</label>
       <select class="inp" id="cf_genre">
         <option value="auto">自动 / 通用（默认，现代与混合题材都合适）</option>
         <option value="modern">现代都市（真人写实，肤色可信，偏重肤色）</option>
@@ -682,7 +790,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <button class="btn gh sm" id="btnGenreStyle">按类型套用整套配置（画风 + 全局令牌 + 提示词）</button>
         <span class="hint" id="genreStyleHint" style="margin:0"></span>
       </div></div>
-    <div class="fld"><label>类型套餐库（v2.20：内置 3 套 + 你自己存的配方，点一下即套用「画风预设 + 全局画风令牌 + 提示词注入」三件套）</label>
+    <div class="fld"><label>类型套餐库（内置 3 套 + 你自己存的配方，点一下即套用「画风预设 + 全局画风令牌 + 提示词注入」三件套）</label>
       <div class="tools" style="margin:0">
         <button class="btn gh sm" id="btnGenreSave">把当前配置存为套餐</button>
         <button class="btn gh sm" id="btnGenreExport" title="把自定义套餐导成一段 JSON 文件，换设备或发给同事直接导入">导出套餐</button>
@@ -694,7 +802,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_genrePrompt" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>并把<b>剧集画面类型</b>也写进生成提示词（v2.17：把「古装 / 动画 / 现代写实」提前告诉模型，避免古装被画成现代装、动画被画成实拍；选「自动」时不注入，填了<b>全局画风前缀</b>时也照常叠加）</span>
+      <span>并把<b>剧集画面类型</b>也写进生成提示词（把「古装 / 动画 / 现代写实」提前告诉模型，避免古装被画成现代装、动画被画成实拍；选「自动」时不注入，填了<b>全局画风前缀</b>时也照常叠加）</span>
     </label>
     <div class="fld"><label>单镜参考图上限（张）</label><select class="inp" id="cf_refMax">
       <option value="3">3</option><option value="4">4（推荐，模型最稳）</option><option value="5">5</option>
@@ -707,7 +815,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <button class="btn gh sm" id="btnTest" data-page-node-id="3xWYzAqBCMekm7iVbmkC77">测试 Agnes 连通性</button>
     <div class="result" id="testResult" data-page-node-id="ZiYSyEUbRthK4KSQdbBFqn"></div>
 
-    <div class="sec-t">并发与多 Key 轮换（对标 moyin-creator 并行队列 / key rotation）</div>
+    <div class="sec-t">并发与多 Key 轮换</div>
     <div class="hint" style="margin-bottom:10px">批量生成默认<b>串行</b>较慢。这里可调并发路数与失败自动重试；多个 Key 每行一个会自动轮换，遇到 <b>429 限流 / 401 鉴权失败</b>自动换下一个 Key 重试，适合多账号分摊配额。</div>
     <div class="fld"><label>多个 Agnes API Key（每行一个，留空则只用上面那个）</label><textarea class="inp" id="cf_agnesKeys" rows="3" placeholder="sk-xxxxxx&#10;sk-yyyyyy"></textarea></div>
     <div class="row3">
@@ -728,7 +836,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </label>
     <div class="fld"><label>全局负向提示词（自动拼在每次生图请求里）</label><input class="inp" id="cf_neg" placeholder="different face, changed hairstyle, changed outfit, deformed hands, extra fingers, watermark, text"></div>
     <div class="fld"><label>全局画风前缀（自动拼在每个提示词前）</label><input class="inp" id="cf_prefix" placeholder="例：中国古装悬疑短剧，电影级写实，"></div>
-    <div class="fld"><label>项目级统一画风令牌（对标 Jellyfish 全局风格，固定注入每个镜头，防整剧调性漂移）</label><input class="inp" id="cf_globalStyle" placeholder="例：暖色调古风，绢本工笔质感，淡金色夕照，环境光统一偏暖"></div>
+    <div class="fld"><label>项目级统一画风令牌（固定注入每个镜头，防整剧调性漂移）</label><input class="inp" id="cf_globalStyle" placeholder="例：暖色调古风，绢本工笔质感，淡金色夕照，环境光统一偏暖"></div>
 
     <div class="sec-t">配音 · 小米 MiMo TTS（限时免费）</div>
     <div class="hint" style="margin-bottom:10px">在 <b>platform.xiaomimimo.com</b> 申请 TTS 专用 API Key（与模型推理 Key 不通用）。浏览器直连会被跨域拦截，建议 TTS Base URL 填本地代理：<b>http://127.0.0.1:8787/tts/v1</b>（启动代理时加 <b>--tts https://api.xiaomimimo.com</b>）。</div>
@@ -762,13 +870,13 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_cueTts" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>逐句配音（v2.10：每句 cue 按<b>自己说话人的角色音色</b>分别合成再拼接，解决「一镜多说话人单音色读串」；代价是每句一次请求）</span>
+      <span>逐句配音（每句 cue 按<b>自己说话人的角色音色</b>分别合成再拼接，解决「一镜多说话人单音色读串」；代价是每句一次请求）</span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_ttsZip" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>逐句配音拼好后<b>压成压缩格式再存本机</b>（v2.11：webm/opus，体积约为 wav 的 1/10，能多存十倍的配音；浏览器不支持时自动退回 wav）</span>
+      <span>逐句配音拼好后<b>压成压缩格式再存本机</b>（webm/opus，体积约为 wav 的 1/10，能多存十倍的配音；浏览器不支持时自动退回 wav）</span>
     </label>
-    <div class="fld" style="max-width:320px"><label>逐句配音并发路数（v2.12：多句同时合成，结果仍按句序拼接）</label><select class="inp" id="cf_ttsConc">
+    <div class="fld" style="max-width:320px"><label>逐句配音并发路数（多句同时合成，结果仍按句序拼接）</label><select class="inp" id="cf_ttsConc">
       <option value="1">1（串行，最省配额）</option><option value="2">2（推荐，速度翻倍）</option><option value="3">3（最快，注意 TTS 限流）</option></select></div>
     <button class="btn gh sm" id="btnTestTts">测试 TTS 连通性</button>
     <div class="result" id="testTtsResult"></div>
@@ -795,7 +903,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <button class="btn gh sm" id="btnTestLip">测试唇形服务</button>
     <div class="result" id="testLipResult"></div>
 
-    <div class="sec-t">背景音乐 BGM（对标 NarratoAI，混进整轨配音与合成脚本）</div>
+    <div class="sec-t">背景音乐 BGM</div>
     <div class="fld"><label>BGM 音频 URL（mp3 / wav 直链，留空不混音）</label><input class="inp" id="cf_bgmUrl" placeholder="https://.../bgm.mp3"></div>
     <div class="row2">
       <div class="fld"><label>音量（0-1，建议 0.1-0.25，人声优先）</label><input class="inp" type="number" id="cf_bgmVol" min="0" max="1" step="0.01"></div>
@@ -823,7 +931,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div class="hint">导出「整轨配音 .wav」时会自动把 BGM 循环铺底、按音量混合并做首尾淡入淡出；一键合成脚本里也会带上这条 BGM。</div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:10px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_trackZip" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">
-      <span>整轨配音导出<b>压缩版</b>（v2.13：优先 <b>.m4a/AAC</b>——剪映、PR、达芬奇都直接认，不支持的浏览器退回 .webm/opus；体积约为 wav 的 1/10。默认关：压缩要实时录制，耗时≈成片总长；再不支持就仍给 wav）</span>
+      <span>整轨配音导出<b>压缩版</b>（优先 <b>.m4a/AAC</b>——剪映、PR、达芬奇都直接认，不支持的浏览器退回 .webm/opus；体积约为 wav 的 1/10。默认关：压缩要实时录制，耗时≈成片总长；再不支持就仍给 wav）</span>
     </label>
 
     <div class="sec-t">字幕样式（烧录进成片时生效）</div>
@@ -844,14 +952,14 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <input type="checkbox" id="cf_subBg" style="width:18px;height:18px;flex:0 0 auto"><span>半透明黑底（背景乱时更好读，对标 MoneyPrinterTurbo 字幕底）</span>
     </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
-      <input type="checkbox" id="cf_srtCue" style="width:18px;height:18px;flex:0 0 auto"><span>逐句字幕（v2.9：台词按说话人/断句拆成多条字幕，对白带「角色名：」前缀）</span>
+      <input type="checkbox" id="cf_srtCue" style="width:18px;height:18px;flex:0 0 auto"><span>逐句字幕（台词按说话人/断句拆成多条字幕，对白带「角色名：」前缀）</span>
     </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2);margin-top:6px;cursor:pointer">
-      <input type="checkbox" id="cf_cueAlign" style="width:18px;height:18px;flex:0 0 auto"><span>用配音真实句长对齐（v2.11：跑过逐句配音的镜头，字幕按每句实际念了多少秒切分，嘴型与字幕严丝合缝；没配音的镜头仍按字数估算）</span>
+      <input type="checkbox" id="cf_cueAlign" style="width:18px;height:18px;flex:0 0 auto"><span>用配音真实句长对齐（跑过逐句配音的镜头，字幕按每句实际念了多少秒切分，嘴型与字幕严丝合缝；没配音的镜头仍按字数估算）</span>
     </label>
     <div class="hint" style="margin-top:6px">颜色用 ASS 的 <b>BGR</b> 顺序：白色 = <code>FFFFFF</code>，黄色 = <code>00FFFF</code>。改完重新导出合成包即可，不影响的 .srt 本身。</div>
 
-    <div class="sec-t">字幕样式实时预览（v2.46）</div>
+    <div class="sec-t">字幕样式实时预览</div>
     <div class="sub-prev-wrap">
       <div class="sub-prev-box" id="subPrevBox">
         <div class="sub-prev-frame">示例画面</div>
@@ -863,7 +971,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       </div>
     </div>
 
-    <div class="sec-t">用量与成本追踪（对标 ArcReel）</div>
+    <div class="sec-t">用量与成本追踪</div>
     <div class="hint" style="margin-bottom:10px">每次生成成功自动计数。单价按你的套餐折算填写，填 0 就只计数不算钱。</div>
     <div class="row2">
       <div class="fld"><label>图片单价（元 / 张）</label><input class="inp" type="number" id="cf_costImg" min="0" step="0.01"></div>
@@ -954,10 +1062,10 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
 <div class="dialog" id="expBox" style="max-width:760px">
   <div class="dlg-t">导出中心</div>
   <div class="dlg-m" style="max-height:66vh;overflow:auto">
-    <div class="hint" style="margin-bottom:14px">所有导出、合成与备份集中在这里，功能与按钮与之前完全一致，只是不再挤占工具区。</div>
+    <div class="hint" style="margin-bottom:14px">所有导出、合成与备份集中在这里，按用途分组，不再挤占工具区。</div>
 
-    <div class="sec-t">★ 一键全导出</div>
-    <div class="fld" style="max-width:480px"><label>打包范围（v2.17：成套导出不必每次都导整本，可只出其中一部分）</label>
+    <div class="sec-t">一键全导出</div>
+    <div class="fld" style="max-width:480px"><label>打包范围（成套导出不必每次都导整本，可只出其中一部分）</label>
       <select class="inp" id="expScope">
         <option value="all">全部镜头（默认）</option>
         <option value="done">仅已完成（有视频 / 口型视频）的镜头</option>
@@ -966,7 +1074,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="range">自定镜号（下面填镜号表达式，支持多段与排除）</option>
       </select></div>
     <div class="fld" id="expRangeWrap" style="max-width:480px;display:none">
-      <label>镜号表达式（v2.19：多段用逗号隔开，如 <code>1-20,25,30-35</code>；排除用 <code>!</code> 前缀，如 <code>1-50,!8-10</code>；只写 <code>!3</code> 表示「全部扣掉第 3 镜」；v2.20 起可用 <code>#章节名</code> 直接引用整章，如 <code>1-100,!#第一集</code>）</label>
+      <label>镜号表达式（多段用逗号隔开，如 <code>1-20,25,30-35</code>；排除用 <code>!</code> 前缀，如 <code>1-50,!8-10</code>；只写 <code>!3</code> 表示「全部扣掉第 3 镜」；<code>#章节名</code> 可直接引用整章，如 <code>1-100,!#第一集</code>）</label>
       <input class="inp" type="text" id="expRange" placeholder="例如 1-20,25,30-35　或　1-50,!8-10　或　#第一集" style="width:100%">
       <div class="tools" style="margin:8px 0 0">
         <button class="btn gh sm" id="btnRangeSave">把当前表达式存为预设</button>
@@ -989,7 +1097,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <input type="checkbox" id="expInclLeft" style="width:16px;height:16px"> 连「剩余清单」一起打包（各类型一张 .csv）
       </label>
     </div>
-    <div class="fld" style="max-width:640px;margin-bottom:8px"><label>打包内容（v2.23：只打你要的那几样——发给剪辑只给字幕和清单时，不必把整包都塞过去）</label>
+    <div class="fld" style="max-width:640px;margin-bottom:8px"><label>打包内容（只打你要的那几样——发给剪辑只给字幕和清单时，不必把整包都塞过去）</label>
       <div class="tools" style="margin:0;gap:16px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx2);cursor:pointer">
           <input type="checkbox" id="expPickSrt" style="width:16px;height:16px"> 分镜字幕 .srt
@@ -1011,7 +1119,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         </label>
       </div>
     </div>
-    <div class="fld" style="max-width:640px;margin-bottom:8px"><label>按镜头状态二次筛选（v2.24：在「打包范围」基础上再砍一刀，只导某一状态的镜头）</label>
+    <div class="fld" style="max-width:640px;margin-bottom:8px"><label>按镜头状态二次筛选（在「打包范围」基础上再砍一刀，只导某一状态的镜头）</label>
       <select class="inp" id="expStatusSel" style="width:auto;height:34px;font-size:13px;padding:4px 8px">
         <option value="all">全部状态</option>
         <option value="noimg">待生成图片</option>
@@ -1021,14 +1129,14 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
         <option value="done">已完成</option>
       </select>
     </div>
-    <div class="hint" style="margin:-8px 0 16px">一键打包只打上面勾选的几样，都按「打包范围」+「状态筛选」双重过滤，整轨配音也同步；本机有配音时会问你要不要连整轨一起打进去。绝不丢内容，单个导出照旧可用。</div>
+    <div class="hint" style="margin:-8px 0 16px">一键打包只打上面勾选的几样，都按「打包范围」+「状态筛选」双重过滤，整轨配音也同步；本机有配音时会问你要不要连整轨一起打进去。</div>
 
     <div class="sec-t">① 出片</div>
     <div class="tools" style="margin-bottom:16px">
       <button class="btn" id="btnExpRender">一键合成包（FFmpeg 脚本，出成片）</button>
       <button class="btn gh" id="btnExpFcp">导出剪辑时间线 .fcpxml</button>
       <button class="btn gh" id="btnExpDraft" title="导出剪映专业版草稿（draft_content.json + draft_meta_info.json），解压后放进剪映草稿目录即可直接进时间线">导出剪映草稿 .zip</button>
-      <button class="btn" id="btnExpPreview" title="不导出也能直接在浏览器里看一遍成片效果：图片轮播（带缓慢推近运镜）+ 字幕 + 配音，按导出范围与状态筛选播放">▶ 成片预览（浏览器内播放）</button>
+      <button class="btn" id="btnExpPreview" title="不导出也能直接在浏览器里看一遍成片效果：图片轮播（带缓慢推近运镜）+ 字幕 + 配音，按导出范围与状态筛选播放"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.4v13.2L18.6 12z"/></svg>成片预览（浏览器内播放）</button>
     </div>
 
     <div class="sec-t">② 字幕与音频</div>
@@ -1053,7 +1161,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
       <button class="btn gh" id="btnExImport">导入恢复</button>
       <button class="btn gh" id="btnExClear">清空全部数据</button>
     </div>
-    <div class="hint" style="margin-top:10px">备份按钮与首页「今天要处理」区里的是同一套逻辑；导入恢复支持上千条数据，没有条数上限。清空数据会二次确认。</div>
+    <div class="hint" style="margin-top:10px">导入恢复支持上千条数据；清空数据会二次确认。</div>
 
     <div class="sec-t">⑤ 预设与套餐（云端同步一键包）</div>
     <div class="tools">
@@ -1085,6 +1193,13 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     #pvBox #pvSeek{flex:1;accent-color:#5B5BD6;height:4px}
     #pvBox .bar{display:flex;align-items:center;gap:10px;padding:10px 16px;color:#fff;background:#15161c;flex:0 0 auto}
     #pvBox .top{flex:0 0 auto}
+    #pvBox .bar{border-top:1px solid rgba(255,255,255,.07);gap:12px;padding:12px 18px}
+    #pvBox .bar.top{border-top:0;border-bottom:1px solid rgba(255,255,255,.07);padding:14px 18px;background:#101117}
+    #pvBox .btn.gh.sm{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.16);color:#EDEFF6;box-shadow:none}
+    #pvBox .btn.gh.sm:hover{background:rgba(255,255,255,.16)}
+    #pvBox .btn.sm{box-shadow:0 2px 10px rgba(90,90,216,.4)}
+    #pvBox #pvTime{color:#C7CBD8}
+    #pvBox #pvScope{color:#9AA0B4}
     @keyframes pvkb{from{transform:scale(1)}to{transform:scale(1.08)}}
     #pvBox.kbimg #pvImg{display:block}
     #pvBox.showvid #pvVid{display:block}
@@ -1094,7 +1209,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <b style="font-size:15px">成片预览</b>
     <span id="pvScope" style="color:#aab;font-size:13px;margin-left:6px"></span>
     <span style="flex:1"></span>
-    <button class="btn gh sm" id="pvClose">关闭 ✕</button>
+    <button class="btn gh sm" id="pvClose">关闭</button>
   </div>
   <div id="pvStage">
     <video id="pvVid" playsinline muted></video>
@@ -1104,12 +1219,12 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
     <div id="pvMeta"></div>
   </div>
   <div class="bar">
-    <button class="btn gh sm" id="pvPrev">⏮ 上一镜</button>
-    <button class="btn sm" id="pvPlay">▶ 播放</button>
-    <button class="btn gh sm" id="pvNext">下一镜 ⏭</button>
+    <button class="btn gh sm" id="pvPrev"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 6h2v12H6zM19 6v12l-9-6z"/></svg>上一镜</button>
+    <button class="btn sm" id="pvPlay"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.4v13.2L18.6 12z"/></svg>播放</button>
+    <button class="btn gh sm" id="pvNext">下一镜<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 6h2v12h-2zM5 6l9 6-9 6z"/></svg></button>
     <span id="pvTime" style="font-variant-numeric:tabular-nums;font-size:13px;min-width:104px;text-align:center">00:00 / 00:00</span>
     <input id="pvSeek" type="range" min="0" max="1000" value="0">
-    <button class="btn gh sm" id="pvFull">⛶ 全屏</button>
+    <button class="btn gh sm" id="pvFull"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M16 21h3a2 2 0 0 0 2-2v-3M8 21H5a2 2 0 0 1-2-2v-3"/></svg>全屏</button>
   </div>
 </div>
 
@@ -1136,7 +1251,7 @@ textarea.inp{resize:vertical;line-height:1.6;min-height:110px}
   <div class="dlg-t" id="cueTitle">台词逐句编辑</div>
   <div class="dlg-m" id="cueMsg" style="max-height:62vh;overflow:auto"></div>
   <div class="dlg-f">
-    <button class="btn gh" id="cueAdd">＋ 加一句</button>
+    <button class="btn gh" id="cueAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>加一句</button>
     <button class="btn gh" id="cueClose">取消</button>
     <button class="btn" id="cueSave">保存回台词</button>
   </div>
@@ -4976,7 +5091,9 @@ function updatePvUI(e){
   $('pvSub').textContent = pvSubAt(PV.subs, e);
   $('pvTime').textContent = pvFmt(e) + ' / ' + pvFmt(PV.total);
   $('pvSeek').value = PV.total ? Math.round(e / PV.total * 1000) : 0;
-  $('pvPlay').textContent = PV.playing ? '⏸ 暂停' : '▶ 播放';
+  $('pvPlay').innerHTML = PV.playing
+    ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>暂停'
+    : '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.4v13.2L18.6 12z"/></svg>播放';
 }
 function pvTick(){
   if(!PV || !PV.playing) return;
