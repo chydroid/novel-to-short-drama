@@ -6,6 +6,7 @@ _*.js
 _*.sh
 _*.html
 _*.json
+_*.ps1
 # 临时验证的输出目录（E2E 产出的 xlsx/zip/json 样例）
 _*/
 
