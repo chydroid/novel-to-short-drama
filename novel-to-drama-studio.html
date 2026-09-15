@@ -7125,11 +7125,8 @@ function qaDo(i, act){
 /* ---------- AI 一键提取角色与场景（对标火宝角色提取 Agent） ---------- */
 var EX = { roles: [], scenes: [] };
 function jsonFromText(t){
-  var s = String(t).trim();
-  s = s.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  var a = s.indexOf('{'), b = s.lastIndexOf('}');
-  if(a > -1 && b > a) s = s.slice(a, b + 1);
-  try{ return JSON.parse(s); }catch(e){ return null; }
+  var v = jsonParseLoose(t);   /* v2.51：与拆镜共用同一套容错（围栏/注释/中文引号/尾逗号） */
+  return (v && typeof v === 'object' && !Array.isArray(v)) ? v : null;
 }
 function aiExtractAssets(){
   var novel = String($('novel').value || '').trim();
@@ -7304,7 +7301,7 @@ function splitShots(){
   }).then(function(r){
     refreshAll();
     box.className = 'result show ok';
-    box.textContent = '拆镜完成，已写入 ' + r.cnt + ' 个分镜' +
+    box.textContent = '拆镜完成，已写入 ' + r.cnt + ' 个分镜' + aiParseNoteTxt() +
       (r.made ? '；并自动建了 ' + r.made + ' 张设定卡（角色/场景）。下一步：去「② 角色与场景」填描述并生成设定图，然后再生分镜图。'
               : '。下一步：去「② 角色与场景」确认设定卡，生成设定图后再生成分镜图。');
     if(r.made) setView('asset');
@@ -7314,15 +7311,95 @@ function splitShots(){
     box.textContent = guessCorsMsg(e);
   });
 }
+/* v2.51：AI 输出的 JSON 容错解析。
+   模型常返回带尾逗号 / 中文引号 / 注释 / 代码块围栏 / Python 风格字面量的「畸形 JSON」，
+   甚至撞上 max_tokens 被拦腰截断。旧版只剥离围栏，一遇到这些就整章报废、只能重跑（费钱费时）。
+   现在分三步：① 合法 JSON 原样直过（绝不改写，避免破坏字符串内部的中文引号）；
+   ② 失败则逐级修复（围栏→注释→中文引号→Python 字面量→尾逗号），每级都试一次；
+   ③ 仍失败则括号平衡扫描，抢救被截断数组里**已经完整的**元素——部分成功好过全废。
+   AI_PARSE_NOTE 记录本次是否走了降级，供调用方提示。 */
+var AI_PARSE_NOTE = '';
+function jsonParseLoose(txt){
+  var raw = String(txt == null ? '' : txt).trim();
+  if(!raw) return null;
+  try{ return JSON.parse(raw); }catch(e){}          /* ① 合法 JSON 优先，不做任何改写 */
+  var s = raw.replace(/```(?:json|JSON)?/g, '').trim();
+  var i1 = s.indexOf('['), i2 = s.indexOf('{'), a, b;
+  if(i1 > -1 && (i2 === -1 || i1 < i2)){ a = i1; b = s.lastIndexOf(']'); }
+  else { a = i2; b = s.lastIndexOf('}'); }
+  var body = (a > -1 && b > a) ? s.slice(a, b + 1) : s;
+  try{ return JSON.parse(body); }catch(e){}
+  var fixes = [                                      /* ② 逐级修复 */
+    function(t){ return t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\n)[ \t]*\/\/[^\n\r]*/g, '$1'); },
+    function(t){ return t.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"'); },
+    function(t){ return t.replace(/\b(?:undefined|NaN|None)\b/g, 'null').replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false'); },
+    function(t){ return t.replace(/,\s*([}\]])/g, '$1'); }
+  ];
+  var cur = body, k;
+  for(k = 0; k < fixes.length; k++){
+    cur = fixes[k](cur);
+    try{ return JSON.parse(cur); }catch(e){}
+  }
+  return null;
+}
+/* 括号平衡扫描：逐段切出顶层 {...}，能 parse 的就收下（用于截断抢救） */
+function jsonObjectsLoose(str){
+  var out = [], depth = 0, start = -1, inStr = false, esc = false, i, ch;
+  var t = String(str == null ? '' : str);
+  for(i = 0; i < t.length; i++){
+    ch = t.charAt(i);
+    if(inStr){
+      if(esc) esc = false;
+      else if(ch === '\\') esc = true;
+      else if(ch === '"') inStr = false;
+      continue;
+    }
+    if(ch === '"'){ inStr = true; continue; }
+    if(ch === '{'){ if(depth === 0) start = i; depth++; }
+    else if(ch === '}'){
+      if(depth > 0) depth--;
+      if(depth === 0 && start > -1){
+        try{ out.push(JSON.parse(t.slice(start, i + 1))); }catch(e){}
+        start = -1;
+      }
+    }
+  }
+  return out;
+}
+function aiParseNoteTxt(){
+  if(!AI_PARSE_NOTE) return '';
+  if(AI_PARSE_NOTE.indexOf('partial:') === 0) return '（模型返回被截断，已抢救回 ' + AI_PARSE_NOTE.slice(8) + ' 个完整分镜）';
+  return '（模型返回格式有小问题，已自动修复）';
+}
+/* 抢救出来的对象必须「像分镜」：至少命中一个拆镜字段。
+   否则模型返回 {} 或 {"msg":"…"} 这类非分镜内容时，会被当成 1 个空镜写进表里。 */
+var SHOT_LIKE_KEYS = ['shot', 'scene', 'prompt', 'camera', 'line', 'seconds', 'characters',
+  'location', 'shot_size', 'size', 'speaker', 'emotion', 'lighting',
+  '镜号', '画面描述', '英文提示词', '台词旁白'];
+function isShotLike(o){
+  if(!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  for(var i = 0; i < SHOT_LIKE_KEYS.length; i++){
+    if(Object.prototype.hasOwnProperty.call(o, SHOT_LIKE_KEYS[i])) return true;
+  }
+  return false;
+}
 function parseShotArray(txt){
-  var s = String(txt).trim();
-  s = s.replace(/^```(?:json)?/i,'').replace(/```$/,'').trim();
-  var a = s.indexOf('['), b = s.lastIndexOf(']');
-  if(a > -1 && b > a) s = s.slice(a, b+1);
-  try{
-    var v = JSON.parse(s);
-    return Array.isArray(v) ? v : [];
-  }catch(e){ return []; }
+  AI_PARSE_NOTE = '';
+  var v = jsonParseLoose(txt), i;
+  if(Array.isArray(v)) return v;
+  if(v && typeof v === 'object'){                    /* 有些模型会包一层 {"shots":[...]} */
+    var ks = ['shots', 'data', 'list', 'result', 'results'];
+    for(i = 0; i < ks.length; i++){
+      if(Array.isArray(v[ks[i]])){ AI_PARSE_NOTE = 'fixed'; return v[ks[i]]; }
+    }
+  }
+  var got = jsonObjectsLoose(txt).filter(isShotLike);  /* ③ 截断抢救：只收像分镜的 */
+  if(got.length){
+    AI_PARSE_NOTE = 'partial:' + got.length;
+    console.warn('[parseShotArray] JSON 解析失败，已降级抢救 ' + got.length + ' 个分镜');
+    return got;
+  }
+  return [];
 }
 
 /* ---------------- 批量 ---------------- */
