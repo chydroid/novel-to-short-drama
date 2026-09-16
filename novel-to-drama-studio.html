@@ -1323,16 +1323,52 @@ function esc(s){
    小说正文是唯一只存本地、云端没有副本的输入——写入失败还闷声不响的话，
    用户就会「以为存住了，刷新后整篇没了」。所以失败必须显式告知本人。 */
 var _lsWarn = {};
+/* v2.53：写入失败时的「腾挪」——先把最老的几条本机配音缓存删掉，再试一次。
+   本应用把每镜配音以 base64 存在 localStorage，单条就能几百 KB；配额一旦写满，
+   之后**所有**写入（分镜兜底、配置、剧目列表、章节、撤销栈、续跑存档）会全线失败。
+   配音缓存是「可再生」的（重跑一次即可，费钱但不丢数据），
+   而分镜 / 章节 / 配置是「不可替代」的（丢了就是真丢），所以腾挪方向只能是这样。
+   只清 n 条，且失败不影响主流程。返回实际清掉的条数。 */
+function lsFreeAud(n){
+  var kill = [], i;
+  try{
+    for(i = 0; i < localStorage.length; i++){
+      var k = localStorage.key(i);
+      if(!k || k.indexOf(LS) !== 0) continue;
+      if(k.indexOf(':aud_') > -1 || k.indexOf(LS + 'aud_') === 0) kill.push(k);
+    }
+  }catch(e){ return 0; }
+  kill.sort();
+  var freed = 0;
+  for(i = 0; i < kill.length && freed < (n || 3); i++){
+    try{ localStorage.removeItem(kill[i]); freed++; }catch(e){}
+  }
+  return freed;
+}
 function lsSet(k, v, opt){
   opt = opt || {};
   try{ localStorage.setItem(k, v); return true; }
   catch(e){
+    /* 先腾挪再试一次：opt.free === false 时不做（音频自己就是腾挪对象，别自己删自己陷入递归）。
+       腾挪整段再包一层 try：万一它自己出错，也不能连累「原本能写成功」的这一次写入。 */
+    if(opt.free !== false){
+      try{
+        if(lsFreeAud(3)){
+          try{ localStorage.setItem(k, v); return true; }catch(e2){}
+        }
+      }catch(e3){}
+    }
     if(opt.warn && !_lsWarn[k]){
       _lsWarn[k] = 1;
       toast(opt.msg || '本机存储写入失败（空间已满或浏览器限制）：当前内容没能存下来，请先导出备份');
     }
     return false;
   }
+}
+/* v2.53：设定卡本机写入统一收口——原来 7 处各写各的 try/catch(e){}，写失败全静默 */
+function lsSaveAssets(){
+  return lsSet(pk('assets'), JSON.stringify(state.assets),
+    { warn:true, msg:'设定卡本机保存失败（存储已满）：请导出备份后清理部分配音缓存' });
 }
 /* v2.52：内联图标。v2.50 只换了播放器与剧目弹窗，这里补齐剩余按钮上的字符图标。 */
 var ICONS = {
@@ -1656,7 +1692,7 @@ function batchSaveAll(map){
   for(k in map){ if(map[k] && map[k].ids && map[k].ids.length){ any = true; break; } }
   try{
     if(!any) localStorage.removeItem(batchLeftKey());
-    else localStorage.setItem(batchLeftKey(), JSON.stringify(map));
+    else lsSet(batchLeftKey(), JSON.stringify(map), { warn:true, msg:'续跑存档保存失败（存储已满）：中断后可能无法继续上次进度' });
   }catch(e){}
 }
 /* 指定 kind 就取那一条（自带 kind 字段）；不指定时返回「当前剩下的第一条」，供不关心类型的收尾提示用 */
@@ -2146,7 +2182,7 @@ function loadAssets(){
 function patchAsset(id, obj){
   state.assets = state.assets.map(function(a){ return (a._id === id) ? Object.assign({}, a, obj) : a; });
   if(!hasCloud()){
-    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+    lsSaveAssets();
     refreshAll(); return Promise.resolve();
   }
   setSync('busy');
@@ -2158,7 +2194,7 @@ function addAsset(obj){
   var o = Object.assign({ pid: state.pid }, obj);   /* v2.49：设定卡归属当前剧目 */
   if(!hasCloud()){
     state.assets.push(Object.assign({ _id: newId() }, o));
-    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+    lsSaveAssets();
     refreshAll(); return Promise.resolve();
   }
   setSync('busy');
@@ -2170,7 +2206,7 @@ function addAsset(obj){
 function delAsset(id){
   if(!hasCloud()){
     state.assets = state.assets.filter(function(a){ return a._id !== id; });
-    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+    lsSaveAssets();
     refreshAll(); return Promise.resolve();
   }
   return db().deleteRecord({ databaseId: ASSET_DB_ID, recordId: id })
@@ -2347,7 +2383,7 @@ function charStr(v){
 function clearAllAssets(){
   if(!hasCloud()){
     state.assets = [];
-    try{ localStorage.setItem(pk('assets'), '[]'); }catch(e){}
+    lsSaveAssets();
     return Promise.resolve();
   }
   var p = db();
@@ -2410,7 +2446,7 @@ function syncAssetsFromShots(){
       state.assets.push(Object.assign(
         { _id: newId(), 中文描述:'', 英文锚点:'', 参考图URL:'', 状态:'未生成', 错误信息:'', 更新时间:nowStr(), pid: state.pid }, a));
     });
-    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+    lsSaveAssets();
     refreshAll();
   }
   return Promise.resolve(todo.length);
@@ -2657,7 +2693,9 @@ function renderGenList(){
     var vidHtml = vu
       ? '<video src="'+esc(vu)+'" controls playsinline preload="metadata" style="background:#000"></video>'
       : '<div class="ph">'+((vs === '生成中' || vs === '排队中') ? '<div class="spin"></div>'+(vs === '排队中' ? '排队中…' : '生成中…') : '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m23 7-7 5 7 5V7Z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg><span>暂无视频</span>')+'</div>';
-    var err = (s['错误信息'] && (is === '失败' || vs === '失败')) ? '<div class="errmsg show">'+esc(s['错误信息'])+'</div>' : '';
+    /* v2.53：原来只判图片 / 视频两类失败，配音 / 口型失败时「错误信息」明明有值却不显示，
+       用户看不到「TTS 401 未授权」这类原因只能盲目重试。改用与失败卡同一份口径 failKindOf。 */
+    var err = (s['错误信息'] && failKindOf(s)) ? '<div class="errmsg show">'+esc(s['错误信息'])+'</div>' : '';
     return '<div class="gen" data-id="'+s._id+'">' +
       '<div class="gen-hd" data-act="toggle" data-id="'+s._id+'">' +
         '<div class="no">'+esc(s['镜号'])+'</div>' +
@@ -4234,8 +4272,8 @@ function audUrl(id){
 }
 function audSave(id, b64, mime, dur){
   AUD[id] = { b64:b64, mime:mime, dur:dur, url:null };
-  try{ localStorage.setItem(audKey(id), JSON.stringify({ b64:b64, mime:mime, dur:dur })); return true; }
-  catch(e){ toast('本机音频存储已满，请导出整轨配音后删除部分分镜配音'); return false; }
+  return lsSet(audKey(id), JSON.stringify({ b64:b64, mime:mime, dur:dur }),
+    { warn:true, msg:'本机音频存储已满：已尝试清理较早的配音，仍存不下这条（建议导出整轨配音后清理）' });
 }
 /* v2.11：逐句配音的「每句真实时长」本地账本——只有它才能让字幕与口型严丝合缝。
    与 AUD 一样只存本机（下划线字段不落资料库），删镜时一并清掉。 */
@@ -4251,7 +4289,8 @@ function cueDurLoad(id){
 }
 function cueDurSave(id, arr){
   CUE_DUR[id] = arr;
-  try{ localStorage.setItem(cueDurKey(id), JSON.stringify(arr)); }catch(e){}
+  lsSet(cueDurKey(id), JSON.stringify(arr),
+    { warn:true, msg:'逐句时长账本保存失败（存储已满）：字幕会退回按字数估算，可能与口型对不齐' });
 }
 function cueDurClear(id){
   delete CUE_DUR[id];
@@ -4985,7 +5024,9 @@ function exportSrt(){
   var r = buildSrtText(exportScopeShots());
   if(!r){ toast('没有任何台词，无法生成字幕'); return; }
   download('分镜字幕.srt', r.text, 'text/plain;charset=utf-8');
-  toast('字幕已导出，共 ' + r.n + ' 条' + (r.cueTotal > r.n ? '（按逐句 cue 拆分）' : '') +
+  /* v2.53：cueTotal 是「被逐句拆出来的条数」，n 是总条数，恒有 cueTotal <= n，
+     原来的 cueTotal > n 永远为假，这句提示是死代码。 */
+  toast('字幕已导出，共 ' + r.n + ' 条' + (r.cueTotal > 0 ? '（按逐句 cue 拆分）' : '') +
     (r.alignN ? '，其中 ' + r.alignN + ' 镜按配音真实句长对齐' : ''));
 }
 /* ================= v2.44：浏览器内成片预览播放器 =================
@@ -6329,7 +6370,10 @@ function saveSnaps(key, list){
       try{ localStorage.setItem(key, JSON.stringify(arr)); return; }
       catch(e){ arr.shift(); }                     /* 配额不够：丢掉最老的一张再来 */
     }
+    /* v2.53：连一张都存不下（或空间被配音占满）时，以前是静默删掉整个撤销栈，
+       用户以为「存过快照」，刷新后却一步都撤不了。这里至少要说一声。 */
     try{ localStorage.removeItem(key); }catch(e){}
+    if(!_lsWarn[key]){ _lsWarn[key] = 1; toast('撤销历史存不下了（存储已满）：本次刷新后无法回退，建议先导出备份'); }
   }catch(e){}
 }
 /* v2.31：跨刷新恢复快照有个前提——这份快照得还是「当前这份数据的上一版」。
@@ -6486,7 +6530,10 @@ function restoreSnap(snap, label){
   snap.forEach(function(x){
     var cur = byId[x._id];
     if(!cur){
-      jobs.push(function(){ return p ? p.addRecord({ databaseId: DB_ID, properties: toProps(x) }) : null; });
+      /* v2.53：撤销恢复出来的记录也要归属当前剧目——原来直接 toProps(x)，
+         旧快照 / 导入进来的记录没有 pid，恢复后立刻被 loadShots 过滤掉：
+         用户点「撤销」不但没找回镜头，反而让它彻底消失。 */
+      jobs.push(function(){ return p ? p.addRecord({ databaseId: DB_ID, properties: toProps(Object.assign({ pid: state.pid }, x)) }) : null; });
     }else{
       var diff = {}, has = false;
       for(var k in x){ if(k === '_id') continue; if(String(cur[k] == null ? '' : cur[k]) !== String(x[k] == null ? '' : x[k])){ diff[k] = x[k]; has = true; } }
@@ -7964,13 +8011,27 @@ function onParseChapters(){
   var kw = Math.round(list.reduce(function(a, c){ return a + c.len; }, 0) / 1000);
   toast('识别到 ' + list.length + ' 个章节，共约 ' + kw + ' 千字');
 }
+var _chsSlimWarn = 0;
+/* v2.53：章节状态（含 AI 剧本化结果 adapted）以前是静默写入，
+   而 adapted 每章几千字、几十章就足以撑爆配额——存不下却一声不响，
+   用户刷新后「章节进度 + 花钱跑出来的剧本」一起消失，还以为是软件坏了。
+   现在分两级降级：先试完整存；存不下就丢掉 adapted 保住进度（剧本可重跑，进度丢了要重来）；
+   连精简版都存不下才报错，且每轮只提示一次（流水线每章都会调它，别刷屏）。 */
 function saveChapters(){
-  try{
-    localStorage.setItem(pk('chs'), JSON.stringify(state.chapters.map(function(c){
-      /* adapted（AI 剧本化结果）必须持久化，否则刷新后全部丢失、流水线会退回原文拆镜 */
-      return { no: c.no, title: c.title, len: c.len, sel: c.sel, st: c.st, adapted: c.adapted || '' };
-    })));
-  }catch(e){}
+  var full = state.chapters.map(function(c){
+    /* adapted（AI 剧本化结果）必须持久化，否则刷新后全部丢失、流水线会退回原文拆镜 */
+    return { no: c.no, title: c.title, len: c.len, sel: c.sel, st: c.st, adapted: c.adapted || '' };
+  });
+  if(lsSet(pk('chs'), JSON.stringify(full), { warn:false })) return;
+  var slim = state.chapters.map(function(c){
+    return { no: c.no, title: c.title, len: c.len, sel: c.sel, st: c.st, adapted: '' };
+  });
+  if(lsSet(pk('chs'), JSON.stringify(slim), { warn:false })){
+    if(!_chsSlimWarn){ _chsSlimWarn = 1; toast('本机空间不足：已保住章节进度，但 AI 剧本化结果没能存下（可重跑剧本化）'); }
+    return;
+  }
+  lsSet(pk('chs'), JSON.stringify(slim),
+    { warn:true, msg:'章节进度保存失败（存储已满）：刷新后章节状态会丢失，请先导出备份' });
 }
 /* 正文体积大不进 localStorage，页面重开时用已保存的小说正文重新切一次再对上状态 */
 function restoreChapters(){
@@ -8723,7 +8784,7 @@ function seedDemo(){
                    配音状态:'未生成', 满意锁定:'否', 错误信息:'', 更新时间:nowStr() };
   if(!p){
     assets.forEach(function(a){ state.assets.push(Object.assign({ _id: newId(), pid: state.pid }, base, a)); });
-    try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+    lsSaveAssets();
     demo.forEach(function(d){ state.shots.push(Object.assign({ _id: newId(), pid: state.pid }, shotBase, d)); });
     localSave(state.shots); refreshAll();
     toast('已载入示例：2 张角色卡 + 1 张场景卡 + 4 个分镜');
@@ -8868,7 +8929,7 @@ function runImport(arr, data){
     purgeAud();   /* 导入会替换全部分镜 id，旧的本机音频全部作废，清掉释放空间 */
     var p = db();
     var build = function(it){
-      return {
+      return Object.assign({ pid: state.pid }, {   /* v2.53：导入的分镜也要归属当前剧目，否则切剧目后一条都读不到 */
         镜号: num(it['镜号']), 画面描述: it['画面描述']||'', 英文提示词: it['英文提示词']||'',
         运镜: it['运镜']||'', 台词旁白: it['台词旁白']||'', 时长秒: num(it['时长秒'])||5,
         图片URL: it['图片URL']||'', 视频URL: it['视频URL']||'', 音频URL: it['音频URL']||'',
@@ -8881,23 +8942,23 @@ function runImport(arr, data){
         口型状态: it['口型状态']||'不需要', 口型视频URL: it['口型视频URL']||'',
         图片状态: it['图片状态']||'未生成', 视频状态: it['视频状态']||'未生成', 配音状态: it['配音状态']||'未生成',
         错误信息: it['错误信息']||'', 更新时间: nowStr()
-      };
+      });
     };
     var incAssets = Array.isArray(data.assets) ? data.assets : [];
     var buildAsset = function(it){
-      return {
+      return Object.assign({ pid: state.pid }, {   /* v2.53：同 build，设定卡也要带 pid */
         类型: it['类型'] || '角色', 名称: it['名称'] || '', 中文描述: it['中文描述'] || '',
         英文锚点: it['英文锚点'] || '', 参考图URL: it['参考图URL'] || '', 参考图2: it['参考图2'] || '',
         性别年龄: it['性别年龄'] || '', 常服: it['常服'] || '', 性格语气: it['性格语气'] || '',
         TTS音色: it['TTS音色'] || '', TTS风格: it['TTS风格'] || '', 语速: it['语速'] || '',
         状态: it['状态'] || '未生成', 错误信息: '', 更新时间: nowStr()
-      };
+      });
     };
     if(!p){
       state.shots = arr.map(function(it){ return Object.assign({ _id: newId() }, build(it)); });
       state.assets = incAssets.map(function(it){ return Object.assign({ _id: newId() }, buildAsset(it)); });
       localSave(state.shots);
-      try{ localStorage.setItem(pk('assets'), JSON.stringify(state.assets)); }catch(e){}
+      lsSaveAssets();
       if(data.novel) $('novel').value = data.novel;
       lsSet(pk('novel'), $('novel').value, { warn:true });
       restoreBackupAudio(data);                // v2.7：把随备份的配音写回本机
@@ -8938,7 +8999,7 @@ function runImport(arr, data){
           toast('导入完成，共 ' + arr.length + ' 个分镜 + ' + incAssets.length + ' 张设定卡');
         }
       })
-      .catch(function(e){ console.error(e); toast('导入失败'); });
+      .catch(function(e){ console.error(e); toast('导入失败：' + (e && e.message ? e.message : e)); });
 }
 
 /* ---------------- 连通性自检 ---------------- */
@@ -9588,7 +9649,9 @@ function resetStuck(){
 /* ============== v2.49：多剧目管理 ============== */
 function projName(id){ var p = (state.projects||[]).filter(function(x){ return x.id === id; })[0]; return p ? p.name : ''; }
 function saveProjects(){
-  try{ localStorage.setItem(LS+'projects', JSON.stringify(state.projects)); localStorage.setItem(LS+'lastpid', state.pid); }catch(e){}
+  /* v2.53：剧目列表写失败不能静默——否则删掉的剧目刷新后又冒出来（数据已删，只剩个空壳） */
+  lsSet(LS+'projects', JSON.stringify(state.projects), { warn:true, msg:'剧目列表保存失败（存储已满）：本次改动刷新后不保留' });
+  try{ localStorage.setItem(LS+'lastpid', state.pid); }catch(e){}
 }
 function ensureProjects(){
   var raw = null;
@@ -9604,6 +9667,28 @@ function ensureProjects(){
   state.pid = 'prj_default';
   var def = { id:'prj_default', name:'默认剧目', createdAt:Date.now(), updatedAt:Date.now() };
   ['shots','chs','novel','cfg','assets'].forEach(function(k){
+    var old = null; try{ old = localStorage.getItem(LS + k); }catch(e){}
+    if(old != null){ try{ localStorage.setItem(pk(k), old); }catch(e){} }
+  });
+  /* v2.53：配音缓存 / 逐句时长账本 / 撤销栈也按前缀迁一遍。
+     这几类 key 是「LS + 前缀 + 动态 id」，不在上面那个固定名单里，
+     于是老用户升级后：配音全丢（看着像要重新花钱生成）、撤销栈空、
+     逐句时长账本没了导致字幕退回按字数估算、与口型对不齐。 */
+  ['aud_','cuedur_'].forEach(function(pre){
+    try{
+      var move = [], i;
+      for(i = 0; i < localStorage.length; i++){
+        var k = localStorage.key(i);
+        if(k && k.indexOf(LS + pre) === 0) move.push(k);
+      }
+      move.forEach(function(k){
+        var rest = k.slice(LS.length);                 /* 形如 aud_rec1 */
+        var val = null; try{ val = localStorage.getItem(k); }catch(e){}
+        if(val != null){ try{ localStorage.setItem(pk(rest), val); }catch(e){} }
+      });
+    }catch(e){}
+  });
+  ['undo','redo'].forEach(function(k){
     var old = null; try{ old = localStorage.getItem(LS + k); }catch(e){}
     if(old != null){ try{ localStorage.setItem(pk(k), old); }catch(e){} }
   });
@@ -9630,6 +9715,21 @@ function renderProjDlg(){
 }
 function openProjMgr(){ renderProjDlg(); $('projDlg').classList.add('on'); $('projMask').classList.add('on'); }
 function closeProjMgr(){ $('projDlg').classList.remove('on'); $('projMask').classList.remove('on'); }
+/* v2.53：切换 / 新建剧目时清掉「只属于上一个剧目」的界面状态。
+   不清的后果：① 上剧目的云端失败清单还在首页，点重试对着已不存在的镜 id 写云；
+   ② 「只看失败」「1-3 镜」这类筛选带进空的新剧目 → 列表一片空白，用户第一反应是「数据丢了」；
+   ③ 候选图 / 字幕 / 提示词浮层还指向上一剧目的镜 id，编辑会写到不存在的镜上。 */
+function resetProjUiState(){
+  state.bulkFail = [];
+  state.filter = 'all';
+  cfg.filterExpr = '';
+  try{ saveCfg(); }catch(e){}
+  try{ cbShotId = ''; cueShotId = ''; pmShotId = ''; }catch(e){}
+  /* 浮层若开着就一并关掉；这几个 close 函数内部直接取 DOM，元素缺失会抛，逐个兜住 */
+  try{ if(typeof closeCandPanel === 'function') closeCandPanel(); }catch(e){}
+  try{ if(typeof closeCueBox === 'function') closeCueBox(); }catch(e){}
+  try{ if(typeof closePromptBox === 'function') closePromptBox(); }catch(e){}
+}
 function createProject(name){
   name = (name || '新剧目').trim() || '新剧目';
   var id = 'prj_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
@@ -9638,6 +9738,7 @@ function createProject(name){
   /* 新建剧目必然是空的：直接把当前剧目切成它，清空内存并拉一次空数据 */
   state.pid = id; saveProjects();
   state.shots = []; state.assets = []; state.chapters = []; state.undo = []; state.redo = [];
+  resetProjUiState();                 /* v2.53：清掉上一剧目的失败清单 / 筛选 / 浮层，避免「串台」 */
   try{ AUD = {}; }catch(e){}
   try{ localStorage.removeItem(pk('batchLeft')); }catch(e){}
   try{ if($('novel')) $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}
@@ -9651,6 +9752,7 @@ function switchProject(pid){
   if(!pid || pid === state.pid) return Promise.resolve();
   state.pid = pid; saveProjects();
   state.shots = []; state.assets = []; state.chapters = []; state.undo = []; state.redo = [];
+  resetProjUiState();                 /* v2.53：同上 */
   try{ AUD = {}; }catch(e){}
   try{ localStorage.removeItem(pk('batchLeft')); }catch(e){}
   try{ if($('novel')) $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}
