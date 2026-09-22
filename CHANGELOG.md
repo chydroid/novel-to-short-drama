@@ -2,6 +2,28 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格记录。
 
+## [v2.54] - 2026-09-22
+
+> 静态扫描（`_scan.py`）唯一一条 WARN：4 处网络调用（`apiGet` / `apiPost` / `apiPostTts` / `fetchAudioBuf`）
+> 直接走原生 `fetch`，**没有默认超时**。一旦本地 CORS 代理 `agnes-proxy` 挂起或远端接口无响应，
+> 整个生成流程会**永久卡死、界面无任何报错**——用户只能干等或强刷页面。
+
+### Fixed（P1 · 可靠性）
+
+- **网络请求统一超时加固**：新增 `apiFetch(url, opts, timeoutMs)` 包装层，用 `AbortController` 统一加超时
+  （普通接口 120s、音频 30s），`AbortError` 转成带中文提示的超时错误
+  （「请求超时（N 秒无响应）：请检查本地 CORS 代理 agnes-proxy 是否在运行……」），便于用户自判根因。
+- **4 处网络入口全部收口到 `apiFetch`**：`apiGet` / `apiPost` 原来裸调 `fetch`，现已改为委托 `apiFetch`；
+  `apiPostTts`、`fetchAudioBuf` 原本就已计划收口，至此四类调用行为一致、都有超时保护。
+- 兼容兜底：`AbortController` 不可用时（极旧环境）直接退化为裸 `fetch`，不影响功能。
+
+### Tests
+
+- **`_test_ai51.js` 新增 section H（4 条）**：成功路径正常 resolve、挂起请求在超时后 reject、
+  超时在设定时间附近触发、错误信息含「超时」提示。纯函数单测直接 mock `fetch`，
+  不依赖浏览器，故能真正覆盖超时分支（E2E 的 `window.fetch` 被桩函数即时返回，超时路径在 E2E 里跑不到）。
+- 当前 `_test_ai51.js`：**43 通过 / 0 失败**。
+
 ## [v2.53] - 2026-09-17
 
 > 全量排查后的一次集中修复：**9 项实证缺陷**，其中 4 项是「用户会真丢数据且界面不报错」级别。

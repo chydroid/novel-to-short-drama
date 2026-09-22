@@ -3172,12 +3172,33 @@ function guessCorsMsg(e){
   }
   return m;
 }
+/* v2.54：网络请求统一超时加固。
+   原生 fetch 没有默认超时，本地 CORS 代理（agnes-proxy）挂起时会导致整个生成流程永久卡死。
+   用 AbortController 统一加超时；AbortError 转成带中文提示的超时错误。 */
+var API_TIMEOUT = 120000, AUDIO_TIMEOUT = 30000;
+function apiFetch(url, opts, timeoutMs){
+  opts = opts || {};
+  var ms = timeoutMs || API_TIMEOUT;
+  if(typeof AbortController === 'undefined') return fetch(url, opts);
+  var ac = new AbortController();
+  var o = {}; for(var k in opts) o[k] = opts[k];
+  o.signal = ac.signal;
+  var tid = setTimeout(function(){ try{ ac.abort(); }catch(_){} }, ms);
+  return fetch(url, o).then(function(r){ clearTimeout(tid); return r; }, function(e){
+    clearTimeout(tid);
+    if(e && (e.name === 'AbortError' || e.name === 'TimeoutError')){
+      var err = new Error('请求超时（' + Math.round(ms/1000) + ' 秒无响应）：请检查本地 CORS 代理 agnes-proxy 是否在运行、远端接口是否可达');
+      err.timeout = true; throw err;
+    }
+    throw e;
+  });
+}
 function apiGet(url, key){
-  return fetch(url, { method:'GET', headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' } })
+  return apiFetch(url, { method:'GET', headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' } })
     .then(function(r){ return r.text().then(function(t){ return { status:r.status, text:t }; }); });
 }
 function apiPost(url, key, body){
-  return fetch(url, {
+  return apiFetch(url, {
     method:'POST',
     headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
     body: JSON.stringify(body)
@@ -4208,7 +4229,7 @@ function genVideo(id){
 /* ================= 配音：小米 MiMo TTS ================= */
 /* 小米 TTS 用 OpenAI 兼容的 /chat/completions，认证头两种都发，兼容不同版本 */
 function apiPostTts(url, key, body){
-  return fetch(url, {
+  return apiFetch(url, {
     method:'POST',
     headers: { 'Authorization':'Bearer '+key, 'api-key':key, 'Content-Type':'application/json' },
     body: JSON.stringify(body)
@@ -4316,7 +4337,7 @@ function decodeAudioBuf(b64){
 function fetchAudioBuf(url){
   var ctx = audioCtx();
   if(!ctx || !url || !/^https?:/.test(url)) return Promise.resolve(null);
-  return fetch(url).then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+  return apiFetch(url, {}, AUDIO_TIMEOUT).then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
     .then(function(ab){
       return new Promise(function(resolve){
         try{ ctx.decodeAudioData(ab, function(b){ resolve(b); }, function(){ resolve(null); }); }
