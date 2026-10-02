@@ -1568,7 +1568,11 @@ function loadCfg(){
   }catch(e){}
 }
 function saveCfg(){
-  try{ localStorage.setItem(pk('cfg'), JSON.stringify(cfg)); }catch(e){}
+  /* v2.55：原来裸 setItem + 静默 catch——配额写满时设置全部静默丢失（刷新后 Key、
+     提示词前缀、筛选视图、风格套餐全回到默认）。改走 lsSet：先腾挪可再生配音缓存再试，
+     仍失败则 toast 告知，绝不再静默吞。 */
+  lsSet(pk('cfg'), JSON.stringify(cfg),
+    { warn:true, msg:'设置保存失败（本机存储已满）：本次改动刷新后不保留，请先导出备份' });
   fillSettings();
 }
 /* ---------- 多 API Key 轮询（对标 moyin-creator 的 API key rotation） ----------
@@ -1917,8 +1921,10 @@ function localLoad(){
   catch(e){ return []; }
 }
 function localSave(list){
-  try{ localStorage.setItem(pk('shots'), JSON.stringify(list)); }
-  catch(e){ toast('本地存储写入失败，数据量可能过大，建议导出备份后清理'); }
+  /* v2.55：原来失败只 toast、不做腾挪——配音缓存（可再生，单条几百 KB）占满空间时，
+     分镜（不可替代）反而写不进去。与 lsSet 保持同一口径：先腾挪再试一次。 */
+  if(lsSet(pk('shots'), JSON.stringify(list))) return;
+  toast('本地存储写入失败：数据量可能过大，已在腾挪配音缓存后仍失败，建议导出备份后清理');
 }
 /* v2.31：msg 是「正在进行的第几步」这类临时文案，只在本条链路跑完前显示 */
 function setSync(mode, msg){
@@ -9687,9 +9693,15 @@ function ensureProjects(){
   /* 首次运行 / 从旧版升级：把旧的全局本机数据迁到默认剧目命名空间，避免丢数据 */
   state.pid = 'prj_default';
   var def = { id:'prj_default', name:'默认剧目', createdAt:Date.now(), updatedAt:Date.now() };
+  /* v2.55：迁移写失败原来静默吞掉——而下面 state.projects 照写、state.pid 照切，
+     于是老用户升级时若配额满：数据仍躺在旧全局 key 下读不到，界面表现为「分镜/正文
+     凭空消失」，且下次启动走上面的早退分支**永不重试迁移**＝永久丢失。
+     现在：迁移逐项走 lsSet 腾挪；只要有一项没搬成功，就不写 projects 列表、
+     不改 pid，直接提示用户（下次启动会再试一次迁移）。 */
+  var migFail = false;
   ['shots','chs','novel','cfg','assets'].forEach(function(k){
     var old = null; try{ old = localStorage.getItem(LS + k); }catch(e){}
-    if(old != null){ try{ localStorage.setItem(pk(k), old); }catch(e){} }
+    if(old != null && !lsSet(pk(k), old)) migFail = true;
   });
   /* v2.53：配音缓存 / 逐句时长账本 / 撤销栈也按前缀迁一遍。
      这几类 key 是「LS + 前缀 + 动态 id」，不在上面那个固定名单里，
@@ -9705,14 +9717,24 @@ function ensureProjects(){
       move.forEach(function(k){
         var rest = k.slice(LS.length);                 /* 形如 aud_rec1 */
         var val = null; try{ val = localStorage.getItem(k); }catch(e){}
-        if(val != null){ try{ localStorage.setItem(pk(rest), val); }catch(e){} }
+        if(val != null && !lsSet(pk(rest), val)) migFail = true;
       });
-    }catch(e){}
+    }catch(e){ migFail = true; }
   });
   ['undo','redo'].forEach(function(k){
     var old = null; try{ old = localStorage.getItem(LS + k); }catch(e){}
-    if(old != null){ try{ localStorage.setItem(pk(k), old); }catch(e){} }
+    if(old != null && !lsSet(pk(k), old)) migFail = true;
   });
+  /* 迁移没搬干净就别落 projects / 别切 pid：保持「未迁移」状态，下次启动重试。
+     否则一旦落盘，上面的早退分支会让迁移再也不会执行（v2.55 修复的真丢数据路径）。 */
+  if(migFail){
+    state.pid = '';
+    state.projects = [];
+    setTimeout(function(){
+      toast('旧数据迁移失败（本机存储已满）：已保留原数据未动，请导出备份后清理浏览器的配音缓存，再刷新页面重试');
+    }, 200);
+    return;
+  }
   state.projects = [def];
   saveProjects();
 }

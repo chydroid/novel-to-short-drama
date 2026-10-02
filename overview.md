@@ -1,6 +1,6 @@
 # 小说转短剧工作台 · 交付说明
 
-> **当前版本：v2.48**（大版本固定为 **v2** 不随迭代升级；一致性 2.0 + 配音为 v2 主基线，此后所有改进以 **v2.1 → v2.48** 小版本递进记录）。以下按从新到旧列出各次小版本迭代：
+> **当前版本：v2.55**（大版本固定为 **v2** 不随迭代升级；一致性 2.0 + 配音为 v2 主基线，此后所有改进以 **v2.1 → v2.55** 小版本递进记录）。以下按从新到旧列出各次小版本迭代：
 
 > **v2.48 更新（导出剪映草稿 JSON）**：
 > 导出中心「① 出片」新增 **「导出剪映草稿 .zip」**——把当前「导出范围 + 状态筛选」（与打包 / 成片预览**同一套** `viewShots(exportScopeShots(), cfg.bundleStatus||'all','')`）转成剪映专业版草稿包：`draft_content.json` + `draft_meta_info.json` + `README.txt`，解压放进剪映草稿目录即可直接进时间线，省去手工摆镜头与打字幕。结构：视频轨（**视频优先 → 静帧图片 → 空占位**，静止图按时长铺满）+ 音频轨（逐镜配音 URL，跳过本机 `local`）+ 文本轨（**复用 `buildSrtText` 时间轴 + `parseSrt`**，字幕时间与导出 .srt 完全一致）；时间单位微秒（1s=1e6），画布按 `cfg.imgRatio` 推 720/1280 宽、fps 取 `cfg.fps`。视频段带 `extra_material_refs`（speed / sound_channel_mapping / vocal_separation / canvas_color），文本素材 `content` 为新版 JSON（text + styles，颜色取 `cfg.subColor`，加粗取 `cfg.subBold`）。因在线 / 浏览器内媒体无法直接给剪映本地路径，README 提示导入后如「媒体丢失」可用「一键合成包」下素材再「重新链接媒体」，字幕与时间轴无需重链。真机 E2E 新增第 20 节 9 条断言（zip 名 / 含两 JSON / 三轨 video·audio·text / 视频段数=镜数 / 素材数=镜数 / 总时长=镜数×时长（微秒）/ fps / 字幕段 / meta 有 id·name）全绿，总断言 **221 → 230**。

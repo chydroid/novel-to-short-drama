@@ -1,3 +1,123 @@
+# 缺陷排查报告（2026-10-02，基线 v2.54）
+
+> **状态：3 项缺陷已全部修复并回归通过（v2.55）。**
+> 复现与验证脚本：`_probe_persist.js`（D2/D3 复现）、`_probe_migrate.js`（D1 复现）、
+> `_probe_v255.js`（修复后 11 条断言全绿）；E2E 守卫见 `_e2e.js` section 25。
+
+排查方式：① 静态扫描（`_scan.py`：静默 catch / 裸写库 / 重复 id / 未定义调用 / fetch 超时 / 事件绑定覆盖）；
+② 逐段代码走查（数据层、启动引导、多剧目、迁移、批量、导出、播放器）；
+③ **实证探测**（假 localStorage + 假写入失败，对每条候选做可判定验证）。
+
+基线门禁：`_e2e.js` 295 断言 / 0 失败、`_test_cue.js` 1032 / 0、`_test_ai51.js` 43 / 0
+—— **下面这些缺陷全部是现有测试没覆盖到的路径**。
+
+---
+
+## 严重度说明
+- **P0 丢数据**：用户会真实丢失内容，且界面上不报错或报错驴唇不对马嘴，刷新或切剧目后才发现。
+- **P1 静默失效**：功能产出与预期不符，或提示缺失，用户无从判断发生了什么。
+
+---
+
+# P0 — 会真实丢数据
+
+## D1　老用户升级时迁移失败「静默丢数据」，且永不重试
+
+- **位置**：`ensureProjects()`（修复前 L9690–L9715）
+- **背景**：v2.49 引入多剧目命名空间后，首跑要把旧的全局 key
+  （`wb_novel2drama_shots` / `chs` / `novel` / `cfg` / `assets` / `aud_*` / `cuedur_*` / `undo` / `redo`）
+  迁到默认剧目命名空间 `wb_novel2drama_prj_default:*`。
+- **根因**：迁移写入全部是 `try{ localStorage.setItem(...) }catch(e){}` —— **静默吞**。
+  而函数尾部**无条件**执行 `state.projects = [def]; saveProjects();`
+  （`saveProjects` 走 `lsSet`，会腾挪，所以**大概率写成功**）。
+- **复现**（`_probe_migrate.js`）：旧数据存在 + `setItem` 必抛（模拟配额满 / 隐私模式）：
+  ```
+  setItem 尝试写入的 key: ["...prj_default:shots","...prj_default:novel","...prj_default:cfg",
+                           "...projects","...lastpid"]
+  迁移后命名空间里的 key : []
+  旧 key 是否还在        : 在（数据没丢但读不到）
+  state.pid              : prj_default
+  state.projects         : [{"id":"prj_default", ...}]
+  ```
+- **影响链**：
+  1. 迁移写失败 → 数据仍在旧 key 下，但 `state.pid` 已切到 `prj_default`、
+     `loadShots()` 读 `pk('shots')` → **读到空** → 用户看到「分镜 / 正文全没了」；
+  2. 唯一的提示是「剧目列表保存失败（存储已满）：本次改动刷新后不保留」——**与真实后果完全对不上**；
+  3. `projects` 已落盘 → **下次启动 `ensureProjects` 走 `if(Array.isArray(raw) && raw.length){...return}` 早退**
+     → **迁移永不再执行 ＝ 数据永久丢失**（除非用户手动改 localStorage）。
+- **修复**：迁移逐项走 `lsSet`；新增 `migFail` 标记；`migFail` 为真时**不写 `projects`、不切 `pid`**
+  （保持未迁移状态）并明确提示，下次启动**重新尝试迁移**。
+- **复验**（`_probe_v255.js`）：
+  ```
+  ✓ pid 未被切到默认剧目（保持未迁移）
+  ✓ 未写入 projects 列表
+  ✓ 给出迁移失败提示
+  ✓ 旧数据仍在（未丢）
+  ✓ 对照：迁移成功时 pid 照切、数据已迁、projects 已落盘（行为不变）
+  ```
+
+---
+
+# P1 — 静默失效
+
+## D2　`saveCfg()` 裸写 + 静默 catch：存储满时所有设置静默丢失
+
+- **位置**：`saveCfg()`（修复前 L1570）
+- **根因**：`try{ localStorage.setItem(pk('cfg'), JSON.stringify(cfg)); }catch(e){}`。
+  全项目 **~40 个调用点**依赖它：API Key、提示词前缀、筛选视图、风格套餐、类型套餐、
+  镜号预设、导出范围 / 选项、用量统计清零…
+- **复现**（`_probe_persist.js` 场景 1）：
+  ```
+  toast 提示数        : 0 （无提示 = 静默失败）
+  尝试的 lsFreeAud 删除: 0 （0 = 没有腾挪尝试）
+  ```
+- **影响**：存储写满后，用户改的设置**刷新即回默认**，界面全程无提示 → 用户完全无从判断。
+- **修复**：改走 `lsSet(pk('cfg'), …, { warn:true, msg:'设置保存失败…' })`。
+
+## D3　`localSave()` 写失败不做配额腾挪：可再生配音挤掉不可替代的分镜
+
+- **位置**：`localSave(list)`（修复前 L1919）
+- **根因**：`catch(e){ toast('本地存储写入失败…'); }` —— 有提示，但**不腾挪**。
+  而本项目的设计前提是「配音缓存可再生、分镜不可替代」（见 `lsFreeAud` 注释），
+  `lsSet` 已经实现了「先删最老配音缓存再重试」，唯独**分镜的兜底路径没接上**。
+- **复现**（`_probe_persist.js` 场景 2）：`removeLog = 0`（未尝试腾挪）；
+  对照场景 3 `lsSet` 同样条件下删掉 3 条 `aud_*`。
+- **影响**：配音把空间占满时，分镜（不可替代）反而写不进去 —— **优先级刚好反了**。
+- **修复**：改走 `lsSet(pk('shots'), …)`，与其它写入同一口径。
+
+---
+
+# 本轮排查中的「疑似但已排除」
+
+| 候选 | 结论 | 依据 |
+|---|---|---|
+| `parseCues` 单行长旁白不自动拆句 | **非 bug** | 29 字单句仅一个句末句号 → 拆不开（拆了会剩一条只有 `。`）；38 字真·多句 → 正确拆 3 条。阈值 `>22` 是设计契约。 |
+| `data-act="projclose/projmgr/projnew/serialstop"` 无处理器 | **误报** | 四个都在 `bind()` 的 `switch(act)` 里（L9186–9192），扫描器正则漏配。 |
+| 5 处裸 `localStorage.getItem` | **误报** | 均被**前一行**的 `try{` 包裹，扫描器按行匹配导致漏判。 |
+| `apiFetch` 内 L3182 的 `fetch` 无超时 | **非 bug** | 那是 `AbortController` 不可用时的**降级分支**。 |
+| `ensureProjects` 迁移 `pk()` 的 pid 时序 | **非 bug** | 启动顺序为 `ensureProjects()` → `loadCfg()`（L9814–9815），pid 先定后读，正确。 |
+
+---
+
+# 修复结果（v2.55）
+
+| # | 缺陷 | 修复方式 | 守卫 |
+|---|---|---|---|
+| D1 | 迁移失败静默丢数据 + 永不重试 | 迁移走 `lsSet` + `migFail` 不落盘不切 pid | `_probe_v255.js` D1 组 5 条 + E2E 25 组 |
+| D2 | `saveCfg` 静默失败 | 走 `lsSet({warn:true})` | `_probe_v255.js` D2 组 2 条 + E2E 25 组 |
+| D3 | `localSave` 不腾挪 | 走 `lsSet` | `_probe_v255.js` D3 组 2 条 + E2E 25 组 |
+
+**回归结果**：
+- `_e2e.js`：**301 通过 / 0 失败**（v2.54 基线 295，新增 section 25 共 6 条）
+- `_test_cue.js`：**1032 / 0**
+- `_test_ai51.js`：**43 / 0**
+- `_probe_v255.js`：**11 / 0**
+
+---
+---
+
+# 附录：上一轮排查报告（2026-09-17，基线 v2.52 → v2.53）
+
 # 缺陷排查报告（2026-09-17，基线 v2.52）
 
 > **状态：9 项缺陷已全部修复并回归通过（v2.53），详见文末「修复结果」。**
