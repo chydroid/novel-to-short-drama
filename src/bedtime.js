@@ -419,7 +419,7 @@ function buildBedtimeShell(){
     + '  <div id="bed-video-clips"></div>'
     + '  <video id="bed-movie" controls style="width:100%;max-width:360px;display:none;margin:6px auto;border-radius:8px"></video>'
     + '</div>'
-    + '<div id="bed-pages" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:10px"></div>';
+    + '<div id="bed-pages-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:10px"></div>';
   var box = $('v-bedtime'); box.innerHTML = ''; box.appendChild(root);
   // 让 stage 的 audio 元素在播放时可见（用于真实音频播放）
   var stageAudio = $('bed-stage-audio'); if(stageAudio) stageAudio.style.display = 'block';
@@ -465,7 +465,7 @@ function renderBedtime(){
     } else { vc.innerHTML = ''; }
   }
   // 绘本页
-  var pg = $('bed-pages'); if(!pg) return;
+  var pg = $('bed-pages-grid'); if(!pg) return;
   pg.innerHTML = '';
   bt.pages.forEach(function(p, i){
     var card = document.createElement('div'); card.className = 'bed-card';
