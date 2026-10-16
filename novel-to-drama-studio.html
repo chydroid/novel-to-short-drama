@@ -774,6 +774,12 @@ select.inp{cursor:pointer}
       <div class="fld" data-page-node-id="WDTzs2P8CzwEvy0R9vQqHv"><label data-page-node-id="35ah2A1uuDEzGpg3W5Nf79">视频比例</label><select class="inp" id="cf_vidRatio" data-page-node-id="GAsgJifUWwT9xAedCwESko"><option data-page-node-id="0HwviARDTTMmrOtcowPWUn">9:16</option><option data-page-node-id="LwL8UAZbrt7ogQj7b1rfj1">16:9</option><option data-page-node-id="u1WUkCg1TxIJFChBN7vIRd">1:1</option><option data-page-node-id="otFYODOyYYI4pU9V85vwTh">3:4</option><option data-page-node-id="O4HlyUSzuQZD1WDIRjMgQu">4:3</option><option data-page-node-id="77YUgp8v4RuDYbOydFzDcv">21:9</option></select></div>
       <div class="fld" data-page-node-id="ZPhA1qeq1QU4DhqwY63NDq"><label data-page-node-id="mUai2OeKxgpllm5oRHWHWi">视频分辨率</label><input class="inp" id="cf_vidSize" value="720P" readonly data-page-node-id="a6aMdhmFud3sENkvnOfnRL"></div>
     </div>
+    <div class="row2">
+      <div class="fld"><label>生图模型</label><input class="inp" id="cf_imgModel" list="dl_imgModel" placeholder="agnes-image-2.5-flash"></div>
+      <div class="fld"><label>生视频模型</label><input class="inp" id="cf_vidModel" list="dl_vidModel" placeholder="agnes-video-2.5-flash"></div>
+    </div>
+    <datalist id="dl_imgModel"><option value="agnes-image-2.5-flash"></option><option value="agnes-image-2.0"></option></datalist>
+    <datalist id="dl_vidModel"><option value="agnes-video-2.5-flash"></option><option value="agnes-video-2.5"></option></datalist>
     <div class="fld"><label>生图候选数（点分镜卡「A/B 选优」一次生成多版，挑最满意的一版）</label><select class="inp" id="cf_imgN"><option value="1">1（不启用 A/B，单图最快）</option><option value="2">2 版（A/B 对比，推荐）</option><option value="3">3 版（三选一，费用×3）</option></select></div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--tx2);margin-bottom:12px;cursor:pointer;line-height:1.5">
       <input type="checkbox" id="cf_batchCand" style="width:18px;height:18px;margin-top:2px;flex:0 0 auto">

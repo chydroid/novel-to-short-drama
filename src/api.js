@@ -132,7 +132,7 @@ function buildImageBody(s){
   /* 图片提示词覆盖：在「查看提示词」里手动改过就用改后的（参考图仍然带上） */
   var finalPrompt = String(s['图片提示词覆盖'] || '').trim() || parts.filter(Boolean).join(' ');
   var body = {
-    model: 'agnes-image-2.5-flash',
+    model: cfg.imgModel || 'agnes-image-2.5-flash',
     prompt: finalPrompt,
     size: cfg.imgSize,
     ratio: cfg.imgRatio,
@@ -189,7 +189,7 @@ function buildAssetBody(a, which){
   /* v2.17：设定图也带上剧集画面类型（角色卡画成古装/动画，后续分镜才有统一参考） */
   var gEnA = genrePromptOn() ? genreStyleEn() : '';
   var body = {
-    model: 'agnes-image-2.5-flash',
+    model: cfg.imgModel || 'agnes-image-2.5-flash',
     prompt: (cfg.prefix ? cfg.prefix + ' ' : '') + (gEnA ? gEnA + ' ' : '') + anchor + outfit + extra,
     size: '1K',
     ratio: isRole ? '3:4' : cfg.imgRatio,
@@ -982,7 +982,7 @@ function buildVideoBody(s){
   var imgUrl = String(s['图片URL'] || '').trim();
   var hasImg = /^https?:/.test(imgUrl);
   var vbody = {
-    model: 'agnes-video-2.5-flash',
+    model: cfg.vidModel || 'agnes-video-2.5-flash',
     prompt: prompt,
     mode: hasImg ? 'keyframe' : 'text',
     seconds: String(sec),
@@ -1022,7 +1022,7 @@ function startPoll(id){
     if(!s || !s['任务ID']){ stopPoll(id); return; }
     tries++;
     if(tries > 240){ stopPoll(id); patchShot(id, { 视频状态:'失败', 错误信息:'轮询超时（超过 12 分钟）', 更新时间:nowStr() }); return; }
-    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-2.5-flash', ak())
+    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=' + encodeURIComponent(cfg.vidModel || 'agnes-video-2.5-flash'), ak())
       .then(function(r){
         /* 查询接口本身报错（鉴权/参数/未找到）：ak() 每次轮换 Key，故给几次重试，仍不过再判失败 */
         if(r.status >= 400){

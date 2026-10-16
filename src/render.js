@@ -478,6 +478,8 @@ function fillSettings(){
   $('cf_agnesKey').value = cfg.agnesKey; $('cf_agnesBase').value = cfg.agnesBase; $('cf_agnesQuery').value = cfg.agnesQuery;
   $('cf_imgSize').value = cfg.imgSize; $('cf_imgRatio').value = cfg.imgRatio;
   $('cf_vidSec').value = cfg.vidSec; $('cf_vidRatio').value = cfg.vidRatio; $('cf_vidSize').value = cfg.vidSize;
+  if($('cf_imgModel')) $('cf_imgModel').value = cfg.imgModel || 'agnes-image-2.5-flash';
+  if($('cf_vidModel')) $('cf_vidModel').value = cfg.vidModel || 'agnes-video-2.5-flash';
   $('cf_ref').value = cfg.ref; $('cf_prefix').value = cfg.prefix;
   if($('cf_prevRef')) $('cf_prevRef').checked = !!cfg.prevRef;
   $('cf_textBase').value = cfg.textBase; $('cf_textKey').value = cfg.textKey; $('cf_textModel').value = cfg.textModel;
@@ -553,6 +555,8 @@ function readSettings(){
   cfg.agnesQuery = ($('cf_agnesQuery').value.trim() || 'https://apihub.agnes-ai.com').replace(/\/+$/,'');
   cfg.imgSize = $('cf_imgSize').value; cfg.imgRatio = $('cf_imgRatio').value;
   cfg.vidSec = $('cf_vidSec').value; cfg.vidRatio = $('cf_vidRatio').value;
+  if($('cf_imgModel')) cfg.imgModel = ($('cf_imgModel').value.trim() || 'agnes-image-2.5-flash');
+  if($('cf_vidModel')) cfg.vidModel = ($('cf_vidModel').value.trim() || 'agnes-video-2.5-flash');
   cfg.ref = $('cf_ref').value.trim(); cfg.prefix = $('cf_prefix').value.trim();
   cfg.prevRef = !!($('cf_prevRef') && $('cf_prevRef').checked);
   cfg.textBase = ($('cf_textBase').value.trim() || 'https://api.openai.com/v1').replace(/\/+$/,'');

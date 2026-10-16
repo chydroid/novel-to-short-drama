@@ -124,7 +124,7 @@ function applyStory(obj){
 }
 function genBedtimeImage(p, idx){
   return apiPostAgnes(cfg.agnesBase + '/images/generations', {
-    model:'agnes-image-2.5-flash',
+    model:(cfg.imgModel || 'agnes-image-2.5-flash'),
     prompt:(p.imgPrompt || '') + '。' + (state.bedtime.artStyle || ''),
     size:cfg.imgSize || '1024x1024',
     ratio:state.bedtime.ratio || '3:4',
@@ -214,7 +214,7 @@ function pollAgnesClip(videoId){
     var tick = function(){
       tries++;
       if(tries > 240){ reject(new Error('轮询超时（超过 12 分钟）')); return; }
-      apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(videoId) + '&model_name=agnes-video-2.5-flash', ak())
+      apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(videoId) + '&model_name=' + encodeURIComponent(cfg.vidModel || 'agnes-video-2.5-flash'), ak())
         .then(function(r){
           var j = parseJsonSafe(r.text), st = pickStatus(j);
           if(st === 'completed' || st === 'succeeded' || st === 'success'){
@@ -238,7 +238,7 @@ function genOneClip(p, seg){
      秒数取 4–12，Flash 固定 720P。禁用不存在的 width/height/num_frames/frame_rate/extra_body。 */
   var sec = Math.min(12, Math.max(4, Math.round(seg.length / 4) || 5));
   return apiPostAgnes(cfg.agnesBase + '/videos', {
-    model:'agnes-video-2.5-flash', prompt:prompt, mode:'keyframe', first_frame:p.imgURL,
+    model:(cfg.vidModel || 'agnes-video-2.5-flash'), prompt:prompt, mode:'keyframe', first_frame:p.imgURL,
     seconds:String(sec), size:'720P', aspect_ratio:(state.bedtime.ratio || '3:4'), n:1
   }).then(function(r){
     var j = parseJsonSafe(r.text);

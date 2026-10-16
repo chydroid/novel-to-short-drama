@@ -2,6 +2,8 @@
 var DEFAULT_CFG = {
   agnesKey:'', agnesBase:'https://apihub.agnes-ai.com/v1', agnesQuery:'https://apihub.agnes-ai.com',
   imgSize:'1K', imgRatio:'9:16', vidSec:'5', vidRatio:'9:16', vidSize:'720P',
+  /* 生图/生视频模型可配置（默认 Agnes 2.5-flash）。改错只会在生成时被接口拒绝并提示，不会静默出错。 */
+  imgModel:'agnes-image-2.5-flash', vidModel:'agnes-video-2.5-flash',
   ref:'', prefix:'', prevRef:false,
   refMode:'best', multiView:true, refMax:4,
   neg:'different face, changed hairstyle, changed outfit, deformed hands, extra fingers, extra limbs, watermark, text, logo, low quality',
