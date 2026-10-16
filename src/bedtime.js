@@ -214,11 +214,15 @@ function pollAgnesClip(videoId){
     var tick = function(){
       tries++;
       if(tries > 240){ reject(new Error('轮询超时（超过 12 分钟）')); return; }
-      apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(videoId) + '&model_name=agnes-video-v2.0', ak())
+      apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(videoId) + '&model_name=agnes-video-2.5-flash', ak())
         .then(function(r){
-          var j = parseJsonSafe(r.text), st = pickStatus(j), url = pickVideoUrl(j);
-          if(st === 'completed' || st === 'succeeded' || st === 'success' || url){ resolve(url || ''); }
-          else if(st === 'failed' || st === 'error'){ reject(new Error((j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0,160))); }
+          var j = parseJsonSafe(r.text), st = pickStatus(j);
+          if(st === 'completed' || st === 'succeeded' || st === 'success'){
+            var url = pickVideoUrl(j);
+            if(!url){ reject(new Error('任务已完成但未返回视频地址')); return; }
+            resolve(url);
+          }
+          else if(st === 'failed' || st === 'error' || st === 'canceled' || st === 'cancelled' || st === 'aborted'){ reject(new Error((j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0,160))); }
           else setTimeout(tick, 3500);
         })
         .catch(function(e){ if(tries > 3) reject(e); else setTimeout(tick, 3500); });
@@ -230,10 +234,12 @@ function genOneClip(p, seg){
   var dims = bedtimeDims(), voice = bedtimeVoiceDesc();
   var prompt = '儿童睡前故事绘本动画，' + (state.bedtime.artStyle || '童话水彩') + '风格，' + (state.bedtime.style || '温柔') + '氛围。'
     + '画面中的主角用' + voice + '温柔地讲述：(用中文说)\'' + seg + '\' 主角正在说话，嘴巴在动，表情安详。';
-  var nf = Math.min(121, Math.max(24, Math.round(seg.length * 5)));
+  /* 对齐官方 agnes-video-2.5-flash（OpenAI-Videos 兼容）：mode 必填；插画作首帧走 keyframe；
+     秒数取 4–12，Flash 固定 720P。禁用不存在的 width/height/num_frames/frame_rate/extra_body。 */
+  var sec = Math.min(12, Math.max(4, Math.round(seg.length / 4) || 5));
   return apiPostAgnes(cfg.agnesBase + '/videos', {
-    model:'agnes-video-v2.0', prompt:prompt, width:dims[0], height:dims[1], num_frames:nf, frame_rate:24,
-    extra_body:{ image:p.imgURL }
+    model:'agnes-video-2.5-flash', prompt:prompt, mode:'keyframe', first_frame:p.imgURL,
+    seconds:String(sec), size:'720P', aspect_ratio:(state.bedtime.ratio || '3:4'), n:1
   }).then(function(r){
     var j = parseJsonSafe(r.text);
     var vid = (j && (j.video_id || j.id || j.task_id)) || '';

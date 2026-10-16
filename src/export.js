@@ -1314,7 +1314,7 @@ function exportRenderPack(){
   var vol = Math.min(1, Math.max(0, num(cfg.bgmVol)));
   var fadeOutAt = Math.max(0, Math.round(total - fade));
   var filter = '[2:a]volume=' + vol + ',afade=t=in:d=' + fade + ',afade=t=out:st=' + fadeOutAt + ':d=' + fade + '[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]';
-  /* 视频已含原生音频时（agnes-video-v2.0 音画同步）：混音输入变为 [0]=视频(自带音) [1]=BGM，索引变化，单独一套 filter */
+  /* 视频已含原生音频时（agnes-video-2.5-flash 同步音频）：混音输入变为 [0]=视频(自带音) [1]=BGM，索引变化，单独一套 filter */
   var filter2 = '[1:a]volume=' + vol + ',afade=t=in:d=' + fade + ',afade=t=out:st=' + fadeOutAt + ':d=' + fade + '[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]';
   /* 字幕样式：全部可在设置里调，字号会按输出分辨率缩放，保证竖屏横屏观感一致 */
   var fs = num(cfg.subSize) || 14;
@@ -1397,7 +1397,7 @@ function exportRenderPack(){
   bat.push('ffmpeg -y -loglevel error -f concat -safe 0 -i concat.txt -c copy 01_merged.mp4');
   var avFile = '02_av.mp4';
   if(allAudio){
-    /* 视频自身已带原生音画同步音频（agnes-video-v2.0），无需再混 voice.wav；仅可选叠加 BGM */
+    /* 视频自身已带同步音频（agnes-video-2.5-flash），无需再混 voice.wav；仅可选叠加 BGM */
     if(cfg.bgmUrl && vol > 0){
       sh.push('echo 视频已含原生音频，叠加 BGM…');
       bat.push('echo 视频已含原生音频，叠加 BGM…');

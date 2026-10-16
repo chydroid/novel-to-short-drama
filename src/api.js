@@ -949,7 +949,7 @@ function autoPickRun(list){
   }
   step(0);
 }
-/* --- 视频：agnes-video-v2.0 原生音画同步（一次生成即含同步语音 + 对口型） --- */
+/* --- 视频：agnes-video-2.5-flash（OpenAI-Videos 兼容 API，输出带同步音频） --- */
 function buildVideoBody(s){
   /* v2.7：运镜/机位经受控词表映射为英文镜头语言，画面仍用中文描述，提升视频动态的确定性 */
   var camEn = cameraLangEn(s['运镜']);
@@ -964,8 +964,8 @@ function buildVideoBody(s){
   if(cfg.prefix) prompt = cfg.prefix + prompt;
   /* 视频提示词覆盖：在「查看提示词」里手动改过就用改后的 */
   if(String(s['视频提示词覆盖'] || '').trim()) prompt = String(s['视频提示词覆盖']).trim();
-  /* v3：音画同步——把本镜台词/旁白写进 prompt，模型据此生成同步语音与对口型；
-     不接收外部音频文件，音色/语气全部由 prompt 驱动；参考图走 image 字段 */
+  /* v3：音画同步——把本镜台词/旁白写进 prompt，模型据此生成同步语音；
+     音色/语气由 prompt 驱动；参考图走 keyframe 模式的 first_frame 字段 */
   var narr = String(s['台词旁白'] || '').trim();
   if(narr){
     prompt += '。画面中的人物用自然、口语化的语气说出这句台词：' + narr;
@@ -976,20 +976,27 @@ function buildVideoBody(s){
   }
   /* API 只接受 4–12 秒，手动填超范围会被整单拒绝 */
   var sec = Math.min(12, Math.max(4, num(s['时长秒']) || num(cfg.vidSec) || 5));
-  return {
-    model: 'agnes-video-v2.0',
+  /* 对齐官方 OpenAI-Videos 兼容 API：agnes-video-2.5-flash（带同步音频的可用模型）。
+     mode 必填；有首帧图走 keyframe(first_frame)，无图走 text。
+     切勿使用不存在的 agnes-video-v2.0 / image / width / height / num_frames —— 那正是此前视频必失败的根因。 */
+  var imgUrl = String(s['图片URL'] || '').trim();
+  var hasImg = /^https?:/.test(imgUrl);
+  var vbody = {
+    model: 'agnes-video-2.5-flash',
     prompt: prompt,
-    image: s['图片URL'],
+    mode: hasImg ? 'keyframe' : 'text',
     seconds: String(sec),
     size: '720P',
     aspect_ratio: cfg.vidRatio,
     n: 1
   };
+  if(hasImg) vbody.first_frame = imgUrl;
+  return vbody;
 }
 function pickVideoUrl(j){
   if(!j || typeof j !== 'object') return '';
   var cand = [
-    j.video_url, j.url, j.output && j.output.url, j.result && j.result.url,
+    j.video_url, j.url, j.metadata && j.metadata.url, j.output && j.output.url, j.result && j.result.url,
     j.data && j.data.url, j.data && j.data[0] && j.data[0].url,
     j.video && j.video.url, j.videos && j.videos[0] && j.videos[0].url,
     j.result && j.result.video_url, j.content && j.content.video_url
@@ -1015,23 +1022,30 @@ function startPoll(id){
     if(!s || !s['任务ID']){ stopPoll(id); return; }
     tries++;
     if(tries > 240){ stopPoll(id); patchShot(id, { 视频状态:'失败', 错误信息:'轮询超时（超过 12 分钟）', 更新时间:nowStr() }); return; }
-    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-v2.0', ak())
+    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-2.5-flash', ak())
       .then(function(r){
+        /* 查询接口本身报错（鉴权/参数/未找到）：ak() 每次轮换 Key，故给几次重试，仍不过再判失败 */
+        if(r.status >= 400){
+          if(tries > 3){ stopPoll(id); patchShot(id, { 视频状态:'失败', 错误信息:('查询失败 HTTP ' + r.status + ' ' + (r.text || '').slice(0,160)).slice(0,300), 更新时间:nowStr() }); }
+          return;
+        }
         var j = parseJsonSafe(r.text);
         var st = pickStatus(j);
-        var url = pickVideoUrl(j);
-        if(st === 'completed' || st === 'succeeded' || st === 'success' || url){
+        /* 完成与否只认 status，绝不因「响应里恰好有个链接」就判成功——否则失败/排队会被误报成完成 */
+        if(st === 'completed' || st === 'succeeded' || st === 'success'){
           stopPoll(id);
+          var url = pickVideoUrl(j);
+          if(!url){ patchShot(id, { 视频状态:'失败', 错误信息:'任务已完成但未返回视频地址', 更新时间:nowStr() }); return; }
           patchShot(id, { 视频状态:'已完成', 视频URL:url, 视频含音频:true, 错误信息:'', _imgNewer:false, 更新时间:nowStr() });
           bumpUse('usedVidSec', Math.min(12, Math.max(4, num(s['时长秒']) || 5)));
           toast('第 ' + s['镜号'] + ' 镜视频完成');
-        }else if(st === 'failed' || st === 'error'){
+        }else if(st === 'failed' || st === 'error' || st === 'canceled' || st === 'cancelled' || st === 'aborted'){
           stopPoll(id);
-          var msg = (j && (j.error || j.message || j.detail)) ? JSON.stringify(j.error || j.message || j.detail) : r.text.slice(0,180);
+          var msg = (j && (j.error || j.message || j.detail)) ? JSON.stringify(j.error || j.message || j.detail) : (r.text || '').slice(0,180);
           patchShot(id, { 视频状态:'失败', 错误信息:('视频任务失败 ' + msg).slice(0,300), 更新时间:nowStr() });
         }else{
           /* 仍在排队/处理中，只在状态变化时更新文案 */
-          var vs = (st === 'queued' || st === 'pending' || st === 'waiting') ? '排队中' : '生成中';
+          var vs = (st === 'queued' || st === 'pending' || st === 'waiting' || st === 'created' || st === 'starting') ? '排队中' : '生成中';
           if((s['视频状态'] || '') !== vs){ s['视频状态'] = vs; refreshAll(); }
         }
       })
