@@ -949,7 +949,7 @@ function autoPickRun(list){
   }
   step(0);
 }
-/* --- 视频：agnes-video-2.5-flash keyframe --- */
+/* --- 视频：agnes-video-v2.0 原生音画同步（一次生成即含同步语音 + 对口型） --- */
 function buildVideoBody(s){
   /* v2.7：运镜/机位经受控词表映射为英文镜头语言，画面仍用中文描述，提升视频动态的确定性 */
   var camEn = cameraLangEn(s['运镜']);
@@ -964,13 +964,22 @@ function buildVideoBody(s){
   if(cfg.prefix) prompt = cfg.prefix + prompt;
   /* 视频提示词覆盖：在「查看提示词」里手动改过就用改后的 */
   if(String(s['视频提示词覆盖'] || '').trim()) prompt = String(s['视频提示词覆盖']).trim();
+  /* v3：音画同步——把本镜台词/旁白写进 prompt，模型据此生成同步语音与对口型；
+     不接收外部音频文件，音色/语气全部由 prompt 驱动；参考图走 image 字段 */
+  var narr = String(s['台词旁白'] || '').trim();
+  if(narr){
+    prompt += '。画面中的人物用自然、口语化的语气说出这句台词：' + narr;
+    if(String(s['角色情绪'] || '').trim()) prompt += '（语气：' + String(s['角色情绪']).trim() + '）';
+    prompt += '，人物嘴部随语音自然开合，做到音画同步';
+  }else{
+    prompt += '。画面自然流动，无对白，仅环境氛围';
+  }
   /* API 只接受 4–12 秒，手动填超范围会被整单拒绝 */
   var sec = Math.min(12, Math.max(4, num(s['时长秒']) || num(cfg.vidSec) || 5));
   return {
-    model: 'agnes-video-2.5-flash',
+    model: 'agnes-video-v2.0',
     prompt: prompt,
-    mode: 'keyframe',
-    first_frame: s['图片URL'],
+    image: s['图片URL'],
     seconds: String(sec),
     size: '720P',
     aspect_ratio: cfg.vidRatio,
@@ -1006,14 +1015,14 @@ function startPoll(id){
     if(!s || !s['任务ID']){ stopPoll(id); return; }
     tries++;
     if(tries > 240){ stopPoll(id); patchShot(id, { 视频状态:'失败', 错误信息:'轮询超时（超过 12 分钟）', 更新时间:nowStr() }); return; }
-    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-2.5-flash', ak())
+    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(s['任务ID']) + '&model_name=agnes-video-v2.0', ak())
       .then(function(r){
         var j = parseJsonSafe(r.text);
         var st = pickStatus(j);
         var url = pickVideoUrl(j);
         if(st === 'completed' || st === 'succeeded' || st === 'success' || url){
           stopPoll(id);
-          patchShot(id, { 视频状态:'已完成', 视频URL:url, 错误信息:'', _imgNewer:false, 更新时间:nowStr() });
+          patchShot(id, { 视频状态:'已完成', 视频URL:url, 视频含音频:true, 错误信息:'', _imgNewer:false, 更新时间:nowStr() });
           bumpUse('usedVidSec', Math.min(12, Math.max(4, num(s['时长秒']) || 5)));
           toast('第 ' + s['镜号'] + ' 镜视频完成');
         }else if(st === 'failed' || st === 'error'){

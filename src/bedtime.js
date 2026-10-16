@@ -340,6 +340,39 @@ function exportBedtimeBook(){
   toast('导出绘本：逐页图片 + 故事文本');
 }
 
+/* ④b：把各页的 V2.0 音画同步短视频片段按页序拼接成单个 mp4（ffmpeg 拼接脚本） */
+function exportBedtimeMerge(){
+  var clips = bedAllClips();
+  if(!clips.length){ toast('还没有生成的短视频片段（请先点 ④ 生成短视频）'); return; }
+  var sh = [], bat = [];
+  sh.push('#!/bin/bash');
+  sh.push('# 睡前故事短视频拼接（Agnes V2.0 音画同步片段，已含同步语音）');
+  sh.push('# 用法：把本脚本与可访问的片段 URL 放同一目录，运行  bash merge_bedtime.sh');
+  bat.push('@echo off'); bat.push('chcp 65001 >nul');
+  bat.push('rem 睡前故事短视频拼接（Agnes V2.0 音画同步片段，已含同步语音）');
+  bat.push('rem 用法：运行  merge_bedtime.bat');
+  var files = [];
+  clips.forEach(function(u, i){
+    var f = 'seg_' + (i + 1) + '.mp4'; files.push(f);
+    sh.push('ffmpeg -y -loglevel error -i ' + shQ(u) + ' -c copy ' + f + ' || ffmpeg -y -loglevel error -i ' + shQ(u) + ' ' + f);
+    bat.push('ffmpeg -y -loglevel error -i "' + u + '" -c copy ' + f);
+    bat.push('if errorlevel 1 ffmpeg -y -loglevel error -i "' + u + '" ' + f);
+  });
+  var concat = files.map(function(f){ return "file '" + f + "'"; }).join('\n');
+  sh.push("cat > concat.txt <<'EOF'\n" + concat + "\nEOF");
+  bat.push('type nul > concat.txt');
+  files.forEach(function(f){ bat.push("echo file '" + f + "'>>concat.txt"); });
+  sh.push('ffmpeg -y -loglevel error -f concat -safe 0 -i concat.txt -c copy 睡前故事_成片.mp4');
+  bat.push('ffmpeg -y -loglevel error -f concat -safe 0 -i concat.txt -c copy 睡前故事_成片.mp4');
+  sh.push('echo 完成：睡前故事_成片.mp4（' + clips.length + ' 段，已含音画同步语音）');
+  bat.push('echo 完成：睡前故事_成片.mp4'); bat.push('pause');
+  download('merge_bedtime.sh', sh.join('\n'), 'text/plain;charset=utf-8');
+  download('merge_bedtime.bat', bat.join('\n'), 'text/plain;charset=utf-8');
+  var man = { 说明:'睡前故事 V2.0 音画同步片段拼接为单个 mp4', 片段数: clips.length, 片段URL: clips, 输出:'睡前故事_成片.mp4（运行 merge_bedtime.sh / .bat）' };
+  download('睡前故事_合成清单.json', JSON.stringify(man, null, 2), 'application/json');
+  toast('已导出 ffmpeg 拼接脚本（merge_bedtime.sh / .bat）+ 片段清单');
+}
+
 /* -------- 视图渲染 -------- */
 function buildBedtimeShell(){
   var root = document.createElement('div');
@@ -368,6 +401,7 @@ function buildBedtimeShell(){
     + '  <button id="bed-play" class="bed-btn">▶ 播放绘本</button>'
     + '  <button id="bed-dl-audio" class="bed-btn">⬇ 下载全部音频</button>'
     + '  <button id="bed-export" class="bed-btn">⬇ 导出绘本</button>'
+    + '  <button id="bed-merge" class="bed-btn">④b 合成单视频(ffmpeg)</button>'
     + '</div>'
     + '<div id="bed-status" style="font-size:13px;color:#8ad;min-height:18px;margin-bottom:6px"></div>'
     + '<div id="bed-stage" style="display:none;margin:8px 0;padding:10px;border:1px solid #345;border-radius:10px;background:#0b1030">'
@@ -396,6 +430,7 @@ function buildBedtimeShell(){
   $('bed-play').onclick = function(){ $('bed-stage').style.display = 'block'; bedPlay(); };
   $('bed-dl-audio').onclick = downloadAllBedtimeAudio;
   $('bed-export').onclick = exportBedtimeBook;
+  $('bed-merge').onclick = exportBedtimeMerge;
   $('bed-prev').onclick = bedPrev;
   $('bed-next').onclick = bedNext;
   $('bed-stop').onclick = bedStop;

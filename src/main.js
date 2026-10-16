@@ -159,11 +159,14 @@ function bind(){
       case 'undoto': undoTo(num(t.getAttribute('data-i'))); break;   /* v2.39：一步跳到指定版本 */
       /* v2.49：多剧目 */
       case 'projmgr': openProjMgr(); break;
-      case 'projnew': askInput('给新剧目起个名字', '新剧目').then(function(n){ if(n) createProject(n); }); break;
+      case 'projnew': openNewProjDlg(); break;
+      case 'newproj-drama': newProjAs('drama'); break;
+      case 'newproj-bedtime': newProjAs('bedtime'); break;
+      case 'newproj-close': closeNewProjDlg(); break;
       case 'projswitch': { var sp = t.getAttribute('data-pid'); if(sp) switchProject(sp); closeProjMgr(); break; }
       case 'projrename': { var rp = t.getAttribute('data-pid'); if(rp) askInput('重命名剧目', projName(rp) || '剧目').then(function(n){ if(n) renameProject(rp, n); }); break; }
       case 'projdelete': { var dp = t.getAttribute('data-pid'); if(dp) askConfirm('删除剧目「' + (projName(dp) || '') + '」？该剧目下的分镜与设定卡会一并清除（不可恢复）。', '删除', true).then(function(ok){ if(ok) deleteProject(dp); }); break; }
-      case 'projclose': closeProjMgr(); break;
+      case 'projclose': closeProjMgr(); closeNewProjDlg(); break;
       case 'serialstop': stopSerial(); break;          /* v2.32：批量跑到一半可以叫停 */
       case 'openshot': setView('gen'); state.expanded[id] = true; renderGenList();
         setTimeout(function(){ var el = document.querySelector('.gen[data-id="'+id+'"]'); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 80);
@@ -605,13 +608,26 @@ function bind(){
     b.addEventListener('click', function(){ setView(b.getAttribute('data-v')); });
   });
 }
+function currentProjectKind(){ var p = (state.projects||[]).filter(function(x){ return x.id === state.pid; })[0]; return (p && p.kind) || 'drama'; }
 function setView(v){
   state.view = v;
-  ['script','asset','gen','film','bedtime'].forEach(function(k){ $('v-'+k).style.display = (k === v ? '' : 'none'); });
+  var isBed = currentProjectKind() === 'bedtime';
+  ['script','asset','gen','film'].forEach(function(k){ var el = $('v-'+k); if(el) el.style.display = (k === v ? '' : 'none'); });
+  var bv = $('v-bedtime'); if(bv) bv.style.display = (isBed && v === 'bedtime') ? '' : 'none';
   document.querySelectorAll('.tab').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
   document.querySelectorAll('.mtab').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
-  if(typeof renderBedtime === 'function' && v === 'bedtime') renderBedtime();
+  if(isBed && v === 'bedtime' && typeof renderBedtime === 'function') renderBedtime();
   refreshAll();
+}
+function openNewProjDlg(){ $('newProjDlg').classList.add('on'); $('projMask').classList.add('on'); }
+function closeNewProjDlg(){ $('newProjDlg').classList.remove('on'); $('projMask').classList.remove('on'); }
+function newProjAs(kind){
+  closeNewProjDlg();
+  var label = kind === 'bedtime' ? '睡前故事' : '新剧目';
+  askInput('给' + label + '起个名字', label).then(function(n){
+    if(!n) return;
+    createProject(n, { kind: kind });
+  });
 }
 
 /* ---------------- 初始化 ---------------- */
@@ -654,15 +670,15 @@ function ensureProjects(){
   var raw = null;
   try{ raw = JSON.parse(localStorage.getItem(LS+'projects') || 'null'); }catch(e){ raw = null; }
   if(Array.isArray(raw) && raw.length){
-    state.projects = raw;
+    state.projects = raw.map(function(p){ if(!p.kind) p.kind = 'drama'; return p; });
     var lp = ''; try{ lp = localStorage.getItem(LS+'lastpid') || ''; }catch(e){}
-    var cur = raw.filter(function(p){ return p.id === lp; })[0];
-    state.pid = (cur || raw[0]).id;
+    var cur = state.projects.filter(function(p){ return p.id === lp; })[0];
+    state.pid = (cur || state.projects[0]).id;
     return;
   }
   /* 首次运行 / 从旧版升级：把旧的全局本机数据迁到默认剧目命名空间，避免丢数据 */
   state.pid = 'prj_default';
-  var def = { id:'prj_default', name:'默认剧目', createdAt:Date.now(), updatedAt:Date.now() };
+  var def = { id:'prj_default', name:'默认剧目', kind:'drama', createdAt:Date.now(), updatedAt:Date.now() };
   /* v2.55：迁移写失败原来静默吞掉——而下面 state.projects 照写、state.pid 照切，
      于是老用户升级时若配额满：数据仍躺在旧全局 key 下读不到，界面表现为「分镜/正文
      凭空消失」，且下次启动走上面的早退分支**永不重试迁移**＝永久丢失。
@@ -719,7 +735,7 @@ function renderProjDlg(){
   box.innerHTML = (state.projects || []).map(function(p){
     var cur = p.id === state.pid;
     return '<div class="proj-row' + (cur ? ' cur' : '') + '">' +
-      '<div class="pinfo"><div class="pn">' + esc(p.name) + '</div><div class="pt">创建于 ' + new Date(p.createdAt||Date.now()).toLocaleDateString() + '</div></div>' +
+      '<div class="pinfo"><div class="pn">' + esc(p.name) + (p.kind === 'bedtime' ? ' · 睡前故事' : '') + '</div><div class="pt">创建于 ' + new Date(p.createdAt||Date.now()).toLocaleDateString() + '</div></div>' +
       '<button class="btn gh sm" data-act="projswitch" data-pid="' + esc(p.id) + '"' + (cur ? ' disabled' : '') + '>切换</button>' +
       '<button class="btn gh sm" data-act="projrename" data-pid="' + esc(p.id) + '">重命名</button>' +
       '<button class="btn sm danger" data-act="projdelete" data-pid="' + esc(p.id) + '"' + (state.projects.length <= 1 ? ' disabled' : '') + '>删除</button>' +
@@ -743,10 +759,11 @@ function resetProjUiState(){
   try{ if(typeof closeCueBox === 'function') closeCueBox(); }catch(e){}
   try{ if(typeof closePromptBox === 'function') closePromptBox(); }catch(e){}
 }
-function createProject(name){
+function createProject(name, opts){
   name = (name || '新剧目').trim() || '新剧目';
+  opts = opts || {};
   var id = 'prj_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-  state.projects.push({ id:id, name:name, createdAt:Date.now(), updatedAt:Date.now() });
+  state.projects.push({ id:id, name:name, kind:(opts.kind === 'bedtime' ? 'bedtime' : 'drama'), createdAt:Date.now(), updatedAt:Date.now() });
   saveProjects();
   /* 新建剧目必然是空的：直接把当前剧目切成它，清空内存并拉一次空数据 */
   state.pid = id; saveProjects();
@@ -758,6 +775,7 @@ function createProject(name){
   renderProjSel(); renderProjDlg();
   return loadShots().then(function(){ return loadAssets(); }).then(function(){
     restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    if((opts.kind || 'drama') === 'bedtime') setView('bedtime');
     return id;
   });
 }
@@ -772,6 +790,7 @@ function switchProject(pid){
   refreshAll(); renderProjSel(); renderProjDlg();
   return loadShots().then(function(){ return loadAssets(); }).then(function(){
     restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    setView(currentProjectKind() === 'bedtime' ? 'bedtime' : 'script');
     return true;
   });
 }
@@ -817,6 +836,7 @@ function init(){
   }).then(function(){
     restoreChapters();          /* 用已保存的小说正文重切章节，恢复勾选与进度 */
     refreshAll();
+    if(currentProjectKind() === 'bedtime') setView('bedtime');
     if(!state.hasCloud) toast('当前是本地存储模式：数据只保存在这台设备的浏览器里');
     resetStuck();
     resumePolling();
@@ -839,6 +859,7 @@ function init(){
 var _seeded = false;
 function seedDemoAuto(){
   if(_seeded) return; _seeded = true;
+  if(currentProjectKind() === 'bedtime') return;   /* 睡前故事剧目不注入短剧示例 */
   /* 已 seed 过、或本机已有数据（含从别处导入）→ 只落标记，不注入示例；
      标记保证用户日后清空数据、刷新页面时示例不再复活 */
   var already = false;

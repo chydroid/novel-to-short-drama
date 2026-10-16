@@ -470,6 +470,20 @@ select.inp{cursor:pointer}
 </div>
 <div id="projMask" data-act="projclose"></div>
 
+<div class="dialog" id="newProjDlg" aria-hidden="true">
+  <div class="dialog-hd">新建剧目<a class="x" data-act="newproj-close">×</a></div>
+  <div class="dialog-bd">
+    <p style="font-size:14px;color:#445;margin:4px 0 14px">选择要创建的剧目类型：</p>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <button class="btn" data-act="newproj-drama" style="flex:1 1 200px;padding:14px;text-align:left">🎬 加短剧<small style="display:block;font-weight:400;color:#789;margin-top:4px">拆小说 → 分镜 → 生图 / 生视频（视频自带音画同步）</small></button>
+      <button class="btn" data-act="newproj-bedtime" style="flex:1 1 200px;padding:14px;text-align:left">🌙 加睡前故事<small style="display:block;font-weight:400;color:#789;margin-top:4px">主题 → 故事 / 绘本 / 单独音频 / 短视频（V2.0 音画同步）</small></button>
+    </div>
+  </div>
+  <div class="dialog-ft">
+    <button class="btn gh" data-act="newproj-close">取消</button>
+  </div>
+</div>
+
 <main class="wrap" data-page-node-id="8fRWN6fgba9ZGF4X8YHjSd">
   <!-- ============ 今天要处理 ============ -->
   <section class="card" id="todayCard" data-page-node-id="njaMhm9Jc2L4u9iuKdCNhb">
@@ -505,7 +519,6 @@ select.inp{cursor:pointer}
     <button class="tab" data-v="asset">② 角色与场景</button>
     <button class="tab" data-v="gen" data-page-node-id="YcmNwu3HVVl5hEf9x7qXCW">③ 生成图 / 视频</button>
     <button class="tab" data-v="film" data-page-node-id="7YRspRaJE1erEdXfQc1TOK">④ 成片与导出</button>
-    <button class="tab" data-v="bedtime">⑤ 睡前故事</button>
   </nav>
 
   <!-- ============ view: 角色与场景设定 ============ -->
@@ -593,7 +606,7 @@ select.inp{cursor:pointer}
         <button class="btn sm" id="btnPipeRun">开始流水线</button>
       </div>
       <div class="card-bd">
-        <div class="hint" style="margin-bottom:10px">整本小说粘贴到下方（或导入 .txt）→ 点「识别章节」自动按「第 X 章」切分，无章节标题时按字数分段。勾选要跑的章节后点「开始流水线」，会依次自动完成：<b>拆镜 → 建/补设定卡 → 生成设定图 → 生成分镜图 → 配音 → 生成视频</b>。进度存在本机，中途关页面可「继续上次」。</div>
+        <div class="hint" style="margin-bottom:10px">整本小说粘贴到下方（或导入 .txt）→ 点「识别章节」自动按「第 X 章」切分，无章节标题时按字数分段。勾选要跑的章节后点「开始流水线」，会依次自动完成：<b>拆镜 → 建/补设定卡 → 生成设定图 → 生成分镜图 → 生成视频（视频已自带原生音画同步，无需单独配音）</b>。进度存在本机，中途关页面可「继续上次」。</div>
         <div class="row3">
           <div class="fld"><label>每章镜头数</label><input class="inp" type="number" id="pipeShots" value="6" min="1" max="40"></div>
           <div class="fld"><label>本次跑多少章（0=全部）</label><input class="inp" type="number" id="pipeBatch" value="0" min="0"></div>
@@ -604,10 +617,10 @@ select.inp{cursor:pointer}
           <label><input type="checkbox" id="pipe_doAsset" checked> 建 / 补设定卡并 AI 补全描述</label>
           <label><input type="checkbox" id="pipe_doAssetImg" checked> 生成设定图（定妆照 / 空景）</label>
           <label><input type="checkbox" id="pipe_doImg" checked> 生成分镜图</label>
-          <label><input type="checkbox" id="pipe_doAudio" checked> 生成配音并对齐时长</label>
-          <label><input type="checkbox" id="pipe_doVid" checked> 生成分镜视频</label>
+          <label><input type="checkbox" id="pipe_doAudio"> 单独生成配音轨（可选：视频已自带原生音频，一般不用）</label>
+          <label><input type="checkbox" id="pipe_doVid" checked> 生成分镜视频（agnes-video-v2.0 原生音画同步）</label>
           <label><input type="checkbox" id="pipe_doAdapt"> 拆镜前先 AI 剧本化（对白化 / 强钩子，对标火宝 script_rewriter）</label>
-          <label><input type="checkbox" id="pipe_doLip"> 对口型（需配置唇形服务）</label>
+          <label><input type="checkbox" id="pipe_doLip"> 对口型（可选：视频已原生音画同步时一般不用）</label>
         </div>
         <div class="pbar"><i id="pipeBar"></i></div>
         <div class="hint" id="pipeTip" style="margin-top:8px"></div>
@@ -734,8 +747,7 @@ select.inp{cursor:pointer}
   <button class="mtab on" data-v="script" data-page-node-id="WAKEbUNUGmSE9TmefVZtNq"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="2zPSCe0zAlkchdTv9EI4Z8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" data-page-node-id="S0WHz2OuSYdkIc1qTOfihr"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" data-page-node-id="x6patfitvRFFwOPe68HRVd"/></svg>拆镜</button>
   <button class="mtab" data-v="gen" data-page-node-id="QeSLbceDeqBeHH18rCiQTh"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="cuuPbGIsvs6uEFEARCkd7d"><rect x="3" y="3" width="18" height="18" rx="2" data-page-node-id="5Po1HcDhbvrzaY6BId68Mv"/><circle cx="8.5" cy="8.5" r="1.5" data-page-node-id="BuShNC6EYQsFIaHDUUgKQk"/><path d="m21 15-5-5L5 21" data-page-node-id="R75HTrRTvi8YVA4dZeQlYx"/></svg>生成</button>
   <button class="mtab" data-v="asset"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg>设定</button>
-  <button class="mtab" data-v="film" data-page-node-id="VcyZEpih8A7dFap9Hz7ZrZ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="60L408mTfQJ7FMxDbpWOW2"><path d="m23 7-7 5 7 5V7Z" data-page-node-id="ZNLIPiwhicQnz1N9ZEgVNH"/><rect x="1" y="5" width="15" height="14" rx="2" data-page-node-id="tGtHodYpF8g5MGgMixaHYj"/></svg>成片</button>
-    <button class="mtab" data-v="bedtime"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>睡前</button>
+    <button class="mtab" data-v="film" data-page-node-id="VcyZEpih8A7dFap9Hz7ZrZ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="60L408mTfQJ7FMxDbpWOW2"><path d="m23 7-7 5 7 5V7Z" data-page-node-id="ZNLIPiwhicQnz1N9ZEgVNH"/><rect x="1" y="5" width="15" height="14" rx="2" data-page-node-id="tGtHodYpF8g5MGgMixaHYj"/></svg>成片</button>
 </nav>
 
 <!-- ============ settings drawer ============ -->

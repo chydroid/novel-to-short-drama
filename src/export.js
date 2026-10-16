@@ -1306,13 +1306,16 @@ function exportRenderPack(){
     if(!vu && !iu) return;                               /* 图都没有的镜跳过，并在清单里标注 */
     var d = shotDur(s);                                  /* v2.8：统一时长口径，与 SRT/整轨/FCPXML 完全一致 */
     total += d;
-    segs.push({ idx: padSeg(ridx[s._id]), no: s['镜号'], url: vu || iu, isVid: !!vu, d: d });
+    segs.push({ idx: padSeg(ridx[s._id]), no: s['镜号'], url: vu || iu, isVid: !!vu, d: d, audio: !!s['视频含音频'] });
   });
+  var allAudio = segs.length && segs.every(function(g){ return g.audio; });
   if(!segs.length){ toast('还没有生成任何图片 / 视频，无法合成'); return; }
   var fade = Math.min(10, Math.max(0, num(cfg.bgmFade)));
   var vol = Math.min(1, Math.max(0, num(cfg.bgmVol)));
   var fadeOutAt = Math.max(0, Math.round(total - fade));
   var filter = '[2:a]volume=' + vol + ',afade=t=in:d=' + fade + ',afade=t=out:st=' + fadeOutAt + ':d=' + fade + '[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]';
+  /* 视频已含原生音频时（agnes-video-v2.0 音画同步）：混音输入变为 [0]=视频(自带音) [1]=BGM，索引变化，单独一套 filter */
+  var filter2 = '[1:a]volume=' + vol + ',afade=t=in:d=' + fade + ',afade=t=out:st=' + fadeOutAt + ':d=' + fade + '[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]';
   /* 字幕样式：全部可在设置里调，字号会按输出分辨率缩放，保证竖屏横屏观感一致 */
   var fs = num(cfg.subSize) || 14;
   /* v2.7：可选手动「半透明黑底」增强可读性（对标 MoneyPrinterTurbo 的字幕底）。
@@ -1333,7 +1336,7 @@ function exportRenderPack(){
   bat.push('chcp 65001 >nul');
   bat.push('rem 《小说转短剧》一键合成脚本（Windows，需已安装 ffmpeg 并加入 PATH）');
   ['使用步骤：',
-   '  1. 在网页「成片与导出」里点「导出字幕 .srt」和「导出整轨配音 .wav」，把两个文件和本脚本放进同一个文件夹，并把它们改名为 subs.srt 和 voice.wav；',
+   '  1. 在网页「成片与导出」里点「导出字幕 .srt」（视频已含原生音频时仅此一份即可）；若要额外叠加 BGM 或另出配音轨，再点「导出整轨配音 .wav」，把两文件改名为 subs.srt 和 voice.wav 与本脚本同目录；',
    '  2. 本目录会自动生成 合成清单.json 备查；',
    '  3. 运行本脚本（sh: bash render.sh / bat: 双击 render.bat），完成后得到 成片.mp4。',
    '说明：Agnes 的图片/视频 URL 是公网直链，ffmpeg 可直接读取；URL 有时效，请尽快合成。',
@@ -1392,26 +1395,39 @@ function exportRenderPack(){
   sh.push('ffmpeg -y -loglevel error -f concat -safe 0 -i concat.txt -c copy 01_merged.mp4');
   bat.push('echo 拼接全部镜头…');
   bat.push('ffmpeg -y -loglevel error -f concat -safe 0 -i concat.txt -c copy 01_merged.mp4');
-  sh.push('echo 混入配音整轨' + (cfg.bgmUrl ? ' + BGM' : '') + '…');
-  bat.push('echo 混入配音整轨' + (cfg.bgmUrl ? ' + BGM' : '') + '…');
-  if(cfg.bgmUrl && vol > 0){
-    sh.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -stream_loop -1 -i ' + shQ(cfg.bgmUrl) + ' -filter_complex ' + shQ(filter) + ' -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k 02_av.mp4');
-    bat.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -stream_loop -1 -i "' + cfg.bgmUrl + '" -filter_complex "' + filter + '" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k 02_av.mp4');
-  }else{
-    sh.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k 02_av.mp4');
-    bat.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+  var avFile = '02_av.mp4';
+  if(allAudio){
+    /* 视频自身已带原生音画同步音频（agnes-video-v2.0），无需再混 voice.wav；仅可选叠加 BGM */
+    if(cfg.bgmUrl && vol > 0){
+      sh.push('echo 视频已含原生音频，叠加 BGM…');
+      bat.push('echo 视频已含原生音频，叠加 BGM…');
+      sh.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -stream_loop -1 -i ' + shQ(cfg.bgmUrl) + ' -filter_complex ' + shQ(filter2) + ' -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+      bat.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -stream_loop -1 -i "' + cfg.bgmUrl + '" -filter_complex "' + filter2 + '" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+    } else {
+      avFile = '01_merged.mp4';   /* 直接用拼接结果烧字幕，跳过混音步 */
+    }
+  } else {
+    sh.push('echo 混入配音整轨' + (cfg.bgmUrl ? ' + BGM' : '') + '…');
+    bat.push('echo 混入配音整轨' + (cfg.bgmUrl ? ' + BGM' : '') + '…');
+    if(cfg.bgmUrl && vol > 0){
+      sh.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -stream_loop -1 -i ' + shQ(cfg.bgmUrl) + ' -filter_complex ' + shQ(filter) + ' -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+      bat.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -stream_loop -1 -i "' + cfg.bgmUrl + '" -filter_complex "' + filter + '" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+    }else{
+      sh.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+      bat.push('ffmpeg -y -loglevel error -i 01_merged.mp4 -i voice.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k 02_av.mp4');
+    }
   }
   sh.push('echo 烧录字幕…');
-  sh.push('ffmpeg -y -loglevel error -i 02_av.mp4 -vf ' + shQ(subStyle) + ' -c:a copy 成片.mp4');
+  sh.push('ffmpeg -y -loglevel error -i ' + avFile + ' -vf ' + shQ(subStyle) + ' -c:a copy 成片.mp4');
   sh.push('echo 完成：成片.mp4（约 ' + fmtSec(total) + '，' + segs.length + ' 段）');
   bat.push('echo 烧录字幕…');
-  bat.push('ffmpeg -y -loglevel error -i 02_av.mp4 -vf "' + subStyle.replace(/"/g, '') + '" -c:a copy 成片.mp4');
+  bat.push('ffmpeg -y -loglevel error -i ' + avFile + ' -vf "' + subStyle.replace(/"/g, '') + '" -c:a copy 成片.mp4');
   bat.push('echo 完成：成片.mp4（约 ' + fmtSec(total) + '，' + segs.length + ' 段）');
   bat.push('pause');
   var manifest = {
     导出时间: nowStr(), 画幅: cfg.imgRatio, 分辨率: (wh.w + 'x' + wh.h),
     视频总时长秒: Math.round(total), 段数: segs.length,
-    字幕文件: 'subs.srt（由「导出字幕 .srt」改名）', 配音文件: 'voice.wav（由「导出整轨配音 .wav」改名）',
+    字幕文件: 'subs.srt（由「导出字幕 .srt」改名）', 配音文件: 'voice.wav（可选：视频已含原生音频时可省略，直接拼带声成片）',
     转场: (trans === 'none' ? '硬切' : ('段内淡入淡出 ' + td + ' 秒')),
     图片运镜: (kb === 'none' ? '静止' : (kb === 'out' ? '缓慢拉远 Ken Burns' : '缓慢推近 Ken Burns')),
     帧率: fps, 码率: bitrate,
