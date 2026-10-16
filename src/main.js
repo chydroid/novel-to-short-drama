@@ -620,7 +620,7 @@ function setView(v){
   refreshAll();
 }
 function openNewProjDlg(){ $('newProjDlg').classList.add('on'); $('projMask').classList.add('on'); }
-function closeNewProjDlg(){ $('newProjDlg').classList.remove('on'); $('projMask').classList.remove('on'); }
+function closeNewProjDlg(){ $('newProjDlg').classList.remove('on'); if(!$('projDlg').classList.contains('on')) $('projMask').classList.remove('on'); }
 function newProjAs(kind){
   closeNewProjDlg();
   var label = kind === 'bedtime' ? '睡前故事' : '新剧目';
