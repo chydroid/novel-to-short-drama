@@ -186,45 +186,95 @@ function genBedtimeAudioAll(){
   };
   run(0);
 }
-function genBedtimeVideo(){
-  var bt = state.bedtime;
-  if(!bt.pages.length || !bt.pages[0].imgURL){ toast('请先生成故事与绘本插画'); return; }
-  if(!hasAgnesKey()){
-    toast('未配置 Agnes Key：改用「播放绘本」做浏览器内短视频预览');
-    bedPlay(); return;
-  }
-  if(guardBudget()) return;
-  var cover = bt.pages[0].imgURL;
-  var prompt = '儿童睡前故事短片：' + (bt.title || bt.theme) + '。温柔梦幻的绘本动画风格，画面缓慢流动。';
-  bt.videoStatus = '生成中'; renderBedtime();
-  apiPostAgnes(cfg.agnesBase + '/videos', {
-    model:'agnes-video-2.5-flash', prompt:prompt, mode:'keyframe', first_frame:cover,
-    seconds:String(Math.min(12, Math.max(4, bt.pages.length * 2))), size:'720P',
-    aspect_ratio:bt.ratio || '3:4', n:1
+/* -------- Agnes V2.0 音画同步短视频（原生带同步语音+口型） -------- */
+function bedtimeVoiceDesc(){
+  var v = (state.bedtime.voice || '温柔女声');
+  return ({ '温柔女声':'gentle female voice, soft and warm tone', '慈爱爷爷':'kind old grandfather voice, deep and warm tone', '柔和男声':'soft male voice, calm tone', '精灵妹妹':'cheerful little fairy girl voice, sweet tone' })[v] || 'gentle voice';
+}
+function bedtimeDims(){
+  var r = state.bedtime.ratio || '3:4';
+  return ({ '3:4':[768,1024], '1:1':[1024,1024], '16:9':[1280,720], '9:16':[720,1280] })[r] || [768,1024];
+}
+/* V2.0 单片段上限约 121 帧@24fps≈5s，旁白过长需按句/按逗号拆成多段 */
+function splitNarration(t){
+  t = String(t || '').trim(); if(!t) return [];
+  var segs = t.split(/(?<=[。！？；\n])/).map(function(s){ return s.trim(); }).filter(Boolean);
+  var out = [];
+  segs.forEach(function(s){
+    if(s.length <= 24){ out.push(s); return; }
+    var parts = s.split(/(?<=[，,、])/).map(function(x){ return x.trim(); }).filter(Boolean);
+    if(parts.length > 1){ parts.forEach(function(p){ out.push(p); }); }
+    else { for(var i=0;i<s.length;i+=20) out.push(s.slice(i, i+20)); }
+  });
+  return out.filter(function(s){ return s.length; });
+}
+function pollAgnesClip(videoId){
+  return new Promise(function(resolve, reject){
+    var tries = 0;
+    var tick = function(){
+      tries++;
+      if(tries > 240){ reject(new Error('轮询超时（超过 12 分钟）')); return; }
+      apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(videoId) + '&model_name=agnes-video-v2.0', ak())
+        .then(function(r){
+          var j = parseJsonSafe(r.text), st = pickStatus(j), url = pickVideoUrl(j);
+          if(st === 'completed' || st === 'succeeded' || st === 'success' || url){ resolve(url || ''); }
+          else if(st === 'failed' || st === 'error'){ reject(new Error((j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0,160))); }
+          else setTimeout(tick, 3500);
+        })
+        .catch(function(e){ if(tries > 3) reject(e); else setTimeout(tick, 3500); });
+    };
+    tick();
+  });
+}
+function genOneClip(p, seg){
+  var dims = bedtimeDims(), voice = bedtimeVoiceDesc();
+  var prompt = '儿童睡前故事绘本动画，' + (state.bedtime.artStyle || '童话水彩') + '风格，' + (state.bedtime.style || '温柔') + '氛围。'
+    + '画面中的主角用' + voice + '温柔地讲述：(用中文说)\'' + seg + '\' 主角正在说话，嘴巴在动，表情安详。';
+  var nf = Math.min(121, Math.max(24, Math.round(seg.length * 5)));
+  return apiPostAgnes(cfg.agnesBase + '/videos', {
+    model:'agnes-video-v2.0', prompt:prompt, width:dims[0], height:dims[1], num_frames:nf, frame_rate:24,
+    extra_body:{ image:p.imgURL }
   }).then(function(r){
     var j = parseJsonSafe(r.text);
     var vid = (j && (j.video_id || j.id || j.task_id)) || '';
-    if(r.status >= 400 || !vid) throw new Error('未取到 video_id：' + (r.text || '').slice(0, 180));
-    bt.videoTaskId = String(vid); bt.videoStatus = '排队中'; renderBedtime(); pollBedtimeVideo();
-  }).catch(function(e){ console.error(e); bt.videoStatus = '失败'; bt.videoErr = guessCorsMsg(e); renderBedtime(); toast('睡前故事视频提交失败'); });
+    if(r.status >= 400 || !vid) throw new Error('未取到 video_id：' + (r.text || '').slice(0,180));
+    return pollAgnesClip(vid);
+  });
 }
-function pollBedtimeVideo(){
-  var bt = state.bedtime, id = bt.videoTaskId; if(!id) return;
-  var tries = 0;
-  var tick = function(){
-    if(state.bedtime.videoTaskId !== id){ return; }
-    tries++;
-    if(tries > 240){ bt.videoStatus = '失败'; bt.videoErr = '轮询超时（超过 12 分钟）'; renderBedtime(); return; }
-    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(id) + '&model_name=agnes-video-2.5-flash', ak())
-      .then(function(r){
-        var j = parseJsonSafe(r.text), st = pickStatus(j), url = pickVideoUrl(j);
-        if(st === 'completed' || st === 'succeeded' || st === 'success' || url){ bt.videoURL = url; bt.videoStatus = '已完成'; renderBedtime(); toast('睡前故事短视频完成'); }
-        else if(st === 'failed' || st === 'error'){ bt.videoStatus = '失败'; bt.videoErr = (j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0, 180); renderBedtime(); }
-      })
-      .catch(function(e){ if(tries > 3){ bt.videoStatus = '失败'; bt.videoErr = guessCorsMsg(e); renderBedtime(); } });
-  };
-  if(bt._poll) clearInterval(bt._poll);
-  bt._poll = setInterval(tick, 3500); tick();
+function genBedtimeVideo(){
+  var bt = state.bedtime;
+  if(!bt.pages.length || !bt.pages[0].imgURL){ toast('请先生成故事与绘本插画（需真实图片 URL 作参考帧）'); return; }
+  if(!hasAgnesKey()){
+    toast('未配置 Agnes Key：改用「播放绘本」做浏览器内预览');
+    bedPlay(); return;
+  }
+  if(guardBudget()) return;
+  bt._moviePlaying = false;
+  var total = 0, done = 0;
+  bt.pages.forEach(function(p){ p.clips = []; p.clipErr = ''; total += splitNarration(p.text).length; });
+  if(!total){ toast('没有可生成旁白的文本'); return; }
+  bt.videoStatus = '生成中… (0/' + total + ')'; renderBedtime();
+  var chain = Promise.resolve();
+  bt.pages.forEach(function(p, pi){
+    var segs = splitNarration(p.text);
+    segs.forEach(function(seg){
+      chain = chain.then(function(){
+        if(!state.bedtime.pages[pi]) return;
+        return genOneClip(p, seg).then(function(url){
+          if(url){ p.clips.push(url); }
+          done++; bt.videoStatus = '生成中… (' + done + '/' + total + ')'; renderBedtime();
+        }).catch(function(e){ console.error(e); p.clipErr = guessCorsMsg(e); bt.videoStatus = '部分片段失败：' + guessCorsMsg(e); renderBedtime(); });
+      });
+    });
+  });
+  chain.then(function(){
+    bt.videoStatus = '短视频生成完成（' + done + '/' + total + ' 段 · Agnes V2.0 原生音画同步）';
+    renderBedtime(); toast('睡前故事短视频生成完成');
+  });
+}
+function bedAllClips(){
+  var bt = state.bedtime; if(!bt || !bt.pages) return [];
+  var a = []; bt.pages.forEach(function(p){ if(p.clips) p.clips.forEach(function(u){ a.push(u); }); }); return a;
 }
 
 /* -------- 浏览器内幻灯片（短视频预览，永远可用） -------- */
@@ -249,6 +299,14 @@ function bedPlay(){ var bt = state.bedtime; if(!bt.pages.length){ toast('请先�
 function bedStop(){ var bt = state.bedtime; bt._playing = false; if(window.speechSynthesis) window.speechSynthesis.cancel(); }
 function bedPrev(){ var bt = state.bedtime; if(bt._cur > 0){ bt._cur--; if(!bt._playing) bedStep(); } }
 function bedNext(){ var bt = state.bedtime; if(bt._cur < bt.pages.length - 1){ bt._cur++; if(!bt._playing) bedStep(); } }
+function bedPlayMovie(){
+  var bt = state.bedtime, all = bedAllClips(); if(!all.length){ toast('请先生成短视频'); return; }
+  var mv = $('bed-movie'); if(!mv) return;
+  bt._moviePlaying = true; mv.style.display = 'block';
+  var i = 0;
+  mv.onended = function(){ if(i >= all.length){ bt._moviePlaying = false; mv.style.display = 'none'; return; } mv.src = all[i++]; var pr = mv.play(); if(pr && pr.catch) pr.catch(function(){ i++; mv.onended(); }); };
+  mv.onended();
+}
 
 /* -------- 下载 / 导出（音频独立保存） -------- */
 function doDownload(url, name){ var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); setTimeout(function(){ if(a.parentNode) a.parentNode.removeChild(a); }, 120); }
@@ -322,7 +380,11 @@ function buildBedtimeShell(){
     + '    <button id="bed-next" class="bed-btn">下一页 ›</button>'
     + '  </div>'
     + '</div>'
-    + '<div id="bed-video" style="margin:8px 0"></div>'
+    + '<div id="bed-video" style="margin:8px 0">'
+    + '  <div id="bed-video-status" style="font-size:13px;color:#8ad;min-height:16px;margin:4px 0"></div>'
+    + '  <div id="bed-video-clips"></div>'
+    + '  <video id="bed-movie" controls style="width:100%;max-width:360px;display:none;margin:6px auto;border-radius:8px"></video>'
+    + '</div>'
     + '<div id="bed-pages" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:10px"></div>';
   var box = $('v-bedtime'); box.innerHTML = ''; box.appendChild(root);
   // 让 stage 的 audio 元素在播放时可见（用于真实音频播放）
@@ -350,12 +412,22 @@ function renderBedtime(){
   var bt = state.bedtime;
   // 状态
   var st = $('bed-status'); if(st) st.textContent = (bt.title ? '《' + bt.title + '》 ' : '') + (bt.status || '');
-  // 视频区
-  var vbox = $('bed-video');
-  if(vbox){
-    if(bt.videoURL){ vbox.innerHTML = '<video src="' + bt.videoURL + '" controls style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:8px"></video><div style="font-size:12px;color:#9aa;text-align:center;margin-top:4px">睡前故事短视频</div>'; }
-    else if(bt.videoStatus){ vbox.innerHTML = '<div style="font-size:13px;color:#8ad;text-align:center">视频状态：' + bt.videoStatus + (bt.videoErr ? '（' + bt.videoErr + '）' : '') + '</div>'; }
-    else vbox.innerHTML = '';
+  // 视频区（Agnes V2.0 音画同步片段）
+  var vst = $('bed-video-status'); if(vst) vst.textContent = (bt.videoStatus ? ('视频状态：' + bt.videoStatus) : '') + (bt.videoErr ? '（' + bt.videoErr + '）' : '');
+  var vc = $('bed-video-clips');
+  if(vc && !bt._moviePlaying){
+    var all = bedAllClips();
+    if(all.length){
+      var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0">'
+        + '<button id="bed-movie-play" class="bed-btn">▶ 连播全部片段</button>'
+        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + ' 段音画同步短视频（Agnes V2.0 原生生成·自带同步语音；与③单独下载的 TTS 音色不同）</span></div>';
+      all.forEach(function(u, i){
+        h += '<div style="margin:6px 0"><div style="font-size:12px;color:#9aa">片段 ' + (i + 1) + '</div>'
+          + '<video src="' + u + '" controls style="width:100%;max-width:360px;display:block;border-radius:8px"></video></div>';
+      });
+      vc.innerHTML = h;
+      var mp = $('bed-movie-play'); if(mp) mp.onclick = bedPlayMovie;
+    } else { vc.innerHTML = ''; }
   }
   // 绘本页
   var pg = $('bed-pages'); if(!pg) return;

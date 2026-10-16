@@ -607,7 +607,7 @@ function bind(){
 }
 function setView(v){
   state.view = v;
-  ['script','asset','gen','film'].forEach(function(k){ $('v-'+k).style.display = (k === v ? '' : 'none'); });
+  ['script','asset','gen','film','bedtime'].forEach(function(k){ $('v-'+k).style.display = (k === v ? '' : 'none'); });
   document.querySelectorAll('.tab').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
   document.querySelectorAll('.mtab').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
   if(typeof renderBedtime === 'function' && v === 'bedtime') renderBedtime();
