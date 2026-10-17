@@ -324,9 +324,17 @@ function pollAgnesClip(videoId){
   });
 }
 function genOneClip(p, seg){
-  var dims = bedtimeDims(), voice = bedtimeVoiceDesc();
-  var prompt = '儿童睡前故事绘本动画，' + (state.bedtime.artStyle || '童话水彩') + '风格，' + (state.bedtime.style || '温柔') + '氛围。'
-    + '画面中的主角用' + voice + '温柔地讲述：(用中文说)\'' + seg + '\' 主角正在说话，嘴巴在动，表情安详。';
+  var voice = bedtimeVoiceDesc();
+  /* 旁白是第三人称叙述，不是角色台词：让画面表现旁白描述的场景/动作，
+     采用画外旁白配音（角色不开口、不出现说话口型），并配轻柔摇篮曲背景音乐。
+     Agnes 视频在 keyframe 模式不允许传 audios 参考音频，故 BGM 只能写进 prompt。 */
+  var art = state.bedtime.artStyle || '童话水彩';
+  var mood = state.bedtime.style || '温柔';
+  var prompt = '儿童睡前故事绘本动画片段，' + art + '风格，' + mood + '氛围。'
+    + '以首帧插画为起点，自然表现以下旁白所描述的场景与动作：' + seg + '。'
+    + '重要：这段是第三人称画外旁白，角色不要开口说话、不要出现说话口型；'
+    + '请生成温柔舒缓的画外旁白配音来朗读它（音色：' + voice + '），'
+    + '并配以轻柔舒缓的摇篮曲背景音乐，营造安静助眠的氛围。';
   /* 对齐官方 agnes-video-2.5-flash（OpenAI-Videos 兼容）：mode 必填；插画作首帧走 keyframe；
      秒数取 4–12，Flash 固定 720P。禁用不存在的 width/height/num_frames/frame_rate/extra_body。 */
   var sec = Math.min(12, Math.max(4, Math.round(seg.length / 4) || 5));
@@ -369,7 +377,7 @@ function genBedtimeVideo(){
     });
   });
   chain.then(function(){
-    bt.videoStatus = '短视频生成完成（' + done + '/' + total + ' 段 · Agnes V2.0 原生音画同步）';
+    bt.videoStatus = '短视频生成完成（' + done + '/' + total + ' 段 · 旁白配音 + 背景音乐）';
     renderBedtime(); toast('睡前故事短视频生成完成');
   });
 }
@@ -388,16 +396,29 @@ function bedStep(){
   var advance = function(){ if(!bt._playing) return; bt._cur++; if(bt._cur >= bt.pages.length){ bedStop(); return; } bedStep(); };
   if(p.audURL && !bt.demo){
     var a = $('bed-stage-audio');
-    if(a){ a.src = p.audURL; a.onended = advance; var pr = a.play(); if(pr && pr.catch) pr.catch(advance); }
-    else advance();
+    if(a){
+      if(a.getAttribute('src') !== p.audURL) a.src = p.audURL;   /* 同一页恢复播放不重复重载 */
+      a.onended = advance; var pr = a.play(); if(pr && pr.catch) pr.catch(advance);
+    } else advance();
   } else if(window.speechSynthesis){
     var u = new SpeechSynthesisUtterance(p.text || ''); u.lang = 'zh-CN'; u.rate = 0.9; u.onend = advance; window.speechSynthesis.speak(u);
   } else {
     var secs = Math.max(2, (p.text || '').length / 8); setTimeout(advance, secs * 1000);
   }
 }
-function bedPlay(){ var bt = state.bedtime; if(!bt.pages.length){ toast('请先生成故事'); return; } bt._cur = 0; bt._playing = true; bedStep(); }
-function bedStop(){ var bt = state.bedtime; bt._playing = false; if(window.speechSynthesis) window.speechSynthesis.cancel(); }
+function bedPlay(){
+  var bt = state.bedtime;
+  if(!bt.pages.length){ toast('请先生成故事'); return; }
+  if(bt._playing){ bedStop(); return; }              /* 播放中再点 = 暂停；修复「停止不起效」 */
+  if(bt._cur >= bt.pages.length) bt._cur = 0;
+  bt._playing = true; bedStep();
+}
+function bedStop(){
+  var bt = state.bedtime; bt._playing = false;
+  if(window.speechSynthesis) window.speechSynthesis.cancel();
+  var a = $('bed-stage-audio');                       /* 真正停掉当前正在播放的音频，否则点停止仍在响 */
+  if(a){ try{ a.pause(); a.currentTime = 0; }catch(e){} }
+}
 function bedPrev(){ var bt = state.bedtime; if(bt._cur > 0){ bt._cur--; if(!bt._playing) bedStep(); } }
 function bedNext(){ var bt = state.bedtime; if(bt._cur < bt.pages.length - 1){ bt._cur++; if(!bt._playing) bedStep(); } }
 function bedPlayMovie(){
@@ -597,12 +618,13 @@ function buildBedtimeShell(){
   if(!box._styled){
     var st = document.createElement('style');
     st.textContent = '.bed-btn{padding:7px 12px;border-radius:8px;border:1px solid #3a5;border:1px solid #345;background:#16204a;color:#dfe6ff;cursor:pointer;font-size:13px}.bed-btn:hover{background:#1d2c63}.bed-card{background:#0e1530;border:1px solid #2a3566;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}.bed-card-img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#1a2348}.bed-card-txt{font-size:12px;color:#cdd;padding:8px;min-height:48px}.bed-card-aud{padding:0 8px 8px}.bed-card button{margin:0 8px 8px;padding:5px 8px;border-radius:6px;border:1px solid #345;background:#16204a;color:#dfe6ff;cursor:pointer;font-size:12px}'
-    + '#bed-stage.bed-full{position:fixed;inset:0;width:100vw;height:100vh;z-index:9999;background:#000;display:flex!important;flex-direction:column;align-items:center;justify-content:center;padding:16px;border-radius:0;border:none}'
-    + '#bed-stage.bed-full #bed-stage-img{max-width:92vw;max-height:72vh;width:auto;height:auto;object-fit:contain;border-radius:12px}'
-    + '#bed-stage.bed-full #bed-stage-cap{font-size:22px;color:#fff;margin:16px 0;max-width:92vw;line-height:1.5}'
-    + '#bed-stage.bed-full audio{width:80vw;max-width:560px;margin-top:6px}'
-    + '#bed-stage.bed-full>div:last-child{position:fixed;bottom:20px;left:0;right:0;display:flex;gap:10px;justify-content:center}'
-    + '#bed-stage.bed-full .bed-btn{font-size:15px;padding:9px 16px}';
+    /* 全屏覆盖：内联样式（max-width:360px 等）优先级高于样式表，必须用 !important 才能放大 */
+    + '#bed-stage.bed-full{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:9999!important;background:#000!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;padding:16px!important;border-radius:0!important;border:none!important;margin:0!important}'
+    + '#bed-stage.bed-full #bed-stage-img{width:auto!important;height:auto!important;max-width:92vw!important;max-height:72vh!important;object-fit:contain!important;border-radius:12px!important;margin:0 auto!important;display:block!important}'
+    + '#bed-stage.bed-full #bed-stage-cap{font-size:22px!important;color:#fff!important;margin:16px 0!important;max-width:92vw!important;line-height:1.5!important;text-align:center!important}'
+    + '#bed-stage.bed-full audio{width:80vw!important;max-width:560px!important;margin-top:6px!important}'
+    + '#bed-stage.bed-full>div:last-child{position:fixed!important;bottom:20px!important;left:0!important;right:0!important;display:flex!important;gap:10px!important;justify-content:center!important}'
+    + '#bed-stage.bed-full .bed-btn{font-size:15px!important;padding:9px 16px!important}';
     document.head.appendChild(st); box._styled = true;
   }
 }
@@ -621,7 +643,7 @@ function renderBedtime(){
     if(all.length){
       var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0">'
         + '<button id="bed-movie-play" class="bed-btn">▶ 连播全部片段</button>'
-        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + ' 段音画同步短视频（Agnes V2.0 原生生成·自带同步语音；与③单独下载的 TTS 音色不同）</span></div>';
+        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + ' 段（旁白配音 + 轻柔背景音乐；与③单独下载的 TTS 音色不同）</span></div>';
       all.forEach(function(u, i){
         h += '<div style="margin:6px 0"><div style="font-size:12px;color:#9aa">片段 ' + (i + 1) + '</div>'
           + '<video src="' + u + '" controls style="width:100%;max-width:360px;display:block;border-radius:8px"></video></div>';
