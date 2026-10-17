@@ -1056,30 +1056,65 @@ function startPoll(id){
   pollers[id] = setInterval(tick, 3500);
   tick();
 }
+/* v2.55：Agnes 视频任务创建对「队列已满 / 限流」类瞬时错误做指数退避重试。
+   官方文档：video_queue_full 属服务端过载（队列满，请稍后重试），非参数校验错误，应重试而非判失败；
+   永久 400 校验错误（size 非 720P、图片/音频超限等）不重试，避免空转浪费配额。 */
+function isRetryableVideoErr(r, text){
+  var t = (text || '').toLowerCase();
+  if(r && (r.status === 429 || r.status === 503)) return true;                       // 限流 / 服务暂不可用
+  if(/video_queue_full|queue_full|队列已满/.test(t)) return true;                     // 队列满（官方明确「请稍后重试」）
+  if(/rate[_\s-]?limit|too_many_requests|触发限流|请求过于频繁/.test(t)) return true;  // 限流类
+  return false;
+}
+function submitAgnesVideo(body, opts){
+  opts = opts || {};
+  var max = opts.max || 8;                                   // 最多 8 次提交尝试
+  var onWait = opts.onWait || function(){};
+  var attempt = 0;
+  function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  function tryOnce(){
+    attempt++;
+    return apiPostAgnes(cfg.agnesBase + '/videos', body).then(function(r){
+      var j = parseJsonSafe(r.text);
+      var vid = (j && (j.video_id || j.id || j.task_id)) || '';
+      if(vid) return vid;
+      /* 永久 HTTP 校验错误（size/images/audios 超限等）：不重试，原样抛 HTTP 错误 */
+      if(r.status >= 400 && !isRetryableVideoErr(r, r.text)){
+        var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,180);
+        throw new Error('HTTP ' + r.status + ' ' + msg);
+      }
+      /* 瞬时错误且未达上限：退避后重试 */
+      if(isRetryableVideoErr(r, r.text) && attempt < max){
+        var backoff = Math.min(30000, 2000 * Math.pow(2, attempt - 1));  // 2s→4s→8s→16s→30s（封顶）
+        onWait(attempt, backoff, max);
+        return wait(backoff).then(tryOnce);
+      }
+      /* 已达上限或非瞬时：抛出未取到 video_id 错误 */
+      throw new Error('未取到 video_id：' + (r.text || '').slice(0,180));
+    });
+  }
+  return tryOnce();
+}
 function genVideo(id){
   var s = shotById(id); if(!s) return Promise.resolve();
   if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截视频生成 */
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   if(!s['图片URL']){ toast('请先生成这一镜的图片'); return Promise.resolve(); }
   state.busy[id] = true; refreshAll();
-  return apiPostAgnes(cfg.agnesBase + '/videos', buildVideoBody(s))
-    .then(function(r){
-      var j = parseJsonSafe(r.text);
-      if(r.status >= 400){
-        var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : r.text.slice(0,180);
-        throw new Error('HTTP ' + r.status + ' ' + msg);
-      }
-      var vid = (j && (j.video_id || j.id || j.task_id)) || '';
-      if(!vid) throw new Error('未取到 video_id：' + r.text.slice(0,180));
-      delete state.busy[id];
-      patchShot(id, { 任务ID:String(vid), 视频状态:'排队中', 错误信息:'', 更新时间:nowStr() });
-      startPoll(id);
-    })
-    .catch(function(e){
-      console.error(e);
-      delete state.busy[id];
-      patchShot(id, { 视频状态:'失败', 错误信息:guessCorsMsg(e).slice(0,300), 更新时间:nowStr() });
-      toast('第 ' + s['镜号'] + ' 镜视频提交失败');
-    });
+  return submitAgnesVideo(buildVideoBody(s), {
+    onWait: function(a, backoff, mx){
+      var sh = shotById(id);
+      if(sh){ sh['视频状态'] = '队列已满，重试中 (' + a + '/' + mx + ')…'; refreshAll(); }
+    }
+  }).then(function(vid){
+    delete state.busy[id];
+    patchShot(id, { 任务ID:String(vid), 视频状态:'排队中', 错误信息:'', 更新时间:nowStr() });
+    startPoll(id);
+  }).catch(function(e){
+    console.error(e);
+    delete state.busy[id];
+    patchShot(id, { 视频状态:'失败', 错误信息:guessCorsMsg(e).slice(0,300), 更新时间:nowStr() });
+    toast('第 ' + s['镜号'] + ' 镜视频提交失败');
+  });
 }
 

@@ -314,15 +314,17 @@ function genOneClip(p, seg){
   /* 对齐官方 agnes-video-2.5-flash（OpenAI-Videos 兼容）：mode 必填；插画作首帧走 keyframe；
      秒数取 4–12，Flash 固定 720P。禁用不存在的 width/height/num_frames/frame_rate/extra_body。 */
   var sec = Math.min(12, Math.max(4, Math.round(seg.length / 4) || 5));
-  return apiPostAgnes(cfg.agnesBase + '/videos', {
+  var body = {
     model:(cfg.vidModel || 'agnes-video-2.5-flash'), prompt:prompt, mode:'keyframe', first_frame:p.imgURL,
     seconds:String(sec), size:'720P', aspect_ratio:(state.bedtime.ratio || '3:4'), n:1
-  }).then(function(r){
-    var j = parseJsonSafe(r.text);
-    var vid = (j && (j.video_id || j.id || j.task_id)) || '';
-    if(r.status >= 400 || !vid) throw new Error('未取到 video_id：' + (r.text || '').slice(0,180));
-    return pollAgnesClip(vid);
-  });
+  };
+  /* 队列满 / 限流是瞬时错误，submitAgnesVideo 会自动退避重试；重试期间回写状态让用户知道在等待而非卡死 */
+  return submitAgnesVideo(body, {
+    onWait: function(a, backoff, mx){
+      var bt = state.bedtime;
+      bt.videoStatus = '队列已满，重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+    }
+  }).then(function(vid){ return pollAgnesClip(vid); });
 }
 function genBedtimeVideo(){
   var bt = state.bedtime;
