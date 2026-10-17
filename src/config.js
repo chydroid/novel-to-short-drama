@@ -121,13 +121,17 @@ function ak(){
   persistKeyIdx();
   return r;
 }
-/* 带 Key 轮换的 POST：限流/鉴权失败时自动换下一个 Key 重试 */
+/* 带 Key 轮换的 POST：仅「Key 无效」（401/403）时换下一个 Key 重试。
+   注意 429（限流/队列满）**不在这里换 Key 重发**：限流与视频队列是账号/全局级的，
+   换 Key 解决不了，只会把请求量成倍放大（曾出现后台计量 134 个而实际不到 50 个）；
+   429/503/队列满由 api.js 的 submitAgnesVideo 做退避重试，职责不重叠。 */
 function apiPostAgnes(url, body, tries){
   tries = tries || 0;
   var key = ak();
   return apiPost(url, key, body).then(function(r){
-    var limited = (r.status === 429 || r.status === 401 || r.status === 403);
-    if(limited && tries < Math.max(1, keyList().length)){
+    var badKey = (r.status === 401 || r.status === 403);
+    /* 已试过 tries+1 把、且还有下一把可换时才重发（原来 tries < length 会多打一次无效请求） */
+    if(badKey && (tries + 1) < Math.max(1, keyList().length)){
       return apiPostAgnes(url, body, tries + 1);
     }
     return r;

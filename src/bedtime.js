@@ -421,7 +421,7 @@ function pollAgnesClip(videoId){
     var tries = 0;
     var tick = function(){
       tries++;
-      if(tries > 240){ reject(new Error('轮询超时（超过 12 分钟）')); return; }
+      if(tries > 240){ reject(new Error('轮询超时（超过 12 分钟）。视频任务可能仍在后台生成，请稍后重试或查询，不要立即重复提交')); return; }
       apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(videoId) + '&model_name=' + encodeURIComponent(cfg.vidModel || 'agnes-video-2.5-flash'), ak())
         .then(function(r){
           var j = parseJsonSafe(r.text), st = pickStatus(j);

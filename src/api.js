@@ -1056,9 +1056,6 @@ function startPoll(id){
   pollers[id] = setInterval(tick, 3500);
   tick();
 }
-/* v2.55：Agnes 视频任务创建对「队列已满 / 限流」类瞬时错误做指数退避重试。
-   官方文档：video_queue_full 属服务端过载（队列满，请稍后重试），非参数校验错误，应重试而非判失败；
-   永久 400 校验错误（size 非 720P、图片/音频超限等）不重试，避免空转浪费配额。 */
 function isRetryableVideoErr(r, text){
   var t = (text || '').toLowerCase();
   if(r && (r.status === 429 || r.status === 503)) return true;                       // 限流 / 服务暂不可用
@@ -1066,9 +1063,17 @@ function isRetryableVideoErr(r, text){
   if(/rate[_\s-]?limit|too_many_requests|触发限流|请求过于频繁/.test(t)) return true;  // 限流类
   return false;
 }
+/* v2.55：Agnes 视频任务创建对「队列已满 / 限流」类瞬时错误做指数退避重试。
+   官方文档：video_queue_full 属服务端过载（队列满，请稍后重试），非参数校验错误，应重试而非判失败；
+   永久 400 校验错误（size 非 720P、图片/音频超限等）不重试，避免空转浪费配额。
+   v2.58 防重复生成（后台计量 134 vs 实际 <50 的根因之一）：
+   - 重试上限 8 → 5（退避 2/4/8/16/30s ≈ 60s，足够队列排空；还满就让用户稍后再来，
+     而不是继续打请求——每个被拒的请求在服务端同样计入计量）；
+   - **网络层错误（超时/断网，根本没有响应）绝不重试**：请求可能已被服务端接收并创建了
+     任务，重试等于重复创建、重复计费。这类错误直接抛出，由上层标记失败、用户知情后再决定。 */
 function submitAgnesVideo(body, opts){
   opts = opts || {};
-  var max = opts.max || 8;                                   // 最多 8 次提交尝试
+  var max = opts.max || 5;                                   // 最多 5 次提交尝试
   var onWait = opts.onWait || function(){};
   var attempt = 0;
   function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
@@ -1083,7 +1088,7 @@ function submitAgnesVideo(body, opts){
         var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,180);
         throw new Error('HTTP ' + r.status + ' ' + msg);
       }
-      /* 瞬时错误且未达上限：退避后重试 */
+      /* 瞬时错误（有响应：队列满/限流/503）且未达上限：退避后重试 */
       if(isRetryableVideoErr(r, r.text) && attempt < max){
         var backoff = Math.min(30000, 2000 * Math.pow(2, attempt - 1));  // 2s→4s→8s→16s→30s（封顶）
         onWait(attempt, backoff, max);
@@ -1091,6 +1096,11 @@ function submitAgnesVideo(body, opts){
       }
       /* 已达上限或非瞬时：抛出未取到 video_id 错误 */
       throw new Error('未取到 video_id：' + (r.text || '').slice(0,180));
+    }, function(e){
+      /* 网络层失败（超时 / 断网 / CORS）：没有响应就无法确认服务端是否已创建任务，
+         重试极可能造成重复创建与重复计费 —— 不重试，直接把错误抛给上层。 */
+      throw new Error('视频提交未得到响应（' + (e && e.message ? e.message : e) +
+        '）。任务可能已在后台创建，请稍后在列表中查看，确认没有成品后再重试。');
     });
   }
   return tryOnce();
@@ -1100,6 +1110,16 @@ function genVideo(id){
   if(guardBudget()) return Promise.resolve();   /* v2.47：预算硬上限，拦截视频生成 */
   if(!hasAgnesKey()){ toast('请先在设置里填 Agnes API Key'); openDrawer(); return Promise.resolve(); }
   if(!s['图片URL']){ toast('请先生成这一镜的图片'); return Promise.resolve(); }
+  /* v2.58：该镜已有任务 ID 且仍在途（排队中/生成中）→ 恢复轮询，绝不重新提交。
+     刷新页面后 pollers 全丢失、状态冻结在「排队中/生成中」，此时再点生成若走提交逻辑，
+     就会创建第二个任务：旧任务在后台继续跑并计费，前端却再也拿不到它（后台计量
+     远大于实际成品数的根因之一）。 */
+  var st0 = s['视频状态'] || '';
+  if(s['任务ID'] && (st0 === '排队中' || st0 === '生成中')){
+    startPoll(id);
+    toast('第 ' + s['镜号'] + ' 镜已有视频任务在进行中，已恢复进度查询（不会重复提交）');
+    return Promise.resolve();
+  }
   state.busy[id] = true; refreshAll();
   return submitAgnesVideo(buildVideoBody(s), {
     onWait: function(a, backoff, mx){
