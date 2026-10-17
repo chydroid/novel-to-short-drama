@@ -587,6 +587,13 @@ function readSettings(){
   if($('cf_ttsNarr')) cfg.ttsNarr = $('cf_ttsNarr').value;
   if($('cf_ttsFormat')) cfg.ttsFormat = $('cf_ttsFormat').value;
   if($('cf_ttsSync')) cfg.ttsSync = !!$('cf_ttsSync').checked;
+  /* v2.56：TTS 音色软校验——官方只接受预置 ID，手填中文名会触发 HTTP 400。
+     不拦截保存（避免误伤未来新增的合法 ID），仅在「非空且非法」时 toast 提醒；
+     voicedesign 模型不发送音色参数，无需校验。 */
+  if(cfg.ttsModel.indexOf('voicedesign') === -1){
+    if(cfg.ttsVoice && !ttsVoiceOk(cfg.ttsVoice)) toast('旁白音色「'+cfg.ttsVoice+'」不是小米预置音色 ID，配音可能报 400；合法值：'+TTS_VOICES.join('/'));
+    if(cfg.ttsNarr && !ttsVoiceOk(cfg.ttsNarr)) toast('角色音色「'+cfg.ttsNarr+'」不是小米预置音色 ID，配音可能报 400；合法值：'+TTS_VOICES.join('/'));
+  }
   if($('cf_cnRate')) cfg.cnRate = Math.max(2, Math.min(8, num($('cf_cnRate').value) || 4.5));
   if($('cf_lipBase')) cfg.lipBase = ($('cf_lipBase').value.trim() || '').replace(/\/+$/,'');
   if($('cf_lipKey')) cfg.lipKey = $('cf_lipKey').value.trim();

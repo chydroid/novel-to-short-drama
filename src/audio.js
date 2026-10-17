@@ -21,6 +21,15 @@ function buildTtsBody(text, voice, style){
   else body.audio.optimize_text_preview = true;
   return body;
 }
+/* v2.56：小米 TTS 官方预置音色 ID 白名单（speech-synthesis-v2.5 文档「预置音色列表」）。
+   非此集合且非空的音色值会被直接当成 audio.voice 发出 → HTTP 400。
+   手填中文描述名（如「温柔女声」）正是 bedtime 曾踩的坑，这里统一做软校验。 */
+var TTS_VOICES = ['mimo_default','冰糖','茉莉','苏打','白桦','Mia','Chloe','Milo','Dean'];
+function ttsVoiceOk(v){
+  v = String(v == null ? '' : v).trim();
+  if(!v) return true;                 /* 空 = 用默认音色，合法 */
+  return TTS_VOICES.indexOf(v) > -1;
+}
 function pickAudioB64(j){
   if(!j) return '';
   var c = [

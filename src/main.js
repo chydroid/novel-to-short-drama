@@ -246,6 +246,10 @@ function bind(){
       var id = row.getAttribute('data-id');
       var o = {}; o[f] = el.value;
       if(f === '时长秒') o[f] = num(el.value);
+      /* v2.56：角色卡 TTS 音色软校验——手填中文名会复现 HTTP 400，失焦即提醒（不拦截保存） */
+      if(f === 'TTS音色' && !ttsVoiceOk(el.value)){
+        toast('角色「'+id+'」音色「'+el.value+'」不是小米预置音色 ID，配音可能报 400；合法值：'+TTS_VOICES.join('/'));
+      }
       if(el.getAttribute('data-af')) patchAsset(id, o);
       else patchShot(id, o);
     });

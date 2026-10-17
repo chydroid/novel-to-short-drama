@@ -100,11 +100,26 @@ function keyList(){
   return out;
 }
 function hasAgnesKey(){ return !!keyList().length; }
+/* v2.56：密钥轮询序号持久化——原来只存内存，刷新回到第 0 把，多 Key 负载均衡跨刷新不连续。
+   懒加载一次 + 防抖落盘（避免每次取 Key 都写 localStorage 拖慢批量）。 */
+var KEY_IDX_KEY = LS + 'keyIdx', _keyIdxLoaded = false, _keyIdxTm = 0;
+function persistKeyIdx(){
+  clearTimeout(_keyIdxTm);
+  _keyIdxTm = setTimeout(function(){
+    try{ lsSet(KEY_IDX_KEY, String(state.keyIdx)); }catch(e){}
+  }, 1500);
+}
 function ak(){
   var l = keyList();
   if(!l.length) return cfg.agnesKey || '';
+  if(!_keyIdxLoaded){
+    _keyIdxLoaded = true;
+    try{ var sv = parseInt(localStorage.getItem(KEY_IDX_KEY), 10); if(isFinite(sv) && sv >= 0) state.keyIdx = sv; }catch(e){}
+  }
   if(typeof state.keyIdx !== 'number') state.keyIdx = 0;
-  return l[(state.keyIdx++) % l.length];
+  var r = l[(state.keyIdx++) % l.length];
+  persistKeyIdx();
+  return r;
 }
 /* 带 Key 轮换的 POST：限流/鉴权失败时自动换下一个 Key 重试 */
 function apiPostAgnes(url, body, tries){
