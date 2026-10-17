@@ -10,6 +10,72 @@ function initBedtimeState(){
     status:'idle', videoURL:'', videoStatus:'', videoTaskId:'', videoErr:'', _cur:0, _playing:false, demo:false
   };
 }
+/* -------- 本机持久化（v2.56）：睡前故事的文字/图片/音频索引/视频片段随刷新保留 --------
+ * 根因：state.bedtime 此前从未落盘，刷新后 initBedtimeState() 重建空对象 → 文字与图片消失。
+ * 音频本体已由 audSave 单独存盘（键 aud_bed_<i>），这里只存「页面元数据」：
+ *   文本 + 图片URL + 远程音频URL + 视频片段；不存 audB64（体积大且与 audSave 重复）。
+ *   本地音频在加载时按 bed_<i> 重新链接生成 blob URL。
+ * 用固定 key（LS+'bedtime'）而非 pk()：state.bedtime 是单全局对象、切剧目不清空，固定 key 与现有
+ *   内存模型一致，也避免「切到别的剧目时把 A 的数据写进 B 的命名空间」这类错位。 */
+var bedtimeLoaded = false;
+function saveBedtime(){
+  if(!bedtimeLoaded) return;                       /* 加载前不写，防把已存数据用空对象覆盖 */
+  var bt = state.bedtime; if(!bt) return;
+  var hasData = (bt.pages && bt.pages.length) || bt.title || bt.theme;
+  if(!hasData){
+    var ex = null; try{ ex = localStorage.getItem(LS + 'bedtime'); }catch(e){}
+    if(ex) return;                                /* 本地有存档但当前为空 → 不要覆盖 */
+  }
+  var payload = {
+    theme: bt.theme || '', title: bt.title || '',
+    pagesN: bt.pagesN || 6, artStyle: bt.artStyle || '童话水彩绘本',
+    voice: bt.voice || '', style: bt.style || '温柔', ratio: bt.ratio || '3:4',
+    status: bt.status || '',
+    pages: (bt.pages || []).map(function(p){
+      var o = {
+        text: p.text || '', imgPrompt: p.imgPrompt || '', imgURL: p.imgURL || '',
+        imgErr: p.imgErr || '', audErr: p.audErr || '',
+        audRemote: !!p.audRemote, audMime: p.audMime || '',
+        clips: (p.clips || []).slice()
+      };
+      /* 远程音频（真实 http URL）才持久化；本地音频走 audSave，刷新后重新链接 */
+      if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) o.audURL = p.audURL;
+      return o;
+    })
+  };
+  lsSet(LS + 'bedtime', JSON.stringify(payload),
+    { warn:true, msg:'睡前故事本机保存失败（存储已满）：刷新后可能无法恢复，请导出备份' });
+}
+function loadBedtime(){
+  var raw = null;
+  try{ raw = localStorage.getItem(LS + 'bedtime'); }catch(e){ return; }
+  if(!raw){ bedtimeLoaded = true; return; }
+  var o; try{ o = JSON.parse(raw); }catch(e){ return; }   /* 解析失败不置位：避免覆盖损坏存档 */
+  if(!o || !o.pages){ bedtimeLoaded = true; return; }
+  var bt = state.bedtime || (state.bedtime = {});
+  bt.theme = o.theme || ''; bt.title = o.title || '';
+  bt.pagesN = o.pagesN || 6; bt.artStyle = o.artStyle || '童话水彩绘本';
+  bt.voice = o.voice || ''; bt.style = o.style || '温柔'; bt.ratio = o.ratio || '3:4';
+  bt.status = o.status || '';
+  bt.pages = o.pages.map(function(p){
+    var audURL = '';
+    /* 远程音频（真实 http URL）直接恢复；本地音频下面按 bed_<i> 重新链接 */
+    if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) audURL = p.audURL;
+    return {
+      text: p.text || '', imgPrompt: p.imgPrompt || '', imgURL: p.imgURL || '',
+      audURL: audURL, audB64: '', audMime: p.audMime || '', audRemote: !!p.audRemote,
+      imgErr: p.imgErr || '', audErr: p.audErr || '', clips: (p.clips || []).slice()
+    };
+  });
+  /* 本地音频按 bed_<i> 重新链接生成 blob URL（audSave 已存 base64） */
+  bt.pages.forEach(function(p, i){
+    if(!p.audRemote){ try{ var u = audUrl('bed_' + i); if(u) p.audURL = u; }catch(e){} }
+  });
+  /* 运行时态字段复位（这些不持久化） */
+  bt._cur = 0; bt._playing = false; bt.demo = false; bt._moviePlaying = false;
+  bt.videoURL = ''; bt.videoStatus = ''; bt.videoTaskId = ''; bt.videoErr = '';
+  bedtimeLoaded = true;
+}
 function syncBedOpts(){
   var bt = state.bedtime;
   if($('bed-age')) bt.age = $('bed-age').value;
@@ -495,5 +561,6 @@ function renderBedtime(){
     card.appendChild(img); card.appendChild(txt); card.appendChild(aud); card.appendChild(dl);
     pg.appendChild(card);
   });
+  saveBedtime();                              /* v2.56：每次渲染即落盘，文字/图片随刷新保留 */
 }
 initBedtimeState();
