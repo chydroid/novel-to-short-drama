@@ -827,7 +827,7 @@ function deleteProject(pid){
 
 function init(){
   ensureProjects();                 /* v2.49：先确定当前剧目，再按 pid 命名空间加载数据 */
-  loadBedtime();                    /* v2.56：先恢复睡前故事（文字/图片/音频索引/视频片段），再渲染 */
+  ensureBedtime();                  /* v2.57：先恢复睡前故事（多故事索引 + 当前故事正文/音频），再渲染 */
   loadCfg();
   fillSettings();
   try{ $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}

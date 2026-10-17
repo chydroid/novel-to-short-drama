@@ -5,76 +5,174 @@
  * 无 key 时走入「演示模式」：内置故事 + SVG 占位插画 + 浏览器朗读 + 占位 WAV，便于离线验证全链路。
  */
 function initBedtimeState(){
-  if(!state.bedtime) state.bedtime = {
-    theme:'', title:'', pages:[], artStyle:'童话水彩绘本', voice:'', style:'温柔', ratio:'3:4', pagesN:6,
-    status:'idle', videoURL:'', videoStatus:'', videoTaskId:'', videoErr:'', _cur:0, _playing:false, demo:false
+  if(!state.bedtime) state.bedtime = newBedStoryObj('');
+}
+/* -------- 多故事模型（v2.57）：每个睡前故事独立存储，互不干扰 --------
+ * 存储：LS+'bedlist'        → 故事索引 [{id,theme,title,updated}]（不含正文）
+ *       LS+'bedstory_'+id   → 单个故事正文（含 pages/视频片段；不存 audB64，音频本体走 audSave）
+ * 音频本体按 storyId 隔离：audKey(id+'_bed_'+i)，保证不同故事的同一页不会互相覆盖。
+ * 下拉框在「儿童睡前故事生成器」右侧选择要编辑的故事；填写主题并生成＝新建一份独立故事。
+ * 旧版单故事（LS+'bedtime'）在首次启动时自动迁移为第一条故事。 */
+var bedtimeReady = false;
+function newBedStoryObj(theme){
+  return {
+    id: 's_' + Date.now() + '_' + Math.floor(Math.random() * 1e6),
+    theme: theme || '', title:'', pages:[], age:'3-8 岁', artStyle:'童话水彩绘本',
+    voice:'', style:'温柔', ratio:'3:4', pagesN:6,
+    status:'idle', videoURL:'', videoStatus:'', videoTaskId:'', videoErr:'',
+    _cur:0, _playing:false, _moviePlaying:false, demo:false, mergedAudioURL:'', mergedCount:0
   };
 }
-/* -------- 本机持久化（v2.56）：睡前故事的文字/图片/音频索引/视频片段随刷新保留 --------
- * 根因：state.bedtime 此前从未落盘，刷新后 initBedtimeState() 重建空对象 → 文字与图片消失。
- * 音频本体已由 audSave 单独存盘（键 aud_bed_<i>），这里只存「页面元数据」：
- *   文本 + 图片URL + 远程音频URL + 视频片段；不存 audB64（体积大且与 audSave 重复）。
- *   本地音频在加载时按 bed_<i> 重新链接生成 blob URL。
- * 用固定 key（LS+'bedtime'）而非 pk()：state.bedtime 是单全局对象、切剧目不清空，固定 key 与现有
- *   内存模型一致，也避免「切到别的剧目时把 A 的数据写进 B 的命名空间」这类错位。 */
-var bedtimeLoaded = false;
-function saveBedtime(){
-  if(!bedtimeLoaded) return;                       /* 加载前不写，防把已存数据用空对象覆盖 */
-  var bt = state.bedtime; if(!bt) return;
-  var hasData = (bt.pages && bt.pages.length) || bt.title || bt.theme;
-  if(!hasData){
-    var ex = null; try{ ex = localStorage.getItem(LS + 'bedtime'); }catch(e){}
-    if(ex) return;                                /* 本地有存档但当前为空 → 不要覆盖 */
+function bedListLoad(){
+  try{ var raw = localStorage.getItem(LS + 'bedlist'); if(!raw) return []; var o = JSON.parse(raw); return Array.isArray(o) ? o : []; }catch(e){ return []; }
+}
+function bedListSave(list){ try{ localStorage.setItem(LS + 'bedlist', JSON.stringify(list || [])); }catch(e){} }
+function bedStoryKey(id){ return LS + 'bedstory_' + id; }
+function bedAudKey(i){ return ((state.bedtime && state.bedtime.id) ? state.bedtime.id : 's') + '_bed_' + i; }
+function addBedtimeToList(meta){
+  var list = state.bedtimeList || [];
+  if(!list.some(function(x){ return x.id === meta.id; })) list.push(meta);
+  state.bedtimeList = list; bedListSave(list);
+}
+function safeParseBed(raw){ try{ var o = JSON.parse(raw); return (o && typeof o === 'object') ? o : null; }catch(e){ return null; } }
+function ensureBedtime(){
+  var list = bedListLoad();
+  if(!list.length){
+    /* 迁移旧版单故事：LS+'bedtime' → 第一条故事，并把其音频从旧键 bed_<i> 迁到 新键 id+'_bed_'+i */
+    var oldRaw = null; try{ oldRaw = localStorage.getItem(LS + 'bedtime'); }catch(e){}
+    if(oldRaw){
+      try{
+        var o = JSON.parse(oldRaw); if(!o || !o.pages) throw 0;
+        var id = 's_mig_' + Date.now();
+        o.id = id;
+        (o.pages || []).forEach(function(p, i){
+          if(!p.audRemote){ try{ var a = audLoad('bed_' + i); if(a && a.b64) audSave(id + '_bed_' + i, a.b64, a.mime || 'audio/mpeg', 0); }catch(e){} }
+        });
+        list.push({ id:id, theme:o.theme || '', title:o.title || '', updated:Date.now() });
+        bedListSave(list);
+        try{ localStorage.setItem(bedStoryKey(id), oldRaw); }catch(e){}   /* 正文也要落盘，否则 loadBedtimeStory 读空 */
+        try{ localStorage.removeItem(LS + 'bedtime'); }catch(e){}
+      }catch(e){}
+    }
   }
+  if(!list.length){
+    var ns = newBedStoryObj('');
+    state.bedtime = ns; state.bedtimeId = ns.id;
+    state.bedtimeList = [ { id:ns.id, theme:'', title:'', updated:Date.now() } ]; bedListSave(state.bedtimeList);
+    populateBedInputs(ns);
+    bedtimeReady = true; return;
+  }
+  state.bedtimeList = list;
+  var cur = state.bedtimeId || (list[0] && list[0].id);
+  if(!cur || !list.some(function(x){ return x.id === cur; })) cur = list[0].id;
+  state.bedtimeId = cur;
+  loadBedtimeStory(cur, true);
+}
+function loadBedtimeStory(id, initial){
+  var raw = null; try{ raw = localStorage.getItem(bedStoryKey(id)); }catch(e){}
+  var o = raw ? safeParseBed(raw) : null;
+  if(!o) o = newBedStoryObj('');
+  o.id = id;
+  if(!Array.isArray(o.pages)) o.pages = [];
+  o.pages = o.pages.map(function(p, i){
+    var audURL = '';
+    if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) audURL = p.audURL;
+    return {
+      text:p.text||'', imgPrompt:p.imgPrompt||'', imgURL:p.imgURL||'', audURL:audURL, audB64:'',
+      audMime:p.audMime||'', audRemote:!!p.audRemote, imgErr:p.imgErr||'', audErr:p.audErr||'',
+      clips: Array.isArray(p.clips) ? p.clips.slice() : []
+    };
+  });
+  /* 本地音频按 storyId+'_bed_'+i 重新链接生成 blob URL（audSave 已存 base64） */
+  o.pages.forEach(function(p, i){ if(!p.audRemote){ try{ var u = audUrl(id + '_bed_' + i); if(u) p.audURL = u; }catch(e){} } });
+  /* 运行时态字段复位（这些不持久化） */
+  o._cur = 0; o._playing = false; o._moviePlaying = false; o.demo = false;
+  o.videoURL=''; o.videoStatus=''; o.videoTaskId=''; o.videoErr='';
+  o.mergedAudioURL=''; o.mergedCount=0;
+  state.bedtime = o;
+  if(!initial) populateBedInputs(o);
+  bedtimeReady = true;
+}
+function saveStoryData(bt){
+  if(!bt || !bt.id) return;
+  var hasData = (bt.pages && bt.pages.length) || bt.title || bt.theme;
+  if(!hasData){ var ex = null; try{ ex = localStorage.getItem(bedStoryKey(bt.id)); }catch(e){} if(ex) return; }
   var payload = {
-    theme: bt.theme || '', title: bt.title || '',
-    pagesN: bt.pagesN || 6, artStyle: bt.artStyle || '童话水彩绘本',
-    voice: bt.voice || '', style: bt.style || '温柔', ratio: bt.ratio || '3:4',
-    status: bt.status || '',
+    id: bt.id, theme: bt.theme || '', title: bt.title || '',
+    pagesN: bt.pagesN || 6, artStyle: bt.artStyle || '童话水彩绘本', voice: bt.voice || '',
+    style: bt.style || '温柔', ratio: bt.ratio || '3:4', age: bt.age || '3-8 岁', status: bt.status || '',
     pages: (bt.pages || []).map(function(p){
-      var o = {
-        text: p.text || '', imgPrompt: p.imgPrompt || '', imgURL: p.imgURL || '',
-        imgErr: p.imgErr || '', audErr: p.audErr || '',
-        audRemote: !!p.audRemote, audMime: p.audMime || '',
-        clips: (p.clips || []).slice()
-      };
-      /* 远程音频（真实 http URL）才持久化；本地音频走 audSave，刷新后重新链接 */
+      var o = { text:p.text||'', imgPrompt:p.imgPrompt||'', imgURL:p.imgURL||'', imgErr:p.imgErr||'', audErr:p.audErr||'', audRemote:!!p.audRemote, audMime:p.audMime||'', clips:(p.clips||[]).slice() };
       if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) o.audURL = p.audURL;
       return o;
     })
   };
-  lsSet(LS + 'bedtime', JSON.stringify(payload),
-    { warn:true, msg:'睡前故事本机保存失败（存储已满）：刷新后可能无法恢复，请导出备份' });
+  lsSet(bedStoryKey(bt.id), JSON.stringify(payload), { warn:true, msg:'睡前故事本机保存失败（存储已满），请导出备份' });
+  var list = state.bedtimeList || [];
+  var found = false;
+  list.forEach(function(x){ if(x.id === bt.id){ x.theme = bt.theme||''; x.title = bt.title||''; x.updated = Date.now(); found = true; } });
+  if(!found) list.push({ id:bt.id, theme:bt.theme||'', title:bt.title||'', updated:Date.now() });
+  state.bedtimeList = list; bedListSave(list);
 }
-function loadBedtime(){
-  var raw = null;
-  try{ raw = localStorage.getItem(LS + 'bedtime'); }catch(e){ return; }
-  if(!raw){ bedtimeLoaded = true; return; }
-  var o; try{ o = JSON.parse(raw); }catch(e){ return; }   /* 解析失败不置位：避免覆盖损坏存档 */
-  if(!o || !o.pages){ bedtimeLoaded = true; return; }
-  var bt = state.bedtime || (state.bedtime = {});
-  bt.theme = o.theme || ''; bt.title = o.title || '';
-  bt.pagesN = o.pagesN || 6; bt.artStyle = o.artStyle || '童话水彩绘本';
-  bt.voice = o.voice || ''; bt.style = o.style || '温柔'; bt.ratio = o.ratio || '3:4';
-  bt.status = o.status || '';
-  bt.pages = o.pages.map(function(p){
-    var audURL = '';
-    /* 远程音频（真实 http URL）直接恢复；本地音频下面按 bed_<i> 重新链接 */
-    if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) audURL = p.audURL;
-    return {
-      text: p.text || '', imgPrompt: p.imgPrompt || '', imgURL: p.imgURL || '',
-      audURL: audURL, audB64: '', audMime: p.audMime || '', audRemote: !!p.audRemote,
-      imgErr: p.imgErr || '', audErr: p.audErr || '', clips: (p.clips || []).slice()
-    };
+function saveBedtime(){ if(!bedtimeReady) return; if(!state.bedtime || !state.bedtime.id) return; saveStoryData(state.bedtime); }
+function populateBedInputs(bt){
+  bt = bt || state.bedtime || {};
+  if($('bed-theme')) $('bed-theme').value = bt.theme || '';
+  if($('bed-age')) $('bed-age').value = bt.age || '3-8 岁';
+  if($('bed-pages')) $('bed-pages').value = String(bt.pagesN || 6);
+  if($('bed-art')) $('bed-art').value = bt.artStyle || '童话水彩绘本';
+  if($('bed-ratio')) $('bed-ratio').value = bt.ratio || '3:4';
+  if($('bed-voice')) $('bed-voice').value = bt.voice || '温柔女声';
+  if($('bed-style')) $('bed-style').value = bt.style || '温柔';
+}
+function syncBedStorySelect(){
+  var sel = $('bed-story-select'); if(!sel) return;
+  var list = state.bedtimeList || [];
+  var cur = state.bedtimeId || '';
+  sel.innerHTML = '';
+  if(!list.length){ var o0 = document.createElement('option'); o0.value=''; o0.textContent='（暂无，点＋新建）'; sel.appendChild(o0); return; }
+  list.forEach(function(x){
+    var o = document.createElement('option'); o.value = x.id;
+    var label = (x.theme || x.title || '未命名故事');
+    if(x.title && x.title !== label) label = x.title + '（' + (x.theme || '') + '）';
+    o.textContent = label; sel.appendChild(o);
   });
-  /* 本地音频按 bed_<i> 重新链接生成 blob URL（audSave 已存 base64） */
-  bt.pages.forEach(function(p, i){
-    if(!p.audRemote){ try{ var u = audUrl('bed_' + i); if(u) p.audURL = u; }catch(e){} }
-  });
-  /* 运行时态字段复位（这些不持久化） */
-  bt._cur = 0; bt._playing = false; bt.demo = false; bt._moviePlaying = false;
-  bt.videoURL = ''; bt.videoStatus = ''; bt.videoTaskId = ''; bt.videoErr = '';
-  bedtimeLoaded = true;
+  sel.value = cur;
+}
+function selectBedtimeStory(id){
+  if(!id) return;
+  saveBedtime();                                /* 先保存当前故事 */
+  state.bedtimeId = id;
+  loadBedtimeStory(id);
+  bedStop();
+  var stage = $('bed-stage'); if(stage){ stage.style.display='none'; stage.classList.remove('bed-full'); }
+  renderBedtime();
+  toast('已切换到：' + (state.bedtime.theme || state.bedtime.title || '未命名故事'));
+}
+function newBedtimeStory(){
+  saveBedtime();
+  var ns = newBedStoryObj('');
+  state.bedtime = ns; state.bedtimeId = ns.id;
+  addBedtimeToList({ id:ns.id, theme:'', title:'', updated:Date.now() });
+  populateBedInputs(ns);
+  var stage = $('bed-stage'); if(stage){ stage.style.display='none'; stage.classList.remove('bed-full'); }
+  renderBedtime();
+  if($('bed-theme')) $('bed-theme').focus();
+  toast('已新建空白睡前故事，填写主题后点「① 生成故事」');
+}
+function delBedtimeStory(){
+  var id = state.bedtimeId; if(!id) return;
+  var label = (state.bedtime.theme || state.bedtime.title || '未命名故事');
+  if(!confirm('确定删除当前睡前故事「' + label + '」？\n图片 / 音频 / 视频都将一并删除，且不可恢复。')) return;
+  try{ localStorage.removeItem(bedStoryKey(id)); }catch(e){}
+  (state.bedtime.pages || []).forEach(function(p, i){ try{ localStorage.removeItem(audKey(id + '_bed_' + i)); }catch(e){} });
+  var list = (state.bedtimeList || []).filter(function(x){ return x.id !== id; });
+  state.bedtimeList = list; bedListSave(list);
+  if(!list.length){ var ns = newBedStoryObj(''); state.bedtime = ns; state.bedtimeId = ns.id; addBedtimeToList({ id:ns.id, theme:'', title:'', updated:Date.now() }); }
+  else { state.bedtimeId = list[0].id; loadBedtimeStory(list[0].id); }
+  populateBedInputs(state.bedtime);
+  renderBedtime();
+  toast('已删除睡前故事「' + label + '」');
 }
 function syncBedOpts(){
   var bt = state.bedtime;
@@ -170,14 +268,24 @@ function bedtimeDemoStory(theme){
 
 /* -------- 各步骤 -------- */
 function genBedtimeStory(){
-  syncBedOpts();
-  var bt = state.bedtime, theme = bt.theme;
-  if(!theme){ toast('请先在上方填写故事主题'); return; }
+  var theme0 = ($('bed-theme') ? $('bed-theme').value.trim() : '');
+  if(!theme0){ toast('请先在上方填写故事主题'); return; }
+  var cur = state.bedtime || newBedStoryObj('');
+  /* 主题变了（或当前故事为空 / 无 id）→ 视为新建一份独立睡前故事；
+     同主题且已有正文 → 在原故事上重新生成（继续编辑，不另起一份）。 */
+  var needNew = (!cur.id) || (cur.pages && cur.pages.length && cur.theme !== theme0);
+  if(needNew){
+    var ns = newBedStoryObj(theme0);
+    state.bedtime = ns; state.bedtimeId = ns.id;
+    addBedtimeToList({ id:ns.id, theme:ns.theme, title:'', updated:Date.now() });
+  }
+  syncBedOpts();                               /* 读入表单到当前故事 */
+  var bt = state.bedtime, target = bt;         /* target 固定指向本次要生成的故事，防生成期间切换串档 */
   if(cfg.textKey){
     var sys = '你是一个儿童睡前故事作家。根据用户的「主题」创作一个温柔、治愈、适合 3-8 岁儿童的睡前故事。'
       + '请只输出 JSON，格式：{"title":"故事标题","pages":[{"text":"这一页的旁白文字（1-3 句，温暖简短）","imgPrompt":"这一页对应的绘本插画提示词（中文，描述画面、角色、氛围，不要含文字）"}]}。'
       + '页数由用户指定。不要输出 JSON 以外的任何内容。';
-    var user = '主题：' + theme + '\n适读年龄：' + (bt.age || '3-8 岁') + '\n页数：' + bt.pagesN
+    var user = '主题：' + theme0 + '\n适读年龄：' + (bt.age || '3-8 岁') + '\n页数：' + bt.pagesN
       + '\n画风：' + bt.artStyle + '\n情绪基调：' + bt.style;
     bt.status = '故事生成中…'; renderBedtime();
     apiPost(cfg.textBase.replace(/\/+$/, '') + '/chat/completions', cfg.textKey, { model:cfg.textModel, messages:[{ role:'system', content:sys }, { role:'user', content:user }] })
@@ -186,21 +294,25 @@ function genBedtimeStory(){
         var c = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
         var obj = parseStoryJson(c);
         if(!obj) throw new Error('无法解析故事 JSON：' + (r.text || '').slice(0, 160));
-        applyStory(obj);
+        applyStory(obj, target);
       })
-      .catch(function(e){ console.error(e); bt.status = '故事生成失败'; toast('故事生成失败：' + guessCorsMsg(e)); renderBedtime(); });
+      .catch(function(e){
+        console.error(e); target.status = '故事生成失败'; saveStoryData(target);
+        toast('故事生成失败：' + guessCorsMsg(e));
+      });
   } else {
-    applyStory(bedtimeDemoStory(theme));
+    applyStory(bedtimeDemoStory(theme0), target);
     toast('未配置文本模型，使用演示故事（演示模式）');
   }
 }
-function applyStory(obj){
-  var bt = state.bedtime;
+function applyStory(obj, target){
+  var bt = target || state.bedtime;
   bt.title = obj.title || bt.theme || '睡前故事';
   bt.pages = (obj.pages || []).map(function(p){
     return { text:String(p.text || ''), imgPrompt:String(p.imgPrompt || p.text || ''), imgURL:'', audURL:'', audB64:'', audMime:'', audRemote:false, imgErr:'', audErr:'' };
   });
   bt.status = '故事已生成（' + bt.pages.length + ' 页）';
+  saveStoryData(bt);
   renderBedtime();
   toast('故事已生成：' + bt.pages.length + ' 页');
 }
@@ -219,7 +331,7 @@ function genBedtimeImage(p, idx){
   });
 }
 function genBedtimeImages(){
-  var bt = state.bedtime;
+  var bt = state.bedtime, myId = bt.id;
   if(!bt.pages.length){ toast('请先生成故事'); return; }
   if(!hasAgnesKey()){
     bt.pages.forEach(function(p, i){ if(!p.imgURL) p.imgURL = demoImage(i, p.text, bt.artStyle); });
@@ -230,10 +342,11 @@ function genBedtimeImages(){
   bt.status = '插画生成中…'; renderBedtime();
   var seq = bt.pages.map(function(p, i){ return i; });
   var run = function(k){
+    if(state.bedtimeId !== myId) return;          /* 已切换到其它故事 → 中止，避免串档 */
     if(k >= seq.length){ bt.status = '绘本插画完成'; renderBedtime(); toast('绘本插画完成'); return; }
     var i = seq[k], p = bt.pages[i];
-    genBedtimeImage(p, i).then(function(url){ p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1); })
-      .catch(function(e){ console.error(e); p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1); });
+    genBedtimeImage(p, i).then(function(url){ if(state.bedtimeId !== myId) return; p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1); })
+      .catch(function(e){ if(state.bedtimeId !== myId) return; console.error(e); p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1); });
   };
   run(0);
 }
@@ -247,7 +360,7 @@ function genBedtimeAudio(p){
     });
 }
 function genBedtimeAudioAll(){
-  var bt = state.bedtime;
+  var bt = state.bedtime, myId = bt.id;
   if(!bt.pages.length){ toast('请先生成故事'); return; }
   if(!cfg.ttsKey){
     bt.demo = true; bt.status = '未配置 TTS：播放绘本将用浏览器朗读（演示）'; renderBedtime(); toast('未配置 TTS Key，使用浏览器朗读演示');
@@ -258,10 +371,12 @@ function genBedtimeAudioAll(){
   var mime = (cfg.ttsFormat === 'wav') ? 'audio/wav' : 'audio/mpeg';
   var seq = bt.pages.map(function(p, i){ return i; });
   var run = function(k){
+    if(state.bedtimeId !== myId) return;          /* 已切换到其它故事 → 中止，避免串档 */
     if(k >= seq.length){ bt.status = '旁白音频完成'; renderBedtime(); toast('旁白音频完成'); return; }
     var i = seq[k], p = bt.pages[i];
     genBedtimeAudio(p).then(function(res){
-      if(res.b64){ audSave('bed_' + i, res.b64, mime, 0); p.audB64 = res.b64; p.audMime = mime; p.audURL = audUrl('bed_' + i); }
+      if(state.bedtimeId !== myId) return;
+      if(res.b64){ audSave(bedAudKey(i), res.b64, mime, 0); p.audB64 = res.b64; p.audMime = mime; p.audURL = audUrl(bedAudKey(i)); }
       else if(res.url){ p.audURL = res.url; p.audRemote = true; }
       p.audErr = ''; renderBedtime(); run(k + 1);
     }).catch(function(e){ console.error(e); p.audErr = guessCorsMsg(e); renderBedtime(); run(k + 1); });
@@ -358,7 +473,7 @@ function genOneClip(p, seg){
  * - 单页片段数随故事文本改变时，自动按新分段数重建 clips 占位（旧片段作废重做）。
  * - 运行锁防止连续点击起多条链抢写同一数组。 */
 function genBedtimeVideo(){
-  var bt = state.bedtime;
+  var bt = state.bedtime, myId = bt.id;
   if(!bt.pages.length){ toast('请先生成故事'); return; }
   if(!bt.pages[0].imgURL){ toast('请先生成故事与绘本插画（需真实图片 URL 作参考帧）'); return; }
   if(!hasAgnesKey()){
@@ -403,13 +518,16 @@ function genBedtimeVideo(){
   plan.forEach(function(item){
     var p = bt.pages[item.pi];
     chain = chain.then(function(){
+      if(state.bedtimeId !== myId) return Promise.resolve();   /* 已切换到其它故事 → 中止，避免串档 */
       if(!state.bedtime.pages[item.pi]) return;
       return genOneClip(p, item.seg).then(function(url){
+        if(state.bedtimeId !== myId) return;
         if(url){ p.clips[item.si] = url; done++; }
         else { p.clips[item.si] = null; failed++; }
         bt.videoStatus = '生成中… (' + done + '/' + total + (failed ? '，' + failed + ' 段失败' : '') + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + ')';
         renderBedtime();
       }).catch(function(e){
+        if(state.bedtimeId !== myId) return;
         console.error(e); p.clips[item.si] = null; p.clipErr = guessCorsMsg(e); failed++;
         bt.videoStatus = '生成中… (' + done + '/' + total + '，' + failed + ' 段失败' + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + ')';
         renderBedtime();
@@ -478,10 +596,10 @@ function bedPlayMovie(){
 }
 
 /* -------- ⑤ 合成单音频：把各页旁白合并为一个音频文件，段间插入 0.3s 停顿 --------
- * 复用底层能力：本地音频走 audLoad('bed_<i>') 取 base64（避免跨域），远程音频走 fetchAudioBuf；
+ * 复用底层能力：本地音频走 audLoad(bedAudKey(i)) 取 base64（按故事隔离，避免跨故事串档），远程音频走 fetchAudioBuf；
  * 解码后由 concatAudioBufs(bufs, 0.3) 拼接（自带 0.3s 静音段），再编码成 WAV 供播放/下载。 */
 function mergeBedtimeAudio(){
-  var bt = state.bedtime;
+  var bt = state.bedtime, myId = bt.id;
   if(!bt.pages.length){ toast('请先生成故事'); return; }
   var total = bt.pages.filter(function(p){ return p.audURL || p.audB64; }).length;
   if(!total){ toast('还没有可合成的旁白音频，请先 ③ 生成旁白'); return; }
@@ -492,15 +610,17 @@ function mergeBedtimeAudio(){
   var chain = Promise.resolve();
   seq.forEach(function(i){
     chain = chain.then(function(){
+      if(state.bedtimeId !== myId) return;          /* 已切换到其它故事 → 中止，避免串档 */
       var p = bt.pages[i]; if(!p) return;
       if(p.audB64){ return decodeAudioBuf(p.audB64).then(function(b){ if(b) bufs.push(b); }); }
-      var a = audLoad('bed_' + i);
+      var a = audLoad(bedAudKey(i));
       if(a && a.b64){ return decodeAudioBuf(a.b64).then(function(b){ if(b) bufs.push(b); }); }
       if(p.audURL){ return fetchAudioBuf(p.audURL).then(function(b){ if(b) bufs.push(b); }); }
       return Promise.resolve();
     });
   });
   chain.then(function(){
+    if(state.bedtimeId !== myId){ toast('已切换到其它故事，本次合成结果未应用'); return; }
     if(!bufs.length){ bt.status = '合成失败：音频解码失败（远程音频若跨域可能被拦截）'; renderBedtime(); toast('音频解码失败，无法合成'); return; }
     var merged = concatAudioBufs(bufs, 0.3);   /* 段间 0.3s 停顿 */
     if(!merged){ bt.status = '合成失败'; renderBedtime(); return; }
@@ -594,7 +714,14 @@ function buildBedtimeShell(){
   var root = document.createElement('div');
   root.className = 'bed-wrap';
   root.innerHTML =
-    '<h2 style="margin:0 0 10px;font-size:20px">🌙 儿童睡前故事生成器</h2>'
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;flex-wrap:wrap">'
+    + '  <span style="font-size:20px">🌙 儿童睡前故事生成器</span>'
+    + '  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '    <label style="font-size:13px;color:#9aa">编辑故事：<select id="bed-story-select" style="padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"></select></label>'
+    + '    <button id="bed-story-new" class="bed-btn" style="padding:6px 10px">＋ 新建</button>'
+    + '    <button id="bed-story-del" class="bed-btn" style="padding:6px 10px">🗑 删除</button>'
+    + '  </div>'
+    + '</div>'
     + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start">'
     + '  <div style="flex:1 1 320px;min-width:280px">'
     + '    <label style="display:block;font-size:13px;color:#9aa">故事主题</label>'
@@ -655,6 +782,9 @@ function buildBedtimeShell(){
   $('bed-next').onclick = bedNext;
   $('bed-stop').onclick = bedStop;
   $('bed-full').onclick = bedPlayFullscreen;
+  $('bed-story-select').onchange = function(){ selectBedtimeStory(this.value); };
+  $('bed-story-new').onclick = newBedtimeStory;
+  $('bed-story-del').onclick = delBedtimeStory;
   if(!window.__bedFsBound){
     document.addEventListener('fullscreenchange', function(){
       var stage = $('bed-stage');
@@ -674,12 +804,14 @@ function buildBedtimeShell(){
     + '#bed-stage.bed-full .bed-btn{font-size:15px!important;padding:9px 16px!important}';
     document.head.appendChild(st); box._styled = true;
   }
+  populateBedInputs(state.bedtime || {});   /* 首次构建后把已加载故事的设置回填到表单 */
 }
 function renderBedtime(){
   var box = $('v-bedtime'); if(!box) return;
   initBedtimeState();
   if(!box.querySelector('.bed-wrap')) buildBedtimeShell();
   var bt = state.bedtime;
+  syncBedStorySelect();                         /* 把故事下拉同步到当前编辑项 */
   // 状态
   var st = $('bed-status'); if(st) st.textContent = (bt.title ? '《' + bt.title + '》 ' : '') + (bt.status || '');
   // 视频区（Agnes V2.0 音画同步片段）
