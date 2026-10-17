@@ -350,40 +350,87 @@ function genOneClip(p, seg){
     }
   }).then(function(vid){ return pollAgnesClip(vid); });
 }
+/* 生成短视频（Agnes V2.0 音画同步）：支持「部分生成 / 断点续生成」边界情况
+ * - 各页 clips 与 splitNarration(text) 的分段一一对齐（按索引存放，失败/未生成为 null），
+ *   杜绝「中间段失败导致后续片段在数组里前移」的错位。
+ * - 再次点击 ④ 时，已成功的片段直接跳过（续生成），不再整体重做、不浪费配额。
+ * - 缺真实插画的页（imgURL 为空或为演示 SVG）跳过并标注，不拿空首帧去请求。
+ * - 单页片段数随故事文本改变时，自动按新分段数重建 clips 占位（旧片段作废重做）。
+ * - 运行锁防止连续点击起多条链抢写同一数组。 */
 function genBedtimeVideo(){
   var bt = state.bedtime;
-  if(!bt.pages.length || !bt.pages[0].imgURL){ toast('请先生成故事与绘本插画（需真实图片 URL 作参考帧）'); return; }
+  if(!bt.pages.length){ toast('请先生成故事'); return; }
+  if(!bt.pages[0].imgURL){ toast('请先生成故事与绘本插画（需真实图片 URL 作参考帧）'); return; }
   if(!hasAgnesKey()){
     toast('未配置 Agnes Key：改用「播放绘本」做浏览器内预览');
     bedPlay(); return;
   }
   if(guardBudget()) return;
+  if(bt._genVideoRunning){ toast('短视频生成进行中，请稍候…'); return; }
   bt._moviePlaying = false;
-  var total = 0, done = 0;
-  bt.pages.forEach(function(p){ p.clips = []; p.clipErr = ''; total += splitNarration(p.text).length; });
-  if(!total){ toast('没有可生成旁白的文本'); return; }
-  bt.videoStatus = '生成中… (0/' + total + ')'; renderBedtime();
-  var chain = Promise.resolve();
+  // 预计算「需生成」清单（已成功的片段跳过）+ 各页缺图标注
+  var plan = [];                 /* {pi, si, seg} */
+  var done0 = 0, skippedPages = 0;
   bt.pages.forEach(function(p, pi){
     var segs = splitNarration(p.text);
-    segs.forEach(function(seg){
-      chain = chain.then(function(){
-        if(!state.bedtime.pages[pi]) return;
-        return genOneClip(p, seg).then(function(url){
-          if(url){ p.clips.push(url); }
-          done++; bt.videoStatus = '生成中… (' + done + '/' + total + ')'; renderBedtime();
-        }).catch(function(e){ console.error(e); p.clipErr = guessCorsMsg(e); bt.videoStatus = '部分片段失败：' + guessCorsMsg(e); renderBedtime(); });
+    if(!segs.length) return;
+    if(!p.imgURL || p.imgURL.indexOf('data:image/svg') === 0){
+      p.clipErr = '需真实插画图片（演示占位图不可用）'; skippedPages++; return;
+    }
+    if(!Array.isArray(p.clips) || p.clips.length !== segs.length){
+      p.clips = new Array(segs.length).fill(null); p.clipErr = '';   /* 首跑或文本改变 → 重建对齐占位 */
+    }
+    segs.forEach(function(seg, si){
+      if(p.clips[si]){ done0++; return; }                           /* 已生成 → 续生成跳过 */
+      plan.push({ pi:pi, si:si, seg:seg });
+    });
+  });
+  var total = done0 + plan.length;
+  if(!plan.length){
+    bt._genVideoRunning = false;
+    bt.videoStatus = done0
+      ? ('短视频已全部生成（' + done0 + ' 段）— 再次点击 ④ 不会重复生成' + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : ''))
+      : '没有可生成的旁白文本';
+    renderBedtime();
+    if(skippedPages) toast(skippedPages + ' 页缺真实插画，已跳过');
+    return;
+  }
+  var done = done0, failed = 0;
+  bt._genVideoRunning = true;
+  bt.videoStatus = '生成中… (' + done + '/' + total + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + ')';
+  renderBedtime();
+  var chain = Promise.resolve();
+  plan.forEach(function(item){
+    var p = bt.pages[item.pi];
+    chain = chain.then(function(){
+      if(!state.bedtime.pages[item.pi]) return;
+      return genOneClip(p, item.seg).then(function(url){
+        if(url){ p.clips[item.si] = url; done++; }
+        else { p.clips[item.si] = null; failed++; }
+        bt.videoStatus = '生成中… (' + done + '/' + total + (failed ? '，' + failed + ' 段失败' : '') + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + ')';
+        renderBedtime();
+      }).catch(function(e){
+        console.error(e); p.clips[item.si] = null; p.clipErr = guessCorsMsg(e); failed++;
+        bt.videoStatus = '生成中… (' + done + '/' + total + '，' + failed + ' 段失败' + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + ')';
+        renderBedtime();
       });
     });
   });
   chain.then(function(){
-    bt.videoStatus = '短视频生成完成（' + done + '/' + total + ' 段 · 旁白配音 + 背景音乐）';
-    renderBedtime(); toast('睡前故事短视频生成完成');
+    bt._genVideoRunning = false;
+    var ok = bt.pages.reduce(function(n, p){ return n + (p.clips || []).filter(Boolean).length; }, 0);
+    if(failed){
+      bt.videoStatus = '短视频生成完成（成功 ' + ok + '/' + total + '，' + failed + ' 段失败' + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + '）— 可再次点击 ④ 仅重试失败片段';
+    } else {
+      bt.videoStatus = '短视频生成完成（' + ok + '/' + total + ' 段 · 旁白配音 + 背景音乐' + (skippedPages ? '，' + skippedPages + ' 页缺图跳过' : '') + '）';
+    }
+    renderBedtime();
+    toast(failed ? ('短视频生成完成，' + failed + ' 段失败（再点 ④ 仅重试失败片段）') : '睡前故事短视频生成完成');
   });
 }
 function bedAllClips(){
   var bt = state.bedtime; if(!bt || !bt.pages) return [];
-  var a = []; bt.pages.forEach(function(p){ if(p.clips) p.clips.forEach(function(u){ a.push(u); }); }); return a;
+  var a = []; bt.pages.forEach(function(p){ if(p.clips) p.clips.forEach(function(u){ if(u) a.push(u); }); }); return a;
 }
 
 /* -------- 浏览器内幻灯片（短视频预览，永远可用） -------- */
@@ -640,13 +687,23 @@ function renderBedtime(){
   var vc = $('bed-video-clips');
   if(vc && !bt._moviePlaying){
     var all = bedAllClips();
-    if(all.length){
+    var planned = 0; bt.pages.forEach(function(p){ if(Array.isArray(p.clips)) planned += p.clips.length; });
+    var failed = planned - all.length;
+    if(planned){
       var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0">'
         + '<button id="bed-movie-play" class="bed-btn">▶ 连播全部片段</button>'
-        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + ' 段（旁白配音 + 轻柔背景音乐；与③单独下载的 TTS 音色不同）</span></div>';
-      all.forEach(function(u, i){
-        h += '<div style="margin:6px 0"><div style="font-size:12px;color:#9aa">片段 ' + (i + 1) + '</div>'
-          + '<video src="' + u + '" controls style="width:100%;max-width:360px;display:block;border-radius:8px"></video></div>';
+        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + '/' + planned + ' 段（旁白配音 + 轻柔背景音乐；与③单独下载的 TTS 音色不同）'
+        + (failed ? ' · <span style="color:#f99">' + failed + ' 段失败/缺失（再点 ④ 仅重试）</span>' : '') + '</span></div>';
+      bt.pages.forEach(function(p, pi){
+        if(!Array.isArray(p.clips)) return;
+        p.clips.forEach(function(u, si){
+          if(u){
+            h += '<div style="margin:6px 0"><div style="font-size:12px;color:#9aa">第 ' + (pi + 1) + ' 页 · 片段 ' + (si + 1) + '</div>'
+              + '<video src="' + u + '" controls style="width:100%;max-width:360px;display:block;border-radius:8px"></video></div>';
+          } else {
+            h += '<div style="margin:6px 0;padding:6px 8px;border:1px dashed #a55;border-radius:8px;font-size:12px;color:#f99">第 ' + (pi + 1) + ' 页 · 片段 ' + (si + 1) + '：失败/缺失（再点 ④ 仅重试此片段）</div>';
+          }
+        });
       });
       vc.innerHTML = h;
       var mp = $('bed-movie-play'); if(mp) mp.onclick = bedPlayMovie;
