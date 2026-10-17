@@ -122,6 +122,22 @@ function sineWavB64(durSec, freq){
   return btoa(bin);
 }
 
+/* 把 AudioBuffer 编码为 16-bit PCM WAV（多声道交织），用于「合成单音频」导出 */
+function audioBufferToWav(buf){
+  var numCh = buf.numberOfChannels, sr = buf.sampleRate, len = buf.length;
+  var chans = []; for(var c=0;c<numCh;c++) chans.push(buf.getChannelData(c));
+  var inter = new Float32Array(len * numCh);
+  for(var i=0;i<len;i++){ for(var c=0;c<numCh;c++) inter[i*numCh+c] = chans[c][i]; }
+  var buffer = new ArrayBuffer(44 + inter.length * 2);
+  var view = new DataView(buffer);
+  function ws(off, s){ for(var i=0;i<s.length;i++) view.setUint8(off+i, s.charCodeAt(i)); }
+  ws(0,'RIFF'); view.setUint32(4, 36 + inter.length*2, true); ws(8,'WAVE'); ws(12,'fmt ');
+  view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,numCh,true);
+  view.setUint32(24,sr,true); view.setUint32(28,sr*numCh*2,true); view.setUint16(32,numCh*2,true); view.setUint16(34,16,true);
+  ws(36,'data'); view.setUint32(40, inter.length*2, true);
+  var off=44; for(var i=0;i<inter.length;i++){ var s=Math.max(-1,Math.min(1,inter[i])); view.setInt16(off, s<0?s*0x8000:s*0x7FFF, true); off+=2; }
+  return buffer;
+}
 /* -------- 故事解析 / 演示故事 -------- */
 function parseStoryJson(c){
   if(!c) return null;
@@ -393,6 +409,53 @@ function bedPlayMovie(){
   mv.onended();
 }
 
+/* -------- ⑤ 合成单音频：把各页旁白合并为一个音频文件，段间插入 0.3s 停顿 --------
+ * 复用底层能力：本地音频走 audLoad('bed_<i>') 取 base64（避免跨域），远程音频走 fetchAudioBuf；
+ * 解码后由 concatAudioBufs(bufs, 0.3) 拼接（自带 0.3s 静音段），再编码成 WAV 供播放/下载。 */
+function mergeBedtimeAudio(){
+  var bt = state.bedtime;
+  if(!bt.pages.length){ toast('请先生成故事'); return; }
+  var total = bt.pages.filter(function(p){ return p.audURL || p.audB64; }).length;
+  if(!total){ toast('还没有可合成的旁白音频，请先 ③ 生成旁白'); return; }
+  var ctx = audioCtx();
+  if(ctx && ctx.state === 'suspended'){ try{ ctx.resume(); }catch(e){} }
+  bt.status = '正在合成单音频（合并各页 + 段间 0.3s 停顿）…'; renderBedtime();
+  var bufs = [], seq = bt.pages.map(function(p,i){ return i; });
+  var chain = Promise.resolve();
+  seq.forEach(function(i){
+    chain = chain.then(function(){
+      var p = bt.pages[i]; if(!p) return;
+      if(p.audB64){ return decodeAudioBuf(p.audB64).then(function(b){ if(b) bufs.push(b); }); }
+      var a = audLoad('bed_' + i);
+      if(a && a.b64){ return decodeAudioBuf(a.b64).then(function(b){ if(b) bufs.push(b); }); }
+      if(p.audURL){ return fetchAudioBuf(p.audURL).then(function(b){ if(b) bufs.push(b); }); }
+      return Promise.resolve();
+    });
+  });
+  chain.then(function(){
+    if(!bufs.length){ bt.status = '合成失败：音频解码失败（远程音频若跨域可能被拦截）'; renderBedtime(); toast('音频解码失败，无法合成'); return; }
+    var merged = concatAudioBufs(bufs, 0.3);   /* 段间 0.3s 停顿 */
+    if(!merged){ bt.status = '合成失败'; renderBedtime(); return; }
+    var wav = audioBufferToWav(merged);
+    if(bt.mergedAudioURL) try{ URL.revokeObjectURL(bt.mergedAudioURL); }catch(e){}
+    bt.mergedAudioURL = URL.createObjectURL(new Blob([wav], { type:'audio/wav' }));
+    bt.mergedCount = bufs.length;
+    bt.status = '单音频已合成（' + bufs.length + ' 段，段间 0.3s 停顿）'; renderBedtime();
+    toast('单音频已合成，可在下方播放或下载');
+  }).catch(function(e){ console.error(e); bt.status = '合成失败'; renderBedtime(); toast('合成失败：' + guessCorsMsg(e)); });
+}
+
+/* -------- 全屏播放：在原有上一页/播放/下一页基础上，把绘本舞台切到全屏沉浸播放 -------- */
+function bedPlayFullscreen(){
+  var bt = state.bedtime; if(!bt.pages.length){ toast('请先生成故事'); return; }
+  var stage = $('bed-stage'); if(!stage) return;
+  stage.style.display = 'block';
+  var req = stage.requestFullscreen || stage.webkitRequestFullscreen || stage.msRequestFullscreen;
+  if(req){ try{ req.call(stage); }catch(e){} }
+  stage.classList.add('bed-full');
+  bedPlay();
+}
+
 /* -------- 下载 / 导出（音频独立保存） -------- */
 function doDownload(url, name){ var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); setTimeout(function(){ if(a.parentNode) a.parentNode.removeChild(a); }, 120); }
 function downloadB64(b64, mime, name){
@@ -485,6 +548,7 @@ function buildBedtimeShell(){
     + '  <button id="bed-gen-video" class="bed-btn">④ 生成短视频</button>'
     + '  <button id="bed-play" class="bed-btn">▶ 播放绘本</button>'
     + '  <button id="bed-dl-audio" class="bed-btn">⬇ 下载全部音频</button>'
+    + '  <button id="bed-merge-audio" class="bed-btn">⑤ 合成单音频</button>'
     + '  <button id="bed-export" class="bed-btn">⬇ 导出绘本</button>'
     + '  <button id="bed-merge" class="bed-btn">④b 合成单视频(ffmpeg)</button>'
     + '</div>'
@@ -497,8 +561,10 @@ function buildBedtimeShell(){
     + '    <button id="bed-prev" class="bed-btn">‹ 上一页</button>'
     + '    <button id="bed-stop" class="bed-btn">⏸ 停止</button>'
     + '    <button id="bed-next" class="bed-btn">下一页 ›</button>'
+    + '    <button id="bed-full" class="bed-btn">⛶ 全屏播放</button>'
     + '  </div>'
     + '</div>'
+    + '<div id="bed-merged"></div>'
     + '<div id="bed-video" style="margin:8px 0">'
     + '  <div id="bed-video-status" style="font-size:13px;color:#8ad;min-height:16px;margin:4px 0"></div>'
     + '  <div id="bed-video-clips"></div>'
@@ -514,14 +580,29 @@ function buildBedtimeShell(){
   $('bed-gen-video').onclick = genBedtimeVideo;
   $('bed-play').onclick = function(){ $('bed-stage').style.display = 'block'; bedPlay(); };
   $('bed-dl-audio').onclick = downloadAllBedtimeAudio;
+  $('bed-merge-audio').onclick = mergeBedtimeAudio;
   $('bed-export').onclick = exportBedtimeBook;
   $('bed-merge').onclick = exportBedtimeMerge;
   $('bed-prev').onclick = bedPrev;
   $('bed-next').onclick = bedNext;
   $('bed-stop').onclick = bedStop;
+  $('bed-full').onclick = bedPlayFullscreen;
+  if(!window.__bedFsBound){
+    document.addEventListener('fullscreenchange', function(){
+      var stage = $('bed-stage');
+      if(stage && !document.fullscreenElement && stage.classList.contains('bed-full')) stage.classList.remove('bed-full');
+    });
+    window.__bedFsBound = true;
+  }
   if(!box._styled){
     var st = document.createElement('style');
-    st.textContent = '.bed-btn{padding:7px 12px;border-radius:8px;border:1px solid #3a5;border:1px solid #345;background:#16204a;color:#dfe6ff;cursor:pointer;font-size:13px}.bed-btn:hover{background:#1d2c63}.bed-card{background:#0e1530;border:1px solid #2a3566;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}.bed-card-img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#1a2348}.bed-card-txt{font-size:12px;color:#cdd;padding:8px;min-height:48px}.bed-card-aud{padding:0 8px 8px}.bed-card button{margin:0 8px 8px;padding:5px 8px;border-radius:6px;border:1px solid #345;background:#16204a;color:#dfe6ff;cursor:pointer;font-size:12px}';
+    st.textContent = '.bed-btn{padding:7px 12px;border-radius:8px;border:1px solid #3a5;border:1px solid #345;background:#16204a;color:#dfe6ff;cursor:pointer;font-size:13px}.bed-btn:hover{background:#1d2c63}.bed-card{background:#0e1530;border:1px solid #2a3566;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}.bed-card-img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#1a2348}.bed-card-txt{font-size:12px;color:#cdd;padding:8px;min-height:48px}.bed-card-aud{padding:0 8px 8px}.bed-card button{margin:0 8px 8px;padding:5px 8px;border-radius:6px;border:1px solid #345;background:#16204a;color:#dfe6ff;cursor:pointer;font-size:12px}'
+    + '#bed-stage.bed-full{position:fixed;inset:0;width:100vw;height:100vh;z-index:9999;background:#000;display:flex!important;flex-direction:column;align-items:center;justify-content:center;padding:16px;border-radius:0;border:none}'
+    + '#bed-stage.bed-full #bed-stage-img{max-width:92vw;max-height:72vh;width:auto;height:auto;object-fit:contain;border-radius:12px}'
+    + '#bed-stage.bed-full #bed-stage-cap{font-size:22px;color:#fff;margin:16px 0;max-width:92vw;line-height:1.5}'
+    + '#bed-stage.bed-full audio{width:80vw;max-width:560px;margin-top:6px}'
+    + '#bed-stage.bed-full>div:last-child{position:fixed;bottom:20px;left:0;right:0;display:flex;gap:10px;justify-content:center}'
+    + '#bed-stage.bed-full .bed-btn{font-size:15px;padding:9px 16px}';
     document.head.appendChild(st); box._styled = true;
   }
 }
@@ -548,6 +629,19 @@ function renderBedtime(){
       vc.innerHTML = h;
       var mp = $('bed-movie-play'); if(mp) mp.onclick = bedPlayMovie;
     } else { vc.innerHTML = ''; }
+  }
+  // 合成单音频（⑤）
+  var mg = $('bed-merged');
+  if(mg){
+    if(bt.mergedAudioURL){
+      mg.innerHTML = '<div style="margin:8px 0;padding:10px;border:1px solid #345;border-radius:10px;background:#0b1030">'
+        + '<div style="font-size:13px;color:#8ad;margin-bottom:6px">🎧 合成单音频（' + (bt.mergedCount||0) + ' 段，段间 0.3s 停顿）</div>'
+        + '<audio id="bed-merged-audio" controls style="width:100%"></audio>'
+        + '<button id="bed-merged-dl" class="bed-btn" style="margin-top:8px">⬇ 下载单音频 (WAV)</button>'
+        + '</div>';
+      var ma = $('bed-merged-audio'); if(ma) ma.src = bt.mergedAudioURL;
+      var md = $('bed-merged-dl'); if(md) md.onclick = function(){ doDownload(bt.mergedAudioURL, '睡前故事_单音频.wav'); };
+    } else { mg.innerHTML = ''; }
   }
   // 绘本页
   var pg = $('bed-pages-grid'); if(!pg) return;
