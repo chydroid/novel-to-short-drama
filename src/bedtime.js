@@ -156,7 +156,7 @@ function genBedtimeImages(){
   run(0);
 }
 function genBedtimeAudio(p){
-  return apiPostTts(cfg.ttsBase.replace(/\/+$/, '') + '/chat/completions', cfg.ttsKey, buildTtsBody(p.text, state.bedtime.voice, state.bedtime.style))
+  return apiPostTts(cfg.ttsBase.replace(/\/+$/, '') + '/chat/completions', cfg.ttsKey, buildTtsBody(p.text, bedtimeVoiceId(), state.bedtime.style))
     .then(function(r){
       var j = parseJsonSafe(r.text);
       var b64 = pickAudioB64(j), url = pickAudioUrl(j);
@@ -190,6 +190,17 @@ function genBedtimeAudioAll(){
 function bedtimeVoiceDesc(){
   var v = (state.bedtime.voice || '温柔女声');
   return ({ '温柔女声':'gentle female voice, soft and warm tone', '慈爱爷爷':'kind old grandfather voice, deep and warm tone', '柔和男声':'soft male voice, calm tone', '精灵妹妹':'cheerful little fairy girl voice, sweet tone' })[v] || 'gentle voice';
+}
+/* bedtime 旁白音色：下拉框用中文描述名（温柔女声 等），但小米 TTS 的 audio.voice
+   只接受官方预置 ID；这里翻译成合法 ID，未命中则回退默认音色，避免 HTTP 400。
+   视频分支（Agnes）仍走 bedtimeVoiceDesc() 的英文描述，不受影响。 */
+function bedtimeVoiceId(){
+  var v = (state.bedtime.voice || '');
+  var map = { '温柔女声':'茉莉', '慈爱爷爷':'白桦', '柔和男声':'苏打', '精灵妹妹':'冰糖' };
+  if(map[v]) return map[v];
+  var ids = ['mimo_default','冰糖','茉莉','苏打','白桦','Mia','Chloe','Milo','Dean'];
+  if(ids.indexOf(v) >= 0) return v;   /* 用户已手动填合法 ID，原样返回 */
+  return cfg.ttsVoice || 'mimo_default';
 }
 function bedtimeDims(){
   var r = state.bedtime.ratio || '3:4';

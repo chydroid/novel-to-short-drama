@@ -428,6 +428,25 @@ select.inp{cursor:pointer}
 .toast{border-radius:14px;box-shadow:0 10px 30px rgba(20,22,40,.22)}
 .bbar{border-radius:16px;box-shadow:0 12px 34px rgba(0,0,0,.42)}
 
+/* ---------- +剧目 弹窗（放大 30% + 美化） ---------- */
+#newProjDlg{width:min(520px,92vw);min-height:420px;display:flex;flex-direction:column;padding:0}
+#newProjDlg .dialog-hd{display:flex;align-items:center;padding:18px 22px;font-size:17px;font-weight:700;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--main-soft),transparent)}
+#newProjDlg .dialog-hd .x{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;line-height:1;color:var(--tx3);transition:.15s}
+#newProjDlg .dialog-hd .x:hover{background:var(--err-soft);color:var(--err)}
+#newProjDlg .dialog-bd{flex:1;display:flex;flex-direction:column;justify-content:center;padding:22px 22px 10px}
+#newProjDlg .np-tip{font-size:13.5px;color:var(--tx2);margin:0 0 18px;line-height:1.6}
+#newProjDlg .np-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+#newProjDlg .np-card{position:relative;display:flex;flex-direction:column;gap:10px;height:auto;padding:18px 16px;border:1.5px solid var(--line);border-radius:14px;background:#fff;color:var(--tx);cursor:pointer;text-align:left;font:inherit;transition:.18s}
+#newProjDlg .np-card:hover{border-color:var(--main);background:var(--main-soft);transform:translateY(-3px);box-shadow:0 10px 24px rgba(91,91,214,.16)}
+#newProjDlg .np-card:active{transform:translateY(-1px)}
+#newProjDlg .np-card .ic{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:23px;background:var(--main-soft);transition:.18s}
+#newProjDlg .np-card:hover .ic{background:#fff}
+#newProjDlg .np-card .t{font-size:15.5px;font-weight:700;color:var(--tx)}
+#newProjDlg .np-card .d{font-size:12.5px;font-weight:400;color:var(--tx2);line-height:1.55}
+#newProjDlg .dialog-ft{padding:14px 22px 20px;display:flex;justify-content:flex-end}
+#newProjDlg .dialog-ft .btn{height:40px;padding:0 20px}
+@media(max-width:520px){ #newProjDlg .np-grid{grid-template-columns:1fr} }
+
 /* ---------- 响应式：窄屏收起按钮文字，只留图标 ---------- */
 @media(max-width:900px){ .hide-sm{display:none} }
 </style>
@@ -473,10 +492,18 @@ select.inp{cursor:pointer}
 <div class="dialog" id="newProjDlg" aria-hidden="true">
   <div class="dialog-hd">新建剧目<a class="x" data-act="newproj-close">×</a></div>
   <div class="dialog-bd">
-    <p style="font-size:14px;color:#445;margin:4px 0 14px">选择要创建的剧目类型：</p>
-    <div style="display:flex;gap:12px;flex-wrap:wrap">
-      <button class="btn" data-act="newproj-drama" style="flex:1 1 200px;padding:14px;text-align:left">🎬 加短剧<small style="display:block;font-weight:400;color:#789;margin-top:4px">拆小说 → 分镜 → 生图 / 生视频（视频自带音画同步）</small></button>
-      <button class="btn" data-act="newproj-bedtime" style="flex:1 1 200px;padding:14px;text-align:left">🌙 加睡前故事<small style="display:block;font-weight:400;color:#789;margin-top:4px">主题 → 故事 / 绘本 / 单独音频 / 短视频（V2.0 音画同步）</small></button>
+    <p class="np-tip">请选择要创建的剧目类型，两种流程相互独立：</p>
+    <div class="np-grid">
+      <button class="np-card" data-act="newproj-drama">
+        <span class="ic">🎬</span>
+        <span class="t">加短剧</span>
+        <span class="d">拆小说 → 分镜 → 生成分镜图 / 视频（视频自带原生音画同步）</span>
+      </button>
+      <button class="np-card" data-act="newproj-bedtime">
+        <span class="ic">🌙</span>
+        <span class="t">加睡前故事</span>
+        <span class="d">主题 → 故事 / 绘本 / 单独音频 / 短视频（V2.0 音画同步）</span>
+      </button>
     </div>
   </div>
   <div class="dialog-ft">
