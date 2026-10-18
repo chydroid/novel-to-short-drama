@@ -613,11 +613,23 @@ function bind(){
   });
 }
 function currentProjectKind(){ var p = (state.projects||[]).filter(function(x){ return x.id === state.pid; })[0]; return (p && p.kind) || 'drama'; }
+/* v2.61：按当前剧目类型隔离「平台框架」UI——睡前故事平台不显示短剧专用的
+ * 今天要处理卡片 / ①-④ 步骤 tab / 底部导航，标题也换成对应平台名；
+ * 短剧平台则不显示睡前故事视图（原有逻辑）。两平台经头部剧目下拉互相切换。 */
+function syncPlatformChrome(isBed){
+  var tc = $('todayCard'); if(tc) tc.style.display = isBed ? 'none' : '';
+  document.querySelectorAll('.tabs').forEach(function(el){ el.style.display = isBed ? 'none' : ''; });
+  document.querySelectorAll('.mtabs').forEach(function(el){ el.style.display = isBed ? 'none' : ''; });
+  var t = $('appTitle'), s = $('appSub');
+  if(t) t.textContent = isBed ? '睡前故事工作台' : '小说转短剧工作台';
+  if(s) s.textContent = isBed ? '主题 → 故事 → 绘本 → 音频 → 短视频' : '拆镜 → 生图 → 生视频 → 成片';
+}
 function setView(v){
   state.view = v;
   var isBed = currentProjectKind() === 'bedtime';
   ['script','asset','gen','film'].forEach(function(k){ var el = $('v-'+k); if(el) el.style.display = (k === v ? '' : 'none'); });
   var bv = $('v-bedtime'); if(bv) bv.style.display = (isBed && v === 'bedtime') ? '' : 'none';
+  syncPlatformChrome(isBed);
   document.querySelectorAll('.tab').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
   document.querySelectorAll('.mtab').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
   if(isBed && v === 'bedtime' && typeof renderBedtime === 'function') renderBedtime();
@@ -794,7 +806,9 @@ function createProject(name, opts){
   return loadShots().then(function(){ return loadAssets(); }).then(function(){
     restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
     toast('已创建并切换到「' + name + '」');   /* v2.59：明确反馈，避免用户以为没生效 */
-    if((opts.kind || 'drama') === 'bedtime') setView('bedtime');
+    /* v2.61：无条件按新剧目类型切视图+同步平台框架——之前只有 bedtime 才 setView，
+     * 从睡前故事平台新建短剧剧目时会停在睡前故事视图（两平台内容互串） */
+    setView((opts.kind || 'drama') === 'bedtime' ? 'bedtime' : 'script');
     return id;
   });
 }
@@ -848,6 +862,7 @@ function init(){
   try{ $('novel').value = localStorage.getItem(pk('novel')) || ''; }catch(e){}
   bind();
   renderProjSel();                  /* v2.49：头部剧目下拉 */
+  syncPlatformChrome(currentProjectKind() === 'bedtime');   /* v2.61：首屏即按平台隔离框架 UI */
   refreshAll();
   loadShots().then(function(){
     loadUndo();                        /* v2.31：镜头拉下来之后才能判断旧快照还作不作数 */
