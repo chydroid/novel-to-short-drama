@@ -48,7 +48,7 @@ var SHOTSIZE_EN = { '远景':'extreme wide shot', '全景':'full wide shot', '�
    提示词拼装时自动映射成规范英文，避免中英混拼让镜头语言不稳定；词典没命中的自由文本原样保留。 */
 var CAM_MOVE_EN = {
   '固定':'static (locked-off) shot', '固定机位':'static (locked-off) shot', '静止':'static shot',
-  '推镜':'push-in', '推近':'slow push-in', '缓慢推近':'slow push-in', '推进':'push-in',
+  '推镜':'push-in', '推近':'slow push-in', '缓慢推近':'slow push-in', '推进':'push-in', '缓推':'slow push-in',
   '拉镜':'pull-back', '拉远':'slow pull-back', '缓慢拉远':'slow pull-back', '拉出':'pull-back',
   '摇镜':'pan', '横摇':'pan', '左摇':'pan left', '右摇':'pan right', '上摇':'tilt up', '下摇':'tilt down',
   '横移':'tracking (lateral) shot', '移镜':'tracking shot', '跟拍':'following shot', '跟随':'following shot',

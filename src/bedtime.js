@@ -20,6 +20,8 @@ function newBedStoryObj(theme){
     theme: theme || '', title:'', pages:[], age:'3-8 岁', artStyle:'童话水彩绘本',
     voice:'', style:'温柔', ratio:'3:4', pagesN:6,
     charDesc:'', charRefURL:'', charRefErr:'',   /* v2.58：主角固定外观设定 + 角色设定图（插画一致性的锚） */
+    /* v2.60：独立短视频分镜（参考小说转短剧管线：完整故事拆镜 + 每镜 5-12s + 运镜/环境声） */
+    vshots:[], vshotSig:'', vidSec:6, vshotsN:0,
     status:'idle', videoURL:'', videoStatus:'', videoTaskId:'', videoErr:'',
     _cur:0, _playing:false, _moviePlaying:false, demo:false, mergedAudioURL:'', mergedCount:0
   };
@@ -90,11 +92,29 @@ function loadBedtimeStory(id, initial){
   o._cur = 0; o._playing = false; o._moviePlaying = false; o.demo = false;
   o.videoURL=''; o.videoStatus=''; o.videoTaskId=''; o.videoErr='';
   o.mergedAudioURL=''; o.mergedCount=0;
+  /* v2.60：短视频分镜恢复。taskId/vstat 持久化是为了刷新后能恢复在途轮询（不重复提交）；
+     运行锁/运行中标记一律复位。 */
+  o.vshots = Array.isArray(o.vshots) ? o.vshots.map(function(v){
+    var d = newBedVShot();
+    return {
+      no: num(v.no) || d.no, pageIdx: Math.max(0, num(v.pageIdx) || 0),
+      scene: v.scene || '', prompt: v.prompt || '', camera: v.camera || '',
+      amb: v.amb || '', narration: v.narration || '', shotSize: v.shotSize || '',
+      seconds: bedVShotClampSec(num(v.seconds) || 6),
+      vidURL: v.vidURL || '', vidErr: v.vidErr || '', taskId: v.taskId || '',
+      vstat: v.vstat || '未生成'
+    };
+  }) : [];
+  o.vshotSig = o.vshotSig || '';
+  o.vidSec = bedVShotClampSec(num(o.vidSec) || 6);
+  o.vshotsN = Math.max(0, num(o.vshotsN) || 0);
+  o._genVidRunning = false; o._splitting = false;
   /* v2.58：角色一致性字段（charRefURL 是远程 URL，可持久化；刷新后继续作为每页插画的参考图） */
   o.charDesc = o.charDesc || ''; o.charRefURL = o.charRefURL || ''; o.charRefErr = '';
   state.bedtime = o;
   if(!initial) populateBedInputs(o);
   bedtimeReady = true;
+  resumeBedVshotPolls();   /* v2.60：切故事/启动后恢复该故事在途的视频轮询（init 时 Key 未加载则会跳过，由 main.js 再调一次） */
 }
 function saveStoryData(bt){
   if(!bt || !bt.id) return;
@@ -105,6 +125,13 @@ function saveStoryData(bt){
     pagesN: bt.pagesN || 6, artStyle: bt.artStyle || '童话水彩绘本', voice: bt.voice || '',
     style: bt.style || '温柔', ratio: bt.ratio || '3:4', age: bt.age || '3-8 岁', status: bt.status || '',
     charDesc: bt.charDesc || '', charRefURL: bt.charRefURL || '',
+    /* v2.60：短视频分镜（taskId/vstat 也落盘——刷新后据此恢复在途轮询，不重复提交） */
+    vshotSig: bt.vshotSig || '', vidSec: bedVShotClampSec(num(bt.vidSec) || 6), vshotsN: Math.max(0, num(bt.vshotsN) || 0),
+    vshots: (bt.vshots || []).map(function(v){
+      return { no:v.no, pageIdx:v.pageIdx, scene:v.scene, prompt:v.prompt, camera:v.camera,
+        amb:v.amb, narration:v.narration, shotSize:v.shotSize, seconds:bedVShotClampSec(num(v.seconds) || 6),
+        vidURL:v.vidURL || '', vidErr:v.vidErr || '', taskId:v.taskId || '', vstat:v.vstat || '未生成' };
+    }),
     pages: (bt.pages || []).map(function(p){
       var o = { text:p.text||'', imgPrompt:p.imgPrompt||'', imgURL:p.imgURL||'', imgErr:p.imgErr||'', audErr:p.audErr||'', audRemote:!!p.audRemote, audMime:p.audMime||'', clips:(p.clips||[]).slice() };
       if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) o.audURL = p.audURL;
@@ -320,6 +347,8 @@ function applyStory(obj, target){
   bt.pages = (obj.pages || []).map(function(p){
     return { text:String(p.text || ''), imgPrompt:String(p.imgPrompt || p.text || ''), imgURL:'', audURL:'', audB64:'', audMime:'', audRemote:false, imgErr:'', audErr:'' };
   });
+  /* v2.60：故事内容整体更换 → 旧分镜作废（要求按最新完整故事重新拆镜），下次点 ④ 自动重拆 */
+  bt.vshots = []; bt.vshotSig = ''; bt.videoStatus = '';
   bt.status = '故事已生成（' + bt.pages.length + ' 页）';
   saveStoryData(bt);
   renderBedtime();
@@ -713,6 +742,301 @@ function bedAllClips(){
   var a = []; bt.pages.forEach(function(p){ if(p.clips) p.clips.forEach(function(u){ if(u) a.push(u); }); }); return a;
 }
 
+/* ================= v2.60：睡前故事短视频（参考小说转短剧管线重新设计） =================
+ * 与绘本共享的只有两点：角色设定图（charRefURL/charDesc 文字锚点）与画风（artStyle）——
+ * 保证短视频里的人物和画面与绘本插画一致；其余完全独立：
+ *   ① 基于「完整故事」重新拆镜（LLM 结构化分镜，不再按页旁白硬切）；
+ *   ② 每镜 5-12 秒（LLM 给建议值 + 输入框覆盖，clamp 5-12）；
+ *   ③ 每镜首帧取对应绘本页插画（keyframe），没有真实插画则退化为文生视频；
+ *   ④ 提示词含电影级运镜 + 自然环境声 + 画外旁白（角色不开口）+ 轻柔摇篮曲 BGM；
+ *   ⑤ 断点续生成：已成功的镜跳过；刷新后在途任务恢复轮询（不重复提交）；
+ *   ⑥ 运行锁 _genVidRunning：批量与单镜重做互斥。
+ * 旧版「按页旁白切片」数据（p.clips）保留原样展示与播放，新生成一律走本管线。 */
+var bedPollers = {};                 /* 镜索引 → setInterval（刷新后在途恢复用） */
+function newBedVShot(){
+  return { no:0, pageIdx:0, scene:'', prompt:'', camera:'', amb:'', narration:'', shotSize:'',
+    seconds:6, vidURL:'', vidErr:'', taskId:'', vstat:'未生成', _vrun:false };
+}
+function bedVShotClampSec(s){ return Math.min(12, Math.max(5, Math.round(num(s) || 6))); }
+/* 故事签名：内容一变就需要重新拆镜（要求「根据生成的完整睡前故事重新拆镜」） */
+function bedStorySig(){
+  var bt = state.bedtime;
+  var txt = (bt.pages || []).map(function(p){ return p.text || ''; }).join('\n');
+  var h = 5381, i;
+  for(i = 0; i < txt.length; i++){ h = ((h * 33) ^ txt.charCodeAt(i)) >>> 0; }
+  return bt.pages.length + ':' + h.toString(36);
+}
+/* 拆镜 system prompt：结构化 JSON 分镜（运镜/环境声/旁白/页码/时长受控） */
+function bedSplitSys(n, sec){
+  var bt = state.bedtime;
+  var cd = (bt.charDesc && String(bt.charDesc).trim()) ? String(bt.charDesc).trim() : '';
+  var cams = ['固定', '缓推', '拉远', '横摇', '横移', '跟拍', '升降', '环绕', '手持'];
+  return '你是一位专业的儿童睡前故事短视频导演。请把用户给的完整睡前故事拆成 ' + n + ' 个镜头，每镜约 ' + sec + ' 秒（按叙事节奏每镜可在 5-12 秒之间增减）。'
+    + '【一致性——最重要】主角外观设定：' + (cd || '可爱卡通主角') + '。所有镜头必须是同一个主角，物种、发型发色、五官、服装款式与配色完全一致，禁止重新设计外观。'
+    + '【画面】scene 与 prompt 用中文写构图、动作、环境、光影与氛围；不要写主角的外貌与服装细节（由系统统一注入），画面中不要出现任何文字；'
+    + '【运镜】camera 只能从这些词里选一个：' + cams.join('、') + '。要电影级、舒缓优雅，符合睡前故事的安静节奏，不要激烈晃动；'
+    + '【自然环境声】amb 写这一镜的自然环境声与背景音乐（中文 10-24 字，如「夜晚森林的虫鸣与微风，轻柔摇篮曲」「壁炉里柴火噼啪，远处海浪」），必须与画面场景匹配；'
+    + '【旁白】narration 写这一镜对应的第三人称睡前旁白（温柔舒缓，1-2 句，直接用故事原文或轻微润色；不要写成角色对白）；'
+    + '【页面对应】page 填这一镜主要对应的绘本页码（1 到 ' + bt.pages.length + ' 的整数，系统会取该页插画作为视频首帧，保证人物与画风同绘本一致）；'
+    + '【景别】shot_size 从「远景/全景/中景/近景/特写」中选一个，按叙事节奏分布，不要连续多镜同景别；'
+    + 'seconds 填 5 到 12 之间的整数；'
+    + '只输出严格 JSON 数组，不要解释文字，不要代码块围栏。格式：'
+    + '[{"shot":1,"page":1,"shot_size":"全景","scene":"月光下的森林小屋，主角坐在窗边望向星空","prompt":"月光下的森林小屋，主角坐在窗边望向星空，暖黄灯光透出窗户，萤火虫在草丛间漂浮","camera":"缓推","amb":"夜晚森林的虫鸣与微风，轻柔摇篮曲","narration":"夜深了，小熊抱着枕头，望见窗外一闪一闪的小星星。","seconds":6}]';
+}
+/* 拆镜：按完整故事文本调用文本模型，产出结构化分镜（复用小说管线的 loose 解析） */
+function bedSplitShots(force){
+  var bt = state.bedtime, myId = bt.id;
+  if(!bt.pages.length){ toast('请先生成故事'); return Promise.resolve(false); }
+  if(!cfg.textBase || !cfg.textKey){ toast('请先在设置里配置文本模型 Key（拆镜需要）'); if(window.openDrawer) openDrawer(); return Promise.resolve(false); }
+  if(bt._splitting){ toast('正在拆镜，请稍候…'); return Promise.resolve(false); }
+  if(bt.vshots.length && !force && !confirm('重新拆镜会清空现有分镜与已生成的片段，确定？')) return Promise.resolve(false);
+  bt._splitting = true;
+  bt.videoStatus = '正在按完整故事拆分镜头…'; renderBedtime();
+  var n = Math.max(3, Math.min(24, num(bt.vshotsN) || Math.ceil(bt.pages.length * 1.5) || 8));
+  var sec = bedVShotClampSec(num(bt.vidSec) || 6);
+  var full = '《' + (bt.title || '睡前故事') + '》\n'
+    + bt.pages.map(function(p, i){ return '第' + (i + 1) + '页：' + (p.text || ''); }).join('\n');
+  return apiPost(cfg.textBase.replace(/\/+$/, '') + '/chat/completions', cfg.textKey, {
+    model: cfg.textModel, temperature: 0.7,
+    messages: [{ role:'system', content: bedSplitSys(n, sec) }, { role:'user', content: full.slice(0, 20000) }]
+  }).then(function(r){
+    var j = parseJsonSafe(r.text);
+    var content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    if(r.status >= 400 || !content) throw new Error('HTTP ' + r.status + ' ' + (r.text || '').slice(0, 160));
+    var arr = parseShotArray(content);
+    if(!arr.length) throw new Error('拆镜结果解析失败（模型未返回有效分镜 JSON）');
+    if(state.bedtimeId !== myId) return false;
+    bt.vshots = arr.map(function(it, i){
+      var v = newBedVShot();
+      v.no = i + 1;
+      v.pageIdx = Math.max(0, Math.min(bt.pages.length - 1, (num(it.page) || 1) - 1));
+      v.scene = String(it.scene || '').trim();
+      v.prompt = String(it.prompt || it.scene || '').trim();
+      v.camera = String(it.camera || '').trim();
+      v.amb = String(it.amb || it.ambient || it.sound || '').trim();
+      v.narration = String(it.narration || it.line || it.narr || '').trim();
+      v.shotSize = String(it.shot_size || it.size || '').trim();
+      v.seconds = bedVShotClampSec(num(it.seconds) || sec);
+      return v;
+    });
+    bt.vshotSig = bedStorySig();
+    var okN = bt.vshots.length, bad = arr.length - okN;
+    bt.videoStatus = '已拆分 ' + okN + ' 个镜头（每镜 5-12 秒，首帧取对应绘本页插画）— 点 ④ 开始逐镜生成'
+      + (bad ? '，' + bad + ' 条记录不完整已忽略' : '');
+    renderBedtime(); toast('拆镜完成：' + okN + ' 个镜头');
+    return true;
+  }).catch(function(e){
+    console.error(e);
+    if(state.bedtimeId === myId){
+      bt.videoStatus = '拆镜失败：' + guessCorsMsg(e);
+      renderBedtime(); toast('拆镜失败：' + guessCorsMsg(e));
+    }
+    return false;
+  }).then(function(ok){ bt._splitting = false; return ok; });
+}
+/* 视频提示词：运镜（受控词表→英文）+ 画面 + 角色文字锚点 + 画风（同绘本）+ 环境声 + 画外旁白 + BGM */
+function bedVideoPrompt(vs){
+  var bt = state.bedtime;
+  var camEn = cameraLangEn(vs.camera);
+  var voice = bedtimeVoiceDesc();
+  var art = bt.artStyle || '童话水彩绘本';
+  var mood = bt.style || '温柔';
+  var p = '儿童睡前故事绘本动画片段，' + art + '风格，' + mood + '氛围。';
+  if(camEn) p += '电影级运镜：' + camEn + '。';
+  p += '画面：' + (vs.prompt || vs.scene || '安静的睡前场景') + '。';
+  var cd = (bt.charDesc && String(bt.charDesc).trim()) ? String(bt.charDesc).trim() : '';
+  if(cd) p += '主角外观必须与首帧插画严格一致，不要改变：' + cd + '。';
+  if(vs.amb) p += '自然环境声：' + vs.amb + '。';
+  if(vs.narration){
+    p += '重要：以下是第三人称画外旁白，画面中的角色不要开口说话、不要出现说话口型；'
+      + '请生成温柔舒缓的画外旁白配音来朗读它（音色：' + voice + '）：' + vs.narration + '。'
+      + '并配以轻柔舒缓的摇篮曲背景音乐，营造安静助眠的氛围。';
+  } else {
+    p += '画面自然流动，无对白，仅有环境氛围与轻柔摇篮曲背景音乐。';
+  }
+  return p;
+}
+/* 视频 API body：有对应绘本插画 → keyframe（首帧即绘本页，人物/画风天然一致）；否则文生视频 */
+function bedVideoBody(vs){
+  var bt = state.bedtime;
+  var body = {
+    model:(cfg.vidModel || 'agnes-video-2.5-flash'),
+    prompt: bedVideoPrompt(vs),
+    seconds: String(bedVShotClampSec(num(vs.seconds) || 6)),
+    size:'720P',
+    aspect_ratio:(bt.ratio || '3:4'),
+    n:1
+  };
+  var pg = bt.pages[vs.pageIdx];
+  var img = (pg && bedIsRealImg(pg.imgURL)) ? pg.imgURL : '';
+  body.mode = img ? 'keyframe' : 'text';
+  if(img) body.first_frame = img;
+  return body;
+}
+function stopBedVshotPoll(i){ if(bedPollers[i]){ clearInterval(bedPollers[i]); delete bedPollers[i]; } }
+/* 轮询单镜（刷新后在途恢复用；批量路径走 pollAgnesClip 的 Promise 版） */
+function pollBedVshot(i){
+  var bt = state.bedtime, myId = bt.id;
+  var v = bt.vshots[i]; if(!v || !v.taskId) return;
+  stopBedVshotPoll(i);
+  var tries = 0;
+  var tick = function(){
+    if(state.bedtimeId !== myId){ stopBedVshotPoll(i); return; }
+    var cur = state.bedtime.vshots[i];
+    if(!cur || !cur.taskId){ stopBedVshotPoll(i); return; }
+    tries++;
+    if(tries > 240){ stopBedVshotPoll(i); cur.vstat = '失败'; cur.vidErr = '轮询超时（超过 12 分钟）'; renderBedtime(); return; }
+    apiGet(cfg.agnesQuery + '/agnesapi?video_id=' + encodeURIComponent(cur.taskId) + '&model_name=' + encodeURIComponent(cfg.vidModel || 'agnes-video-2.5-flash'), ak())
+      .then(function(r){
+        if(state.bedtimeId !== myId){ stopBedVshotPoll(i); return; }
+        if(r.status >= 400){
+          if(tries > 3){ stopBedVshotPoll(i); cur.vstat = '失败'; cur.vidErr = '查询失败（HTTP ' + r.status + '）'; renderBedtime(); }
+          return;
+        }
+        var j = parseJsonSafe(r.text), st = pickStatus(j);
+        if(st === 'completed' || st === 'succeeded' || st === 'success'){
+          stopBedVshotPoll(i);
+          var url = pickVideoUrl(j);
+          if(!url){ cur.vstat = '失败'; cur.vidErr = '任务完成但未返回视频地址'; }
+          else { cur.vstat = '已完成'; cur.vidURL = url; cur.vidErr = ''; }
+          renderBedtime();
+        } else if(st === 'failed' || st === 'error' || st === 'canceled' || st === 'cancelled' || st === 'aborted'){
+          stopBedVshotPoll(i); cur.vstat = '失败';
+          cur.vidErr = (j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0, 160);
+          renderBedtime();
+        } else {
+          var ns = (st === 'queued' || st === 'pending' || st === 'waiting' || st === 'submitted') ? '排队中' : '生成中';
+          if(cur.vstat !== ns){ cur.vstat = ns; renderBedtime(); }   /* 状态没变不重渲，省掉每 3.5s 的全量落盘 */
+        }
+      })
+      .catch(function(e){ if(tries > 3){ stopBedVshotPoll(i); cur.vstat = '失败'; cur.vidErr = guessCorsMsg(e); renderBedtime(); } });
+  };
+  bedPollers[i] = setInterval(tick, 3500);
+}
+/* 启动/切故事时恢复在途任务（有 taskId 且排队中/生成中 → 只恢复轮询，绝不重复提交） */
+function resumeBedVshotPolls(){
+  var bt = state.bedtime;
+  if(!bt || !bt.vshots || !hasAgnesKey()) return;
+  bt.vshots.forEach(function(v, i){
+    if(v.taskId && (v.vstat === '排队中' || v.vstat === '生成中') && !bedPollers[i]) pollBedVshot(i);
+  });
+}
+/* ④ 生成短视频：故事变了/没拆过 → 先按完整故事拆镜，再逐镜生成 */
+function genBedtimeVideos(){
+  var bt = state.bedtime;
+  if(!bt.pages.length){ toast('请先生成故事'); return; }
+  if(!hasAgnesKey()){
+    toast('未配置 Agnes Key：可先用「播放绘本」在浏览器里预览');
+    bedPlay(); return;
+  }
+  if(guardBudget()) return;
+  if(bt._genVidRunning || bt._splitting){ toast('短视频处理中，请稍候…'); return; }
+  bt._moviePlaying = false;
+  if(!bt.vshots.length || bt.vshotSig !== bedStorySig()){
+    if(bt.vshots.length && !confirm('故事内容已变化，需要按最新完整故事重新拆镜（旧分镜作废）。继续？')) return;
+    bedSplitShots(true).then(function(ok){ if(ok) runBedVshotBatch(); });
+    return;
+  }
+  runBedVshotBatch();
+}
+/* 逐镜串行生成：已成功跳过（续生成）；队列满/限流由 submitAgnesVideo 自动退避 */
+function runBedVshotBatch(){
+  var bt = state.bedtime, myId = bt.id;
+  var plan = [], done0 = 0;
+  bt.vshots.forEach(function(v, i){ if(v.vidURL){ done0++; return; } plan.push(i); });
+  var total = done0 + plan.length;
+  if(!plan.length){
+    bt.videoStatus = '短视频已全部生成（' + done0 + ' 镜）— 再次点击 ④ 不会重复生成；可点单镜「↻ 重做此镜」';
+    renderBedtime(); toast('短视频已全部生成，没有失败镜需要重试');
+    return;
+  }
+  var done = done0, failed = 0;
+  bt._genVidRunning = true;
+  bt.videoStatus = '生成中… (' + done + '/' + total + ')';
+  renderBedtime();
+  var chain = Promise.resolve();
+  plan.forEach(function(i){
+    chain = chain.then(function(){
+      if(state.bedtimeId !== myId) return Promise.resolve();      /* 已切换到其它故事 → 中止，避免串档 */
+      var v = state.bedtime.vshots[i]; if(!v) return;
+      v.vstat = '排队中'; v.vidErr = '';
+      bt.videoStatus = '生成中…（第 ' + (i + 1) + ' 镜，' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + '）';
+      renderBedtime();
+      return submitAgnesVideo(bedVideoBody(v), {
+        onWait: function(a, backoff, mx){
+          if(state.bedtimeId !== myId) return;
+          bt.videoStatus = '队列已满，重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+        }
+      }).then(function(vid){
+        if(state.bedtimeId !== myId) return;
+        v.taskId = String(vid); renderBedtime();
+        return pollAgnesClip(v.taskId);
+      }).then(function(url){
+        if(state.bedtimeId !== myId) return;
+        v.vstat = '已完成'; v.vidURL = url; v.vidErr = ''; done++;
+        bt.videoStatus = '生成中… (' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + ')';
+        renderBedtime();
+      }).catch(function(e){
+        if(state.bedtimeId !== myId) return;
+        console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e); failed++;
+        bt.videoStatus = '生成中… (' + done + '/' + total + '，' + failed + ' 镜失败)';
+        renderBedtime();
+      });
+    });
+  });
+  chain.then(function(){
+    if(state.bedtimeId !== myId) return;
+    bt._genVidRunning = false;
+    var ok = bt.vshots.filter(function(v){ return v.vidURL; }).length;
+    var bad = bt.vshots.filter(function(v){ return v.vstat === '失败'; }).length;
+    bt.videoStatus = bad
+      ? ('短视频生成完成（成功 ' + ok + '/' + total + ' 镜，' + bad + ' 镜失败）— 再点 ④ 只重试失败镜，或点单镜「↻ 重做此镜」')
+      : ('短视频生成完成（' + ok + '/' + total + ' 镜 · 画外旁白 + 自然环境声 + 摇篮曲背景音乐）');
+    renderBedtime();
+    toast(bad ? ('短视频生成完成，' + bad + ' 镜失败（再点 ④ 只重试失败镜）') : '睡前故事短视频生成完成');
+  });
+}
+/* 单镜重做：只重做这一镜（对某镜不满意/该镜失败），不影响其它镜 */
+function regenBedVshot(i){
+  var bt = state.bedtime, myId = bt.id;
+  var v = bt.vshots[i];
+  if(!v){ toast('镜头不存在'); return; }
+  if(bt._genVidRunning || bt._splitting){ toast('短视频处理中，请稍候…'); return; }
+  if(!hasAgnesKey()){ toast('需要 Agnes Key 才能生成短视频'); return; }
+  if(guardBudget()) return;
+  bt._genVidRunning = true;
+  v.vstat = '排队中'; v.vidErr = ''; v.vidURL = ''; v.taskId = '';
+  bt.videoStatus = '正在重做第 ' + (i + 1) + ' 镜…'; renderBedtime();
+  submitAgnesVideo(bedVideoBody(v), {
+    onWait: function(a, backoff, mx){
+      if(state.bedtimeId !== myId) return;
+      bt.videoStatus = '队列已满，重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+    }
+  }).then(function(vid){
+    if(state.bedtimeId !== myId) return;
+    v.taskId = String(vid); renderBedtime();
+    return pollAgnesClip(v.taskId);
+  }).then(function(url){
+    bt._genVidRunning = false;
+    if(state.bedtimeId !== myId) return;
+    v.vstat = '已完成'; v.vidURL = url; v.vidErr = '';
+    bt.videoStatus = '第 ' + (i + 1) + ' 镜已生成'; renderBedtime(); toast('第 ' + (i + 1) + ' 镜短视频已生成');
+  }).catch(function(e){
+    bt._genVidRunning = false;
+    if(state.bedtimeId !== myId) return;
+    console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e);
+    bt.videoStatus = '第 ' + (i + 1) + ' 镜失败（' + v.vidErr + '）'; renderBedtime();
+    toast('第 ' + (i + 1) + ' 镜失败：' + v.vidErr);
+  });
+}
+/* 成片片段清单：新分镜优先；没有新分镜才回落旧版按页切片 */
+function bedMovieList(){
+  var bt = state.bedtime;
+  var vs = (bt.vshots || []).filter(function(v){ return v.vidURL; }).map(function(v){ return v.vidURL; });
+  if(vs.length) return vs;
+  return bedAllClips();
+}
+
 /* -------- 浏览器内幻灯片（短视频预览，永远可用） -------- */
 function bedStep(){
   var bt = state.bedtime, p = bt.pages[bt._cur];
@@ -749,7 +1073,7 @@ function bedStop(){
 function bedPrev(){ var bt = state.bedtime; if(bt._cur > 0){ bt._cur--; if(!bt._playing) bedStep(); } }
 function bedNext(){ var bt = state.bedtime; if(bt._cur < bt.pages.length - 1){ bt._cur++; if(!bt._playing) bedStep(); } }
 function bedPlayMovie(){
-  var bt = state.bedtime, all = bedAllClips(); if(!all.length){ toast('请先生成短视频'); return; }
+  var bt = state.bedtime, all = bedMovieList(); if(!all.length){ toast('请先生成短视频'); return; }
   var mv = $('bed-movie'); if(!mv) return;
   bt._moviePlaying = true; mv.style.display = 'block';
   var i = 0;
@@ -838,9 +1162,9 @@ function exportBedtimeBook(){
   toast('导出绘本：逐页图片 + 故事文本');
 }
 
-/* ④b：把各页的 V2.0 音画同步短视频片段按页序拼接成单个 mp4（ffmpeg 拼接脚本） */
+/* ④b：把短视频片段按镜序拼接成单个 mp4（ffmpeg 拼接脚本）。新分镜优先，无则回落旧版按页切片 */
 function exportBedtimeMerge(){
-  var clips = bedAllClips();
+  var clips = bedMovieList();
   if(!clips.length){ toast('还没有生成的短视频片段（请先点 ④ 生成短视频）'); return; }
   var sh = [], bat = [];
   sh.push('#!/bin/bash');
@@ -925,6 +1249,17 @@ function buildBedtimeShell(){
     + '</div>'
     + '<div id="bed-merged"></div>'
     + '<div id="bed-video" style="margin:8px 0">'
+    + '  <div id="bed-vshot-box" style="margin:8px 0">'
+    + '    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0">'
+    + '      <button id="bed-resplit" class="bed-btn">↻ 重新拆镜</button>'
+    + '      <label style="font-size:13px;color:#9aa">镜头数<input id="bed-vshot-n" type="number" min="3" max="24" style="width:56px;padding:5px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"></label>'
+    + '      <label style="font-size:13px;color:#9aa">每镜秒数(5-12)<input id="bed-vshot-sec" type="number" min="5" max="12" style="width:56px;padding:5px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"></label>'
+    + '      <button id="bed-vshot-play" class="bed-btn">▶ 连播全部镜头</button>'
+    + '      <span style="font-size:12px;color:#789">首帧取对应绘本页插画，人物/画风与绘本一致</span>'
+    + '    </div>'
+    + '    <div id="bed-vshot-status" style="font-size:13px;color:#8ad;min-height:16px;margin:4px 0"></div>'
+    + '    <div id="bed-vshots" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:6px"></div>'
+    + '  </div>'
     + '  <div id="bed-video-status" style="font-size:13px;color:#8ad;min-height:16px;margin:4px 0"></div>'
     + '  <div id="bed-video-clips"></div>'
     + '  <video id="bed-movie" controls style="width:100%;max-width:360px;display:none;margin:6px auto;border-radius:8px"></video>'
@@ -939,7 +1274,26 @@ function buildBedtimeShell(){
   $('bed-gen-img').onclick = function(){ genBedtimeImages(false); };
   $('bed-regen-img-all').onclick = function(){ genBedtimeImages(true); };
   $('bed-gen-audio').onclick = genBedtimeAudioAll;
-  $('bed-gen-video').onclick = genBedtimeVideo;
+  /* v2.60：④ 改走新管线（完整故事拆镜 + 每镜 5-12s + 运镜/环境声）；
+     同样必须包一层——onclick 的事件对象会被当参数传进去 */
+  $('bed-gen-video').onclick = function(){ genBedtimeVideos(); };
+  $('bed-resplit').onclick = function(){
+    var bt = state.bedtime;
+    if(!bt.pages.length){ toast('请先生成故事'); return; }
+    if(bt.vshots.length && !confirm('重新拆镜会清空现有分镜与已生成的片段，确定？')) return;
+    bedSplitShots(true);
+  };
+  $('bed-vshot-play').onclick = bedPlayMovie;
+  /* 拆镜参数：镜头数 / 每镜秒数（5-12），变更即存（随故事持久化） */
+  var vn = $('bed-vshot-n'), vs2 = $('bed-vshot-sec');
+  if(vn){
+    vn.value = String(state.bedtime.vshotsN || Math.ceil((state.bedtime.pages.length || 6) * 1.5));
+    vn.onchange = function(){ state.bedtime.vshotsN = Math.max(3, Math.min(24, num(vn.value) || 0)); saveBedtime(); };
+  }
+  if(vs2){
+    vs2.value = String(bedVShotClampSec(num(state.bedtime.vidSec) || 6));
+    vs2.onchange = function(){ state.bedtime.vidSec = bedVShotClampSec(num(vs2.value) || 6); vs2.value = String(state.bedtime.vidSec); saveBedtime(); };
+  }
   $('bed-play').onclick = function(){ $('bed-stage').style.display = 'block'; bedPlay(); };
   $('bed-dl-audio').onclick = downloadAllBedtimeAudio;
   $('bed-merge-audio').onclick = mergeBedtimeAudio;
@@ -1003,18 +1357,78 @@ function renderBedtime(){
       genBedtimeCharRef();
     };
   }
-  // 视频区（Agnes V2.0 音画同步片段）
-  var vst = $('bed-video-status'); if(vst) vst.textContent = (bt.videoStatus ? ('视频状态：' + bt.videoStatus) : '') + (bt.videoErr ? '（' + bt.videoErr + '）' : '');
+  // v2.60：新短视频分镜区（完整故事拆镜 + 每镜 5-12s + 运镜/环境声 + 画外旁白）
+  var vss = $('bed-vshot-status');
+  if(vss){
+    var okN = bt.vshots.filter(function(v){ return v.vidURL; }).length;
+    var badN = bt.vshots.filter(function(v){ return v.vstat === '失败'; }).length;
+    var runN = bt.vshots.filter(function(v){ return v.vstat === '排队中' || v.vstat === '生成中'; }).length;
+    vss.textContent = (bt.videoStatus ? bt.videoStatus : '')
+      + (bt.vshots.length ? ('　分镜 ' + okN + '/' + bt.vshots.length + ' 镜已完成' + (badN ? '，' + badN + ' 镜失败' : '') + (runN ? '，' + runN + ' 镜在途' : '')) : '（尚未拆镜：点「④ 生成短视频」会自动按完整故事拆镜）');
+  }
+  var vsc = $('bed-vshots');
+  if(vsc && !bt._moviePlaying){
+    vsc.innerHTML = '';
+    if(!bt.vshots.length){
+      vsc.innerHTML = '<div style="font-size:12px;color:#9aa;padding:8px">尚未拆镜。点「④ 生成短视频」：先按完整睡前故事自动拆分镜头（每镜 5-12 秒），再逐镜生成短视频。</div>';
+    }
+    bt.vshots.forEach(function(v, i){
+      var pg = bt.pages[v.pageIdx];
+      var card = document.createElement('div'); card.className = 'bed-card';
+      if(v.vstat === '失败') card.style.borderColor = '#a55';
+      var head = document.createElement('div');
+      head.style.cssText = 'font-size:12px;color:#8ad;padding:8px 8px 2px;line-height:1.5';
+      head.textContent = '第 ' + v.no + ' 镜 · 第 ' + (v.pageIdx + 1) + ' 页 · ' + v.seconds + 's'
+        + (v.shotSize ? ' · ' + v.shotSize : '') + (v.camera ? ' · ' + v.camera : '')
+        + (pg && !bedIsRealImg(pg.imgURL) ? ' · 该页无真实插画（将文生视频）' : '');
+      var sc = document.createElement('div');
+      sc.style.cssText = 'font-size:12px;color:#cdd;padding:2px 8px;line-height:1.5';
+      sc.textContent = v.scene || v.prompt || '';
+      var meta = document.createElement('div');
+      meta.style.cssText = 'font-size:12px;color:#9aa;padding:2px 8px;line-height:1.5';
+      meta.textContent = (v.amb ? '环境声：' + v.amb + '　' : '') + (v.narration ? '旁白：' + v.narration : '');
+      card.appendChild(head); card.appendChild(sc); card.appendChild(meta);
+      if(v.vidURL){
+        var vd = document.createElement('video'); vd.src = v.vidURL; vd.controls = true;
+        vd.style.cssText = 'width:100%;display:block;border-radius:8px;margin:6px 8px 0';
+        card.appendChild(vd);
+      } else if(v.vstat === '失败'){
+        var er = document.createElement('div');
+        er.style.cssText = 'font-size:12px;color:#f99;padding:4px 8px;line-height:1.4';
+        er.textContent = '第 ' + v.no + ' 镜失败：' + (v.vidErr || '未知错误') + '（可点下方按钮重做此镜）';
+        card.appendChild(er);
+      } else if(v.vstat === '排队中' || v.vstat === '生成中'){
+        var wip = document.createElement('div');
+        wip.style.cssText = 'font-size:12px;color:#8ad;padding:4px 8px';
+        wip.textContent = v.vstat + '…（可关闭页面，任务会在后台继续；刷新后自动恢复进度）';
+        card.appendChild(wip);
+      }
+      var rg = document.createElement('button');
+      rg.textContent = (v.vstat === '排队中' || v.vstat === '生成中') ? '…生成中' : '↻ 重做此镜';
+      rg.disabled = (v.vstat === '排队中' || v.vstat === '生成中') || !!bt._genVidRunning;
+      rg.onclick = function(){ regenBedVshot(i); };
+      card.appendChild(rg);
+      vsc.appendChild(card);
+    });
+  }
+  var gv = $('bed-gen-video'); if(gv) gv.disabled = !!(bt._genVidRunning || bt._splitting);
+  var rs = $('bed-resplit'); if(rs) rs.disabled = !!(bt._genVidRunning || bt._splitting);
+  /* 拆镜参数框跟随当前故事（用户正在输入的框不抢值，避免打字被重置） */
+  var vni = $('bed-vshot-n'), vsi = $('bed-vshot-sec');
+  if(vni && document.activeElement !== vni) vni.value = String(bt.vshotsN || Math.ceil((bt.pages.length || 6) * 1.5));
+  if(vsi && document.activeElement !== vsi) vsi.value = String(bedVShotClampSec(num(bt.vidSec) || 6));
+  // 旧版「按页旁白切片」数据：仅当没有新分镜时展示（新管线启用后由上方分镜区取代）
+  var vst = $('bed-video-status'); if(vst) vst.textContent = (bt.videoStatus && !bt.vshots.length) ? ('旧版片段状态：' + bt.videoStatus) : '';
   var vc = $('bed-video-clips');
-  if(vc && !bt._moviePlaying){
+  if(vc && !bt._moviePlaying && !bt.vshots.length){
     var all = bedAllClips();
     var planned = 0; bt.pages.forEach(function(p){ if(Array.isArray(p.clips)) planned += p.clips.length; });
     var failed = planned - all.length;
     if(planned){
       var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0">'
         + '<button id="bed-movie-play" class="bed-btn">▶ 连播全部片段</button>'
-        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + '/' + planned + ' 段（旁白配音 + 轻柔背景音乐；与③单独下载的 TTS 音色不同）'
-        + (failed ? ' · <span style="color:#f99">' + failed + ' 段失败/缺失（再点 ④ 仅重试）</span>' : '') + '</span></div>';
+        + '<span style="font-size:12px;color:#9aa">共 ' + all.length + '/' + planned + ' 段（旧版按页切片 · 旁白配音 + 轻柔背景音乐；与③单独下载的 TTS 音色不同）'
+        + (failed ? ' · <span style="color:#f99">' + failed + ' 段失败/缺失（旧版数据；新短视频请用上方分镜区，点 ④ 走新流程）</span>' : '') + '</span></div>';
       bt.pages.forEach(function(p, pi){
         if(!Array.isArray(p.clips)) return;
         p.clips.forEach(function(u, si){
@@ -1022,7 +1436,7 @@ function renderBedtime(){
             h += '<div style="margin:6px 0"><div style="font-size:12px;color:#9aa">第 ' + (pi + 1) + ' 页 · 片段 ' + (si + 1) + '</div>'
               + '<video src="' + u + '" controls style="width:100%;max-width:360px;display:block;border-radius:8px"></video></div>';
           } else {
-            h += '<div style="margin:6px 0;padding:6px 8px;border:1px dashed #a55;border-radius:8px;font-size:12px;color:#f99">第 ' + (pi + 1) + ' 页 · 片段 ' + (si + 1) + '：失败/缺失（再点 ④ 仅重试此片段）</div>';
+            h += '<div style="margin:6px 0;padding:6px 8px;border:1px dashed #a55;border-radius:8px;font-size:12px;color:#f99">第 ' + (pi + 1) + ' 页 · 片段 ' + (si + 1) + '：失败/缺失（旧版数据，重做请用上方新分镜）</div>';
           }
         });
       });

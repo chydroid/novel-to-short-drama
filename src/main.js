@@ -860,6 +860,7 @@ function init(){
     if(!state.hasCloud) toast('当前是本地存储模式：数据只保存在这台设备的浏览器里');
     resetStuck();
     resumePolling();
+    resumeBedVshotPolls();   /* v2.60：恢复睡前故事短视频在途任务（有 taskId 且排队中/生成中 → 只恢复轮询） */
     seedDemoAuto();   /* 内部自行判断：已 seed 过或已有数据则只落标记，不再注入 */
     scanLipRiskQuiet();
     batchLeftTip();   /* v2.16：上次批量没跑完的话，打开页面就告诉用户还剩多少 */
