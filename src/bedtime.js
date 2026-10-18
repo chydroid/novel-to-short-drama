@@ -408,7 +408,19 @@ function genBedtimeImage(p, idx){
       return url;
     });
 }
-function genBedtimeImages(){
+/* v2.59：插画「续生成」计划（纯函数，便于单测）：
+ * 默认只挑「没有插画」「上次生成失败（imgErr）」或「只有演示占位图」的页——个别插画失败时，
+ * 再次点 ② 只重试这些页，不再把已成功的全部重做、浪费配额；
+ * forceAll（点「全部重画插画」）时整本重画。 */
+function bedIsRealImg(u){ return !!u && String(u).indexOf('data:image/svg') !== 0; }
+function bedImgPlan(bt, forceAll){
+  var plan = [], skipped = 0;
+  (bt.pages || []).forEach(function(p, i){
+    if(forceAll || !bedIsRealImg(p.imgURL) || p.imgErr) plan.push(i); else skipped++;
+  });
+  return { plan:plan, skipped:skipped };
+}
+function genBedtimeImages(forceAll){
   var bt = state.bedtime, myId = bt.id;
   if(!bt.pages.length){ toast('请先生成故事'); return; }
   if(!hasAgnesKey()){
@@ -417,23 +429,82 @@ function genBedtimeImages(){
     return;
   }
   if(guardBudget()) return;
-  bt.status = '插画生成中…'; renderBedtime();
+  if(bt._genImgRunning){ toast('插画生成中，请稍候…'); return; }
+  var pl = bedImgPlan(bt, forceAll);
+  if(!pl.plan.length){
+    bt.status = '绘本插画已全部生成（' + bt.pages.length + ' 页）— 再次点击 ② 不会重复生成；可点单页「↻ 重画插画」只重做某一页';
+    renderBedtime(); toast('插画已全部生成，没有失败页需要重试');
+    return;
+  }
+  var label = forceAll ? '全部重画插画' : '插画续生成';
+  bt._genImgRunning = true;
+  bt.status = label + '中…（' + pl.skipped + ' 张已成功跳过，本次生成 ' + pl.plan.length + ' 张）';
+  renderBedtime();
   var kick = function(){
-    if(state.bedtimeId !== myId) return;
-    var seq = bt.pages.map(function(p, i){ return i; });
+    if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }
     var run = function(k){
-      if(state.bedtimeId !== myId) return;          /* 已切换到其它故事 → 中止，避免串档 */
-      if(k >= seq.length){ bt.status = '绘本插画完成'; renderBedtime(); toast('绘本插画完成'); return; }
-      var i = seq[k], p = bt.pages[i];
-      genBedtimeImage(p, i).then(function(url){ if(state.bedtimeId !== myId) return; p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1); })
-        .catch(function(e){ if(state.bedtimeId !== myId) return; console.error(e); p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1); });
+      if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }   /* 已切换到其它故事 → 中止，避免串档 */
+      if(k >= pl.plan.length){
+        bt._genImgRunning = false;
+        var failN = bt.pages.filter(function(p){ return p.imgErr; }).length;
+        bt.status = failN
+          ? ('绘本插画完成（' + failN + ' 张失败）— 再次点击 ② 只重试失败页，或点单页「↻ 重画插画」')
+          : '绘本插画完成（' + bt.pages.length + ' 页全部成功）';
+        renderBedtime();
+        toast(failN ? ('绘本插画完成，' + failN + ' 张失败（再点 ② 只重试失败页）') : '绘本插画完成');
+        return;
+      }
+      var i = pl.plan[k], p = bt.pages[i];
+      p._imgRunning = true;
+      bt.status = label + '中…（第 ' + (i + 1) + ' 页，' + (k + 1) + '/' + pl.plan.length + (pl.skipped ? '，已跳过 ' + pl.skipped + ' 张' : '') + '）';
+      renderBedtime();
+      genBedtimeImage(p, i).then(function(url){
+        if(state.bedtimeId !== myId) return;
+        p._imgRunning = false; p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1);
+      }).catch(function(e){
+        if(state.bedtimeId !== myId) return;
+        console.error(e); p._imgRunning = false; p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1);
+      });
     };
     run(0);
   };
   /* 先确保有角色设定图：没有就先生成（1 张图的成本换全书人物一致，非常值）；
      生成失败也继续（退化为纯文字锚点，不阻断插画流程）；正在生成中则等它，避免这批插画丢了参考图 */
   if(!bt.charRefURL){
-    if(bt._charRefRunning){ toast('角色设定图生成中，请稍候…（它决定所有插画的人物一致性）'); return; }
+    if(bt._charRefRunning){ bt._genImgRunning = false; toast('角色设定图生成中，请稍候…（它决定所有插画的人物一致性）'); return; }
+    genBedtimeCharRef().then(kick); return;
+  }
+  kick();
+}
+/* v2.59：单页重画——对某一页插画不满意（或该页上次失败）时，只重做这一页，不影响其它页。
+ * 已有角色设定图时自动作为参考图；没有则先补生成设定图再画，保证全书人物一致。 */
+function regenBedtimeImage(i){
+  var bt = state.bedtime, myId = bt.id;
+  var p = bt.pages[i];
+  if(!p){ toast('页面不存在'); return; }
+  if(bt._genImgRunning){ toast('插画生成中，请稍候…'); return; }
+  if(!hasAgnesKey()){ toast('需要 Agnes Key 才能重画插画'); return; }
+  if(guardBudget()) return;
+  bt._genImgRunning = true;
+  var kick = function(){
+    if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }
+    p._imgRunning = true; p.imgErr = '';
+    bt.status = '正在重画第 ' + (i + 1) + ' 页插画…'; renderBedtime();
+    genBedtimeImage(p, i).then(function(url){
+      bt._genImgRunning = false;
+      if(state.bedtimeId !== myId) return;
+      p._imgRunning = false; p.imgURL = url; p.imgErr = '';
+      bt.status = '第 ' + (i + 1) + ' 页插画已重画'; renderBedtime(); toast('第 ' + (i + 1) + ' 页插画已重画');
+    }).catch(function(e){
+      bt._genImgRunning = false;
+      if(state.bedtimeId !== myId) return;
+      console.error(e); p._imgRunning = false; p.imgErr = guessCorsMsg(e);
+      bt.status = '第 ' + (i + 1) + ' 页插画重画失败（' + p.imgErr + '）'; renderBedtime();
+      toast('第 ' + (i + 1) + ' 页插画重画失败：' + p.imgErr);
+    });
+  };
+  if(!bt.charRefURL){
+    if(bt._charRefRunning){ bt._genImgRunning = false; toast('角色设定图生成中，请稍候…（它决定所有插画的人物一致性）'); return; }
     genBedtimeCharRef().then(kick); return;
   }
   kick();
@@ -830,6 +901,7 @@ function buildBedtimeShell(){
     + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">'
     + '  <button id="bed-gen-story" class="bed-btn">① 生成故事</button>'
     + '  <button id="bed-gen-img" class="bed-btn">② 生成绘本插画</button>'
+    + '  <button id="bed-regen-img-all" class="bed-btn">🎨 全部重画插画</button>'
     + '  <button id="bed-gen-audio" class="bed-btn">③ 生成旁白音频</button>'
     + '  <button id="bed-gen-video" class="bed-btn">④ 生成短视频</button>'
     + '  <button id="bed-play" class="bed-btn">▶ 播放绘本</button>'
@@ -862,7 +934,10 @@ function buildBedtimeShell(){
   // 让 stage 的 audio 元素在播放时可见（用于真实音频播放）
   var stageAudio = $('bed-stage-audio'); if(stageAudio) stageAudio.style.display = 'block';
   $('bed-gen-story').onclick = genBedtimeStory;
-  $('bed-gen-img').onclick = genBedtimeImages;
+  /* 注意：不能直接 = genBedtimeImages——onclick 会把事件对象当 forceAll 传进去（truthy→全部重画）。
+     ② 的语义是「续生成」：只补没图/上次失败的页 */
+  $('bed-gen-img').onclick = function(){ genBedtimeImages(false); };
+  $('bed-regen-img-all').onclick = function(){ genBedtimeImages(true); };
   $('bed-gen-audio').onclick = genBedtimeAudioAll;
   $('bed-gen-video').onclick = genBedtimeVideo;
   $('bed-play').onclick = function(){ $('bed-stage').style.display = 'block'; bedPlay(); };
@@ -924,7 +999,7 @@ function renderBedtime(){
       + '<button id="bed-regen-charref" class="bed-btn">' + (bt.charRefURL ? '↻ 重画角色设定' : '🎨 生成角色设定') + '</button>'
       + '</div>';
     var rb = $('bed-regen-charref'); if(rb) rb.onclick = function(){
-      if(bt.charRefURL && !confirm('重画角色设定图？已生成的绘本插画不会自动更新，需再点②才会按新设定重画。')) return;
+      if(bt.charRefURL && !confirm('重画角色设定图？已生成的绘本插画不会自动更新，可点「🎨 全部重画插画」或单页「↻ 重画插画」按新设定重画。')) return;
       genBedtimeCharRef();
     };
   }
@@ -973,15 +1048,32 @@ function renderBedtime(){
   pg.innerHTML = '';
   bt.pages.forEach(function(p, i){
     var card = document.createElement('div'); card.className = 'bed-card';
+    if(p.imgErr) card.style.borderColor = '#a55';               /* 失败页红框标出，一眼可见 */
     var img = document.createElement('img'); img.className = 'bed-card-img'; img.src = p.imgURL || demoImage(i, p.text, bt.artStyle); img.alt = '第 ' + (i + 1) + ' 页';
     var txt = document.createElement('div'); txt.className = 'bed-card-txt'; txt.textContent = (i + 1) + '. ' + (p.text || '');
+    /* 插画失败/缺失提示：刷新后依然能看到是哪一页失败、为什么（imgErr 已随故事落盘） */
+    if(p.imgErr){
+      var er = document.createElement('div');
+      er.style.cssText = 'font-size:12px;color:#f99;padding:0 8px 6px;line-height:1.4';
+      er.textContent = '插画失败：' + p.imgErr + '（点下方按钮仅重画此页）';
+      card.appendChild(er);
+    }
     var aud = document.createElement('div'); aud.className = 'bed-card-aud';
     if(p.audURL){ var a = document.createElement('audio'); a.controls = true; a.src = p.audURL; a.style.width = '100%'; aud.appendChild(a); }
     else { aud.textContent = p.audErr ? '音频失败：' + p.audErr : '（未生成音频）'; aud.style.color = '#888'; aud.style.fontSize = '12px'; }
     var dl = document.createElement('button'); dl.textContent = '下载音频'; dl.onclick = function(){ downloadPageAudio(i); };
-    card.appendChild(img); card.appendChild(txt); card.appendChild(aud); card.appendChild(dl);
+    /* v2.59：单页重画——对某一幅插画不满意（或上次失败）时只重做这一页，不动其它页 */
+    var rg = document.createElement('button');
+    rg.textContent = p._imgRunning ? '↻ 重画中…' : '↻ 重画插画';
+    rg.disabled = !!p._imgRunning;
+    rg.onclick = function(){ regenBedtimeImage(i); };
+    card.appendChild(img); card.appendChild(txt); card.appendChild(aud); card.appendChild(dl); card.appendChild(rg);
     pg.appendChild(card);
   });
+  /* 插画生成进行中：禁用批量按钮，避免起第二条链抢写同一批页面 */
+  var gi = $('bed-gen-img'), ga = $('bed-regen-img-all');
+  if(gi) gi.disabled = !!bt._genImgRunning;
+  if(ga) ga.disabled = !!bt._genImgRunning;
   saveBedtime();                              /* v2.56：每次渲染即落盘，文字/图片随刷新保留 */
 }
 initBedtimeState();
