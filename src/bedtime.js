@@ -429,13 +429,43 @@ function genBedtimeImage(p, idx){
   };
   /* 角色设定图作为参考图传入（主流程副图同款机制）：模型有图可依，人物才不漂移 */
   if(bt.charRefURL) body.extra_body.image = [bt.charRefURL];
-  return apiPostAgnes(cfg.agnesBase + '/images/generations', body)
-    .then(function(r){
-      var j = parseJsonSafe(r.text);
-      var url = j && j.data && j.data[0] && (j.data[0].url || (j.data[0].b64_json ? 'data:image/png;base64,' + j.data[0].b64_json : ''));
-      if(r.status >= 400 || !url){ var m = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0, 180); throw new Error('HTTP ' + r.status + ' ' + m); }
-      return url;
-    });
+  /* v2.62：插画提交补齐限流韧性——与 submitAgnesVideo 共用 isApiLimitErr/agnesErrMsg/
+   * retryAfterMs 同一套词表与退避策略（v2.61 只修了视频，插画链路仍是单发一次：
+   * 撞上限流整页直接失败，批量时每一页都去撞一次窗口，「个别插画不成功」就是这么来的）。
+   * 限流/503 → 8s→20s→40s 退避重试（最多 3 次，尊重 Retry-After，±20% 抖动）；
+   * 参数类永久错误不重试；失败透传服务端真实原因 + 行动指引。 */
+  var attempt = 0, max = 3;
+  function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  function tryOnce(){
+    attempt++;
+    return apiPostAgnes(cfg.agnesBase + '/images/generations', body)
+      .then(function(r){
+        var j = parseJsonSafe(r.text);
+        var url = j && j.data && j.data[0] && (j.data[0].url || (j.data[0].b64_json ? 'data:image/png;base64,' + j.data[0].b64_json : ''));
+        if(url){ bedCoolClear(); return url; }                       /* 请求成功 = 窗口已开 */
+        if(r.status >= 400 && !isRetryableVideoErr(r, r.text)){ throw new Error('HTTP ' + r.status + ' ' + agnesErrMsg(j, r)); }
+        if(isRetryableVideoErr(r, r.text) && attempt < max){
+          var limit = isApiLimitErr(r, r.text);
+          var base = limit ? Math.min(60000, 8000 * Math.pow(2, attempt - 1))    // 限流：8s→20s→40s
+                           : Math.min(20000, 3000 * Math.pow(2, attempt - 1));   // 队列忙：3s→6s→12s
+          var ra = limit ? retryAfterMs(r, 0) : 0;
+          var backoff = ra > 0 ? ra : Math.round(base * (0.8 + Math.random() * 0.4));
+          if(limit) bedCoolSet(60000);                                     /* 告诉批量循环：账号在窗口内，别再连发 */
+          bt.status = (limit ? '已触发 API 限流' : '插画服务繁忙') + '，' + Math.round(backoff / 1000) + 's 后重试（' + attempt + '/' + max + '）…';
+          renderBedtime();
+          return wait(backoff).then(tryOnce);
+        }
+        var msg = agnesErrMsg(j, r);
+        if(isApiLimitErr(r, r.text)){
+          throw new Error('API 速率限制：' + msg + '。免费账号有速率限额，请等待 1-2 分钟后重试（不会重复计费），或升级 Token Plan');
+        }
+        throw new Error('HTTP ' + (r ? r.status : '?') + ' ' + msg);
+      }, function(e){
+        /* 网络层失败：没有响应就无法确认服务端是否已开始画，重试可能重复计费——不重试 */
+        throw new Error('插画请求未得到响应（' + (e && e.message ? e.message : e) + '）。请稍后重试。');
+      });
+  }
+  return tryOnce();
 }
 /* v2.59：插画「续生成」计划（纯函数，便于单测）：
  * 默认只挑「没有插画」「上次生成失败（imgErr）」或「只有演示占位图」的页——个别插画失败时，
@@ -448,6 +478,33 @@ function bedImgPlan(bt, forceAll){
     if(forceAll || !bedIsRealImg(p.imgURL) || p.imgErr) plan.push(i); else skipped++;
   });
   return { plan:plan, skipped:skipped };
+}
+/* v2.62：账号级「API 限流冷却」——限流是账号维度，不是故事维度，所以存全局 key；
+ * 且必须落盘：v2.61 的运行态变量一刷新页面就忘，恢复后立刻又撞窗口。
+ * - bedCoolLeft()：还剩多少毫秒（0 = 不在冷却期）
+ * - bedCoolSet(ms)：进入/延长冷却（取「现在+ms」与已有截止时间的较大值，重复失败会越等越久）
+ * - bedCoolClear()：任意一次请求成功就证明窗口已开，立刻解除冷却
+ * - bedWaitCool(what, isImg)：冷却中 → 状态行倒计时并自动等到点，不需要用户自己算时间 */
+function bedCoolUntilRaw(){
+  try{ return Number(localStorage.getItem(LS + 'bedcool')) || 0; }catch(e){ return 0; }
+}
+function bedCoolLeft(){
+  var left = bedCoolUntilRaw() - Date.now();
+  return left > 0 ? left : 0;
+}
+function bedCoolSet(ms){
+  var until = Math.max(Date.now() + (Number(ms) || 0), bedCoolUntilRaw());
+  try{ lsSet(LS + 'bedcool', String(until), { warn:false }); }catch(e){}
+}
+function bedCoolClear(){ try{ lsSet(LS + 'bedcool', '0', { warn:false }); }catch(e){} }
+function bedWaitCool(what, isImg){
+  var left = bedCoolLeft();
+  if(!left) return Promise.resolve();
+  var bt = state.bedtime;
+  var msg = what + '：API 限流冷却中（剩余 ' + Math.ceil(left / 1000) + 's），将自动继续…';
+  if(isImg) bt.status = msg; else bt.videoStatus = msg;
+  renderBedtime();
+  return new Promise(function(res){ setTimeout(res, left); });
 }
 function genBedtimeImages(forceAll){
   var bt = state.bedtime, myId = bt.id;
@@ -469,30 +526,59 @@ function genBedtimeImages(forceAll){
   bt._genImgRunning = true;
   bt.status = label + '中…（' + pl.skipped + ' 张已成功跳过，本次生成 ' + pl.plan.length + ' 张）';
   renderBedtime();
+  var limitStreak = 0, aborted = false, attempted = 0, runOk = 0, runFail = 0;
   var kick = function(){
     if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }
+    var finish = function(){
+      bt._genImgRunning = false;
+      var failN = bt.pages.filter(function(p){ return p.imgErr; }).length;
+      var leftN = pl.plan.length - attempted;      /* 本次还没轮到的页（早停时 > 0） */
+      if(aborted){
+        bt.status = '绘本插画已因 API 速率限制暂停（本次成功 ' + runOk + ' 张，剩余 ' + leftN + ' 张未尝试）— 免费账号有速率限额，请等 1-2 分钟再点 ②（只补剩余的），或升级 Token Plan';
+        toast('连续 ' + limitStreak + ' 张插画因 API 速率限制失败，已暂停整批（剩余 ' + leftN + ' 张未尝试）。请等 1-2 分钟再点 ② 只补剩余页（不会重复计费），或升级 Token Plan');
+      }
+      else if(failN){
+        bt.status = '绘本插画完成（' + failN + ' 张失败）— 再次点击 ② 只重试失败页，或点单页「↻ 重画插画」';
+        toast('绘本插画完成，' + failN + ' 张失败（再点 ② 只重试失败页）');
+      }
+      else {
+        bt.status = '绘本插画完成（' + bt.pages.length + ' 页全部成功）';
+        toast('绘本插画完成');
+      }
+      renderBedtime();
+    };
     var run = function(k){
       if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }   /* 已切换到其它故事 → 中止，避免串档 */
-      if(k >= pl.plan.length){
-        bt._genImgRunning = false;
-        var failN = bt.pages.filter(function(p){ return p.imgErr; }).length;
-        bt.status = failN
-          ? ('绘本插画完成（' + failN + ' 张失败）— 再次点击 ② 只重试失败页，或点单页「↻ 重画插画」')
-          : '绘本插画完成（' + bt.pages.length + ' 页全部成功）';
+      if(aborted || k >= pl.plan.length){ finish(); return; }
+      /* v2.62：账号级冷却等待——上一页撞了限流，硬发下一页只会继续被限；
+         冷却已落盘，刷新页面/切换故事后回来依然有效 */
+      var left = bedCoolLeft();
+      if(left){
+        bt.status = '已触发 API 限流，冷却 ' + Math.ceil(left / 1000) + 's 后继续…';
         renderBedtime();
-        toast(failN ? ('绘本插画完成，' + failN + ' 张失败（再点 ② 只重试失败页）') : '绘本插画完成');
+        setTimeout(function(){ run(k); }, left);
         return;
       }
       var i = pl.plan[k], p = bt.pages[i];
+      attempted++;
       p._imgRunning = true;
       bt.status = label + '中…（第 ' + (i + 1) + ' 页，' + (k + 1) + '/' + pl.plan.length + (pl.skipped ? '，已跳过 ' + pl.skipped + ' 张' : '') + '）';
       renderBedtime();
       genBedtimeImage(p, i).then(function(url){
         if(state.bedtimeId !== myId) return;
-        p._imgRunning = false; p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1);
+        p._imgRunning = false; p.imgURL = url; p.imgErr = ''; limitStreak = 0; runOk++; renderBedtime(); run(k + 1);
       }).catch(function(e){
         if(state.bedtimeId !== myId) return;
-        console.error(e); p._imgRunning = false; p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1);
+        console.error(e); p._imgRunning = false; p.imgErr = guessCorsMsg(e); runFail++;
+        /* v2.62：连续 2 页限流失败 → 早停。窗口明显没恢复，把剩余页全撞一遍只是浪费
+           几分钟时间和更多 429；停下来说明原因，用户等窗口过去再点 ② 只补剩余页 */
+        if(isApiLimitErr(null, p.imgErr)){
+          limitStreak++;
+          bedCoolSet(limitStreak >= 2 ? 120000 : 60000);
+          if(limitStreak >= 2) aborted = true;
+        }
+        else limitStreak = 0;
+        renderBedtime(); run(k + 1);
       });
     };
     run(0);
@@ -517,19 +603,24 @@ function regenBedtimeImage(i){
   bt._genImgRunning = true;
   var kick = function(){
     if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }
-    p._imgRunning = true; p.imgErr = '';
-    bt.status = '正在重画第 ' + (i + 1) + ' 页插画…'; renderBedtime();
-    genBedtimeImage(p, i).then(function(url){
-      bt._genImgRunning = false;
-      if(state.bedtimeId !== myId) return;
-      p._imgRunning = false; p.imgURL = url; p.imgErr = '';
-      bt.status = '第 ' + (i + 1) + ' 页插画已重画'; renderBedtime(); toast('第 ' + (i + 1) + ' 页插画已重画');
-    }).catch(function(e){
-      bt._genImgRunning = false;
-      if(state.bedtimeId !== myId) return;
-      console.error(e); p._imgRunning = false; p.imgErr = guessCorsMsg(e);
-      bt.status = '第 ' + (i + 1) + ' 页插画重画失败（' + p.imgErr + '）'; renderBedtime();
-      toast('第 ' + (i + 1) + ' 页插画重画失败：' + p.imgErr);
+    /* v2.62：仍在限流冷却期 → 倒计时自动等到点再画（单页重画是明确动作，但不能拿去撞窗口） */
+    bedWaitCool('重画第 ' + (i + 1) + ' 页插画', true).then(function(){
+      if(state.bedtimeId !== myId){ bt._genImgRunning = false; return; }
+      p._imgRunning = true; p.imgErr = '';
+      bt.status = '正在重画第 ' + (i + 1) + ' 页插画…'; renderBedtime();
+      genBedtimeImage(p, i).then(function(url){
+        bt._genImgRunning = false;
+        if(state.bedtimeId !== myId) return;
+        p._imgRunning = false; p.imgURL = url; p.imgErr = '';
+        bt.status = '第 ' + (i + 1) + ' 页插画已重画'; renderBedtime(); toast('第 ' + (i + 1) + ' 页插画已重画');
+      }).catch(function(e){
+        bt._genImgRunning = false;
+        if(state.bedtimeId !== myId) return;
+        console.error(e); p._imgRunning = false; p.imgErr = guessCorsMsg(e);
+        if(isApiLimitErr(null, p.imgErr)) bedCoolSet(60000);
+        bt.status = '第 ' + (i + 1) + ' 页插画重画失败（' + p.imgErr + '）'; renderBedtime();
+        toast('第 ' + (i + 1) + ' 页插画重画失败：' + p.imgErr);
+      });
     });
   };
   if(!bt.charRefURL){
@@ -620,10 +711,11 @@ function pollAgnesClip(videoId){
           }
           else if(st === 'failed' || st === 'error' || st === 'canceled' || st === 'cancelled' || st === 'aborted'){ reject(new Error((j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0,160))); }
           else {
-            /* v2.61：查询也被限流（429/503 或中文限流文案）时拉长间隔——轮询不计费，
-               没必要在速率窗口内每 3.5s 连打；任务本身还在后台跑，恢复后自然取到成品 */
-            var limited = (r.status === 429 || r.status === 503) || /限流|速率限制|rate|quota|too many/i.test(String(r.text || ''));
-            setTimeout(tick, limited ? 8000 : 3500);
+            /* v2.62：查询也被限流时拉长间隔（统一 isApiLimitErr 词表；服务端给了
+               Retry-After 就照办，封顶 15s）——轮询不计费，没必要在速率窗口内连打；
+               任务本身还在后台跑，恢复后自然取到成品 */
+            var limited = isApiLimitErr(r, r.text);
+            setTimeout(tick, limited ? Math.min(15000, Math.max(8000, retryAfterMs(r, 0))) : 3500);
           }
         })
         .catch(function(e){ if(tries > 3) reject(e); else setTimeout(tick, 3500); });
@@ -895,6 +987,15 @@ function pollBedVshot(i){
       .then(function(r){
         if(state.bedtimeId !== myId){ stopBedVshotPoll(i); return; }
         if(r.status >= 400){
+          /* v2.62：查询被限流——任务还在后台跑，不计失败、放慢节奏继续等
+             （原来 3 次 429 就把在途镜标成「失败」，用户只能整镜重做，白等一场） */
+          if(isApiLimitErr(r, r.text)){
+            if(bedPollers[i]){
+              stopBedVshotPoll(i);
+              bedPollers[i] = setInterval(tick, Math.min(15000, Math.max(8000, retryAfterMs(r, 0))));
+            }
+            return;
+          }
           if(tries > 3){ stopBedVshotPoll(i); cur.vstat = '失败'; cur.vidErr = '查询失败（HTTP ' + r.status + '）'; renderBedtime(); }
           return;
         }
@@ -955,25 +1056,31 @@ function runBedVshotBatch(){
     renderBedtime(); toast('短视频已全部生成，没有失败镜需要重试');
     return;
   }
-  var done = done0, failed = 0;
+  var done = done0, failed = 0, limitStreak = 0, aborted = false;
   bt._genVidRunning = true;
   bt.videoStatus = '生成中… (' + done + '/' + total + ')';
   renderBedtime();
-  var chain = Promise.resolve();
   function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  /* v2.62：开局先等过账号级冷却——可能是上一批、甚至另一个故事刚撞了限流
+   * （冷却落盘在全局 key，刷新/切故事都不丢），这时候硬开跑只会整批继续被限 */
+  bedWaitCool('生成短视频').then(function(){
+    if(state.bedtimeId !== myId){ bt._genVidRunning = false; return; }
+    startChain();
+  });
+  function startChain(){
+  var chain = Promise.resolve();
   plan.forEach(function(i){
     chain = chain.then(function(){
       if(state.bedtimeId !== myId) return Promise.resolve();      /* 已切换到其它故事 → 中止，避免串档 */
       var v = state.bedtime.vshots[i]; if(!v) return Promise.resolve();
-      /* v2.61：镜间节流——上一镜若因限流失败，说明账号还在速率窗口内，立即提交下一镜
-       * 只会继续被限（真实案例：整批一个都没成功）；限流失败后整批冷却 60s 跨窗口，
-       * 正常情况每镜间隔 2s，降低连续触发概率。 */
-      var cool = bt._vidCoolMs || 0;
-      bt._vidCoolMs = 0;
-      if(cool){
-        bt.videoStatus = '已触发 API 限流，冷却 ' + Math.round(cool / 1000) + 's 后继续…';
+      if(aborted) return Promise.resolve();                       /* v2.62：连续限流早停 → 剩余镜不再硬撞窗口 */
+      /* v2.62：镜间节流——上一镜若因限流失败，说明账号还在速率窗口内，立即提交下一镜
+       * 只会继续被限（真实案例：整批一个都没成功）；等过冷却期再发。 */
+      var left = bedCoolLeft();
+      if(left){
+        bt.videoStatus = '已触发 API 限流，冷却 ' + Math.ceil(left / 1000) + 's 后继续…';
         renderBedtime();
-        return wait(cool).then(runOne);
+        return wait(left).then(runOne);
       }
       return runOne();
       function runOne(){
@@ -989,18 +1096,24 @@ function runBedVshotBatch(){
           }
         }).then(function(vid){
           if(state.bedtimeId !== myId) return;
-          v.taskId = String(vid); renderBedtime();
+          v.taskId = String(vid); bedCoolClear(); renderBedtime();   /* v2.62：提交成功 = 窗口已开，解除冷却 */
           return pollAgnesClip(v.taskId);
         }).then(function(url){
           if(state.bedtimeId !== myId) return;
-          v.vstat = '已完成'; v.vidURL = url; v.vidErr = ''; done++;
+          v.vstat = '已完成'; v.vidURL = url; v.vidErr = ''; done++; limitStreak = 0;
           bt.videoStatus = '生成中… (' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + ')';
           renderBedtime();
         }).catch(function(e){
           if(state.bedtimeId !== myId) return;
           console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e); failed++;
-          /* 限流失败 → 标记整批冷却，别让后续镜继续撞窗口 */
-          if(/限流|速率限制/.test(v.vidErr || '')) bt._vidCoolMs = 60000;
+          /* v2.62：限流失败 → 进入/延长账号级冷却（连续失败越等越久：60s→120s）；
+             连续 2 镜都因限流失败 → 早停：窗口明显没恢复，把剩余镜全撞一遍只是浪费 */
+          if(isApiLimitErr(null, v.vidErr)){
+            limitStreak++;
+            bedCoolSet(limitStreak >= 2 ? 120000 : 60000);
+            if(limitStreak >= 2) aborted = true;
+          }
+          else limitStreak = 0;
           bt.videoStatus = '生成中… (' + done + '/' + total + '，' + failed + ' 镜失败)';
           renderBedtime();
         });
@@ -1012,18 +1125,25 @@ function runBedVshotBatch(){
     bt._genVidRunning = false;
     var ok = bt.vshots.filter(function(v){ return v.vidURL; }).length;
     var bad = bt.vshots.filter(function(v){ return v.vstat === '失败'; }).length;
-    bt.videoStatus = bad
-      ? ('短视频生成完成（成功 ' + ok + '/' + total + ' 镜，' + bad + ' 镜失败）— 再点 ④ 只重试失败镜，或点单镜「↻ 重做此镜」')
-      : ('短视频生成完成（' + ok + '/' + total + ' 镜 · 画外旁白 + 自然环境声 + 摇篮曲背景音乐）');
-    renderBedtime();
-    if(bad){
-      var limited = bt.vshots.some(function(v){ return v.vstat === '失败' && /限流|速率限制/.test(v.vidErr || ''); });
+    var leftN = Math.max(0, total - ok - bad);
+    if(aborted){
+      bt.videoStatus = '短视频已因 API 速率限制暂停（成功 ' + ok + '/' + total + ' 镜，剩余 ' + leftN + ' 镜未尝试）— 免费账号有速率限额，请等 1-2 分钟再点 ④（只补未生成的镜），或升级 Token Plan';
+      toast('连续 ' + limitStreak + ' 镜因 API 速率限制失败，已暂停整批（剩余 ' + leftN + ' 镜未尝试）。请等 1-2 分钟再点 ④ 只补剩余镜（不会重复计费），或升级 Token Plan');
+    }
+    else if(bad){
+      bt.videoStatus = '短视频生成完成（成功 ' + ok + '/' + total + ' 镜，' + bad + ' 镜失败）— 再点 ④ 只重试失败镜，或点单镜「↻ 重做此镜」';
+      var limited = bt.vshots.some(function(v){ return v.vstat === '失败' && isApiLimitErr(null, v.vidErr || ''); });
       toast(limited
         ? ('短视频生成完成，' + bad + ' 镜因 API 速率限制失败。免费账号有速率限额——请等 1-2 分钟再点 ④（只补失败镜），或升级 Token Plan')
         : ('短视频生成完成，' + bad + ' 镜失败（再点 ④ 只重试失败镜）'));
     }
-    else toast('睡前故事短视频生成完成');
+    else {
+      bt.videoStatus = '短视频生成完成（' + ok + '/' + total + ' 镜 · 画外旁白 + 自然环境声 + 摇篮曲背景音乐）';
+      toast('睡前故事短视频生成完成');
+    }
+    renderBedtime();
   });
+  }
 }
 /* 单镜重做：只重做这一镜（对某镜不满意/该镜失败），不影响其它镜 */
 function regenBedVshot(i){
@@ -1036,27 +1156,33 @@ function regenBedVshot(i){
   bt._genVidRunning = true;
   v.vstat = '排队中'; v.vidErr = ''; v.vidURL = ''; v.taskId = '';
   bt.videoStatus = '正在重做第 ' + (i + 1) + ' 镜…'; renderBedtime();
-  submitAgnesVideo(bedVideoBody(v), {
-    onWait: function(a, backoff, mx, kind){
+  /* v2.62：仍在限流冷却期 → 倒计时自动等到点再提交（单镜重做是明确动作，但不拿去撞窗口） */
+  bedWaitCool('重做第 ' + (i + 1) + ' 镜').then(submitOne);
+  function submitOne(){
+    if(state.bedtimeId !== myId){ bt._genVidRunning = false; return; }
+    submitAgnesVideo(bedVideoBody(v), {
+      onWait: function(a, backoff, mx, kind){
+        if(state.bedtimeId !== myId) return;
+        bt.videoStatus = (kind === 'limit' ? '已触发 API 限流' : '队列已满') + '，退避重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+      }
+    }).then(function(vid){
       if(state.bedtimeId !== myId) return;
-      bt.videoStatus = (kind === 'limit' ? '已触发 API 限流' : '队列已满') + '，退避重试中 (' + a + '/' + mx + ')…'; renderBedtime();
-    }
-  }).then(function(vid){
-    if(state.bedtimeId !== myId) return;
-    v.taskId = String(vid); renderBedtime();
-    return pollAgnesClip(v.taskId);
-  }).then(function(url){
-    bt._genVidRunning = false;
-    if(state.bedtimeId !== myId) return;
-    v.vstat = '已完成'; v.vidURL = url; v.vidErr = '';
-    bt.videoStatus = '第 ' + (i + 1) + ' 镜已生成'; renderBedtime(); toast('第 ' + (i + 1) + ' 镜短视频已生成');
-  }).catch(function(e){
-    bt._genVidRunning = false;
-    if(state.bedtimeId !== myId) return;
-    console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e);
-    bt.videoStatus = '第 ' + (i + 1) + ' 镜失败（' + v.vidErr + '）'; renderBedtime();
-    toast('第 ' + (i + 1) + ' 镜失败：' + v.vidErr);
-  });
+      v.taskId = String(vid); bedCoolClear(); renderBedtime();
+      return pollAgnesClip(v.taskId);
+    }).then(function(url){
+      bt._genVidRunning = false;
+      if(state.bedtimeId !== myId) return;
+      v.vstat = '已完成'; v.vidURL = url; v.vidErr = '';
+      bt.videoStatus = '第 ' + (i + 1) + ' 镜已生成'; renderBedtime(); toast('第 ' + (i + 1) + ' 镜短视频已生成');
+    }).catch(function(e){
+      bt._genVidRunning = false;
+      if(state.bedtimeId !== myId) return;
+      console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e);
+      if(isApiLimitErr(null, v.vidErr)) bedCoolSet(60000);
+      bt.videoStatus = '第 ' + (i + 1) + ' 镜失败（' + v.vidErr + '）'; renderBedtime();
+      toast('第 ' + (i + 1) + ' 镜失败：' + v.vidErr);
+    });
+  }
 }
 /* 成片片段清单：新分镜优先；没有新分镜才回落旧版按页切片 */
 function bedMovieList(){

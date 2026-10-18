@@ -29,14 +29,21 @@ function apiFetch(url, opts, timeoutMs){
 }
 function apiGet(url, key){
   return apiFetch(url, { method:'GET', headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' } })
-    .then(function(r){ return r.text().then(function(t){ return { status:r.status, text:t }; }); });
+    .then(function(r){ return r.text().then(function(t){ return { status:r.status, text:t, headers:hdrObj(r.headers) }; }); });
+}
+/* v2.62：响应对象带 headers（小写键名普通对象）——限流时服务端常用 Retry-After
+   告诉客户端该等多久，原来把头丢了只能瞎猜退避时长。 */
+function hdrObj(h){
+  var o = {};
+  try{ if(h && typeof h.forEach === 'function') h.forEach(function(v, k){ o[String(k).toLowerCase()] = v; }); }catch(e){}
+  return o;
 }
 function apiPost(url, key, body){
   return apiFetch(url, {
     method:'POST',
     headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
     body: JSON.stringify(body)
-  }).then(function(r){ return r.text().then(function(t){ return { status:r.status, text:t }; }); });
+  }).then(function(r){ return r.text().then(function(t){ return { status:r.status, text:t, headers:hdrObj(r.headers) }; }); });
 }
 function parseJsonSafe(t){ try{ return JSON.parse(t); }catch(e){ return null; } }
 
@@ -1056,15 +1063,40 @@ function startPoll(id){
   pollers[id] = setInterval(tick, 3500);
   tick();
 }
+/* v2.62：统一「限流」判定——视频提交退避策略、睡前故事批量冷却/早停、插画重试
+ * 共用同一处词表。v2.61 的教训：api.js 与 bedtime.js 各写一套正则，词表一分叉就出现
+ * 「视频链路认得中文限流、插画链路不认」的半修复状态。 */
+function isApiLimitErr(r, text){
+  if(r && (r.status === 429 || r.status === 503)) return true;                     // 限流 / 服务暂不可用
+  if(r && r.headers && r.headers['retry-after']) return true;                      // 服务端显式要求限速
+  var t = String(text || '');
+  return /限流|速率限制|rate[_\s-]?limit|too[_\s-]?many|quota|请求过于频繁|触发限流/i.test(t);
+}
+/* 瞬时错误（可重试）：限流类 + 队列满。视频提交与插画提交共用这一个判定。 */
 function isRetryableVideoErr(r, text){
-  var t = (text || '').toLowerCase();
-  if(r && (r.status === 429 || r.status === 503)) return true;                       // 限流 / 服务暂不可用
-  if(/video_queue_full|queue_full|队列已满/.test(t)) return true;                     // 队列满（官方明确「请稍后重试」）
-  /* v2.61：补中文限流文案——免费用户限流原文是「您已达到免费用户的 API 速率限制」，
-     旧词表只有 rate limit/too_many_requests/触发限流，这条 200 响应匹配不上，
-     被当成非瞬时错误直接失败（真实案例：睡前故事短视频整批一个都没成功） */
-  if(/rate[_\s-]?limit|too[_\s-]?many|请求过于频繁|触发限流|限流|速率限制|quota/.test(t)) return true;
-  return false;
+  if(isApiLimitErr(r, text)) return true;
+  return /video_queue_full|queue_full|队列已满/.test(String(text || '').toLowerCase());   // 队列满（官方明确「请稍后重试」）
+}
+/* 服务端错误信息提取：Agnes 把原因放在 {error:{message}} / {message} / {detail}；
+   提取不到才回落原文截断——失败时必须让用户看到真实原因，而不是一坨 JSON。 */
+function agnesErrMsg(j, r){
+  var m = j && (j.error && (j.error.message || j.error) || j.message || j.detail);
+  if(typeof m === 'string' && m.trim()) return m.trim();
+  if(m && typeof m === 'object'){ try{ return JSON.stringify(m); }catch(e){} }
+  return String((r && r.text) || '').slice(0, 180);
+}
+/* Retry-After 响应头 → 毫秒：支持「120 秒」与 HTTP-date 两种格式；
+   无头/非法值回落 def；clamp 到 [5s, 120s]——免费账号窗口按分钟计，等更久没有意义。 */
+function retryAfterMs(r, def){
+  if(!r || !r.headers) return def;
+  var ra = r.headers['retry-after'];
+  if(!ra) return def;
+  ra = String(ra).trim();
+  var ms = 0;
+  if(/^\d+$/.test(ra)) ms = parseInt(ra, 10) * 1000;
+  else { var t = Date.parse(ra); if(!isNaN(t)) ms = t - Date.now(); }
+  if(!(ms > 0)) return def;
+  return Math.min(120000, Math.max(5000, ms));
 }
 /* v2.55：Agnes 视频任务创建对「队列已满 / 限流」类瞬时错误做指数退避重试。
    官方文档：video_queue_full 属服务端过载（队列满，请稍后重试），非参数校验错误，应重试而非判失败；
@@ -1078,24 +1110,12 @@ function submitAgnesVideo(body, opts){
   opts = opts || {};
   var max = opts.max || 6;                                   // v2.61：限流时一轮重试要跨过按分钟计的速率窗口，5 次不够 → 6
   var onWait = opts.onWait || function(){};
+  var rnd = opts.rnd || Math.random;                         // v2.62：抖动源可注入（测试确定性）
   var attempt = 0;
   function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
-  /* v2.61：服务端错误信息透传。 Agnes 把限流放在 {error:{message}} / {message} / {detail}，
-     原来最终失败只抛「未取到 video_id：{原文}」——用户看到的是接口异常，
-     看不到「免费用户速率限制」这个真实原因，也不知道该等待还是该升级套餐。 */
-  function srvErrMsg(j, r){
-    var m = j && (j.error && (j.error.message || j.error) || j.message || j.detail);
-    if(typeof m === 'string' && m.trim()) return m.trim();
-    if(m && typeof m === 'object'){ try{ return JSON.stringify(m); }catch(e){} }
-    return String((r && r.text) || '').slice(0, 180);
-  }
-  /* 限流类（429/503 或命中限流词）：免费账号速率窗口通常按分钟计，
-     2s→4s→8s→16s→30s 的五连击全部落在同一窗口内必全军覆没（整批一个都没成功的根因）——
-     限流改用 10s→20s→40s→60s→60s 长退避跨窗口；队列满等其它瞬时错误保持短退避。 */
-  function isLimit(r, text){
-    if(r && (r.status === 429 || r.status === 503)) return true;
-    return /限流|速率限制|rate|quota|too many|too_many/i.test(String(text || ''));
-  }
+  /* v2.62：退避加 ±20% 抖动——多个标签页/多个故事同时重试时，固定间隔会一起恢复、
+     又把刚打开的窗口打满；抖开后各自错开。 */
+  function jitter(ms){ return Math.round(ms * (0.8 + rnd() * 0.4)); }
   function tryOnce(){
     attempt++;
     return apiPostAgnes(cfg.agnesBase + '/videos', body).then(function(r){
@@ -1104,19 +1124,24 @@ function submitAgnesVideo(body, opts){
       if(vid) return vid;
       /* 永久 HTTP 校验错误（size/images/audios 超限等）：不重试，原样抛 HTTP 错误 */
       if(r.status >= 400 && !isRetryableVideoErr(r, r.text)){
-        throw new Error('HTTP ' + r.status + ' ' + srvErrMsg(j, r));
+        throw new Error('HTTP ' + r.status + ' ' + agnesErrMsg(j, r));
       }
       /* 瞬时错误（有响应：队列满/限流/503；注意限流也可能是 200 + {error}）且未达上限：退避后重试 */
       if(isRetryableVideoErr(r, r.text) && attempt < max){
-        var limit = isLimit(r, r.text);
-        var backoff = limit ? Math.min(60000, 10000 * Math.pow(2, attempt - 1))   // 限流：10s→20s→40s→60s→60s
-                            : Math.min(30000, 2000 * Math.pow(2, attempt - 1));  // 队列满：2s→4s→8s→16s→30s
+        var limit = isApiLimitErr(r, r.text);
+        /* 限流：免费账号速率窗口按分钟计，2s→4s→8s→16s→30s 全落在同一窗口内必全军覆没
+           （整批一个都没成功的根因）——改用 10s→20s→40s→60s→60s 跨窗口长退避；
+           服务端给了 Retry-After 就照办（比我们猜的准）。队列满等其它瞬时错误保持短退避。 */
+        var base = limit ? Math.min(60000, 10000 * Math.pow(2, attempt - 1))     // 限流：10s→20s→40s→60s→60s
+                         : Math.min(30000, 2000 * Math.pow(2, attempt - 1));    // 队列满：2s→4s→8s→16s→30s
+        var ra = limit ? retryAfterMs(r, 0) : 0;
+        var backoff = ra > 0 ? ra : jitter(base);
         onWait(attempt, backoff, max, limit ? 'limit' : 'queue');
         return wait(backoff).then(tryOnce);
       }
       /* 已达上限或非瞬时：透传服务端真实原因；限流类附行动指引 */
-      var msg = srvErrMsg(j, r);
-      if(isLimit(r, r.text)){
+      var msg = agnesErrMsg(j, r);
+      if(isApiLimitErr(r, r.text)){
         throw new Error('API 速率限制：' + msg + '。免费账号有速率限额，请等待 1-2 分钟后重试（不会重复计费），或升级 Token Plan');
       }
       throw new Error('视频提交失败：' + msg);
