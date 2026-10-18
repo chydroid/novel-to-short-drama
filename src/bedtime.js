@@ -619,7 +619,12 @@ function pollAgnesClip(videoId){
             resolve(url);
           }
           else if(st === 'failed' || st === 'error' || st === 'canceled' || st === 'cancelled' || st === 'aborted'){ reject(new Error((j && (j.error || j.message)) ? JSON.stringify(j.error || j.message) : (r.text || '').slice(0,160))); }
-          else setTimeout(tick, 3500);
+          else {
+            /* v2.61：查询也被限流（429/503 或中文限流文案）时拉长间隔——轮询不计费，
+               没必要在速率窗口内每 3.5s 连打；任务本身还在后台跑，恢复后自然取到成品 */
+            var limited = (r.status === 429 || r.status === 503) || /限流|速率限制|rate|quota|too many/i.test(String(r.text || ''));
+            setTimeout(tick, limited ? 8000 : 3500);
+          }
         })
         .catch(function(e){ if(tries > 3) reject(e); else setTimeout(tick, 3500); });
     };
@@ -650,9 +655,9 @@ function genOneClip(p, seg){
   };
   /* 队列满 / 限流是瞬时错误，submitAgnesVideo 会自动退避重试；重试期间回写状态让用户知道在等待而非卡死 */
   return submitAgnesVideo(body, {
-    onWait: function(a, backoff, mx){
+    onWait: function(a, backoff, mx, kind){
       var bt = state.bedtime;
-      bt.videoStatus = '队列已满，重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+      bt.videoStatus = (kind === 'limit' ? '已触发 API 限流' : '队列已满') + '，退避重试中 (' + a + '/' + mx + ')…'; renderBedtime();
     }
   }).then(function(vid){ return pollAgnesClip(vid); });
 }
@@ -955,33 +960,51 @@ function runBedVshotBatch(){
   bt.videoStatus = '生成中… (' + done + '/' + total + ')';
   renderBedtime();
   var chain = Promise.resolve();
+  function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
   plan.forEach(function(i){
     chain = chain.then(function(){
       if(state.bedtimeId !== myId) return Promise.resolve();      /* 已切换到其它故事 → 中止，避免串档 */
-      var v = state.bedtime.vshots[i]; if(!v) return;
-      v.vstat = '排队中'; v.vidErr = '';
-      bt.videoStatus = '生成中…（第 ' + (i + 1) + ' 镜，' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + '）';
-      renderBedtime();
-      return submitAgnesVideo(bedVideoBody(v), {
-        onWait: function(a, backoff, mx){
+      var v = state.bedtime.vshots[i]; if(!v) return Promise.resolve();
+      /* v2.61：镜间节流——上一镜若因限流失败，说明账号还在速率窗口内，立即提交下一镜
+       * 只会继续被限（真实案例：整批一个都没成功）；限流失败后整批冷却 60s 跨窗口，
+       * 正常情况每镜间隔 2s，降低连续触发概率。 */
+      var cool = bt._vidCoolMs || 0;
+      bt._vidCoolMs = 0;
+      if(cool){
+        bt.videoStatus = '已触发 API 限流，冷却 ' + Math.round(cool / 1000) + 's 后继续…';
+        renderBedtime();
+        return wait(cool).then(runOne);
+      }
+      return runOne();
+      function runOne(){
+        if(state.bedtimeId !== myId) return Promise.resolve();
+        v = state.bedtime.vshots[i]; if(!v) return Promise.resolve();
+        v.vstat = '排队中'; v.vidErr = '';
+        bt.videoStatus = '生成中…（第 ' + (i + 1) + ' 镜，' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + '）';
+        renderBedtime();
+        return submitAgnesVideo(bedVideoBody(v), {
+          onWait: function(a, backoff, mx, kind){
+            if(state.bedtimeId !== myId) return;
+            bt.videoStatus = (kind === 'limit' ? '已触发 API 限流' : '队列已满') + '，退避重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+          }
+        }).then(function(vid){
           if(state.bedtimeId !== myId) return;
-          bt.videoStatus = '队列已满，重试中 (' + a + '/' + mx + ')…'; renderBedtime();
-        }
-      }).then(function(vid){
-        if(state.bedtimeId !== myId) return;
-        v.taskId = String(vid); renderBedtime();
-        return pollAgnesClip(v.taskId);
-      }).then(function(url){
-        if(state.bedtimeId !== myId) return;
-        v.vstat = '已完成'; v.vidURL = url; v.vidErr = ''; done++;
-        bt.videoStatus = '生成中… (' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + ')';
-        renderBedtime();
-      }).catch(function(e){
-        if(state.bedtimeId !== myId) return;
-        console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e); failed++;
-        bt.videoStatus = '生成中… (' + done + '/' + total + '，' + failed + ' 镜失败)';
-        renderBedtime();
-      });
+          v.taskId = String(vid); renderBedtime();
+          return pollAgnesClip(v.taskId);
+        }).then(function(url){
+          if(state.bedtimeId !== myId) return;
+          v.vstat = '已完成'; v.vidURL = url; v.vidErr = ''; done++;
+          bt.videoStatus = '生成中… (' + done + '/' + total + (failed ? '，' + failed + ' 镜失败' : '') + ')';
+          renderBedtime();
+        }).catch(function(e){
+          if(state.bedtimeId !== myId) return;
+          console.error(e); v.vstat = '失败'; v.vidErr = guessCorsMsg(e); failed++;
+          /* 限流失败 → 标记整批冷却，别让后续镜继续撞窗口 */
+          if(/限流|速率限制/.test(v.vidErr || '')) bt._vidCoolMs = 60000;
+          bt.videoStatus = '生成中… (' + done + '/' + total + '，' + failed + ' 镜失败)';
+          renderBedtime();
+        });
+      }
     });
   });
   chain.then(function(){
@@ -993,7 +1016,13 @@ function runBedVshotBatch(){
       ? ('短视频生成完成（成功 ' + ok + '/' + total + ' 镜，' + bad + ' 镜失败）— 再点 ④ 只重试失败镜，或点单镜「↻ 重做此镜」')
       : ('短视频生成完成（' + ok + '/' + total + ' 镜 · 画外旁白 + 自然环境声 + 摇篮曲背景音乐）');
     renderBedtime();
-    toast(bad ? ('短视频生成完成，' + bad + ' 镜失败（再点 ④ 只重试失败镜）') : '睡前故事短视频生成完成');
+    if(bad){
+      var limited = bt.vshots.some(function(v){ return v.vstat === '失败' && /限流|速率限制/.test(v.vidErr || ''); });
+      toast(limited
+        ? ('短视频生成完成，' + bad + ' 镜因 API 速率限制失败。免费账号有速率限额——请等 1-2 分钟再点 ④（只补失败镜），或升级 Token Plan')
+        : ('短视频生成完成，' + bad + ' 镜失败（再点 ④ 只重试失败镜）'));
+    }
+    else toast('睡前故事短视频生成完成');
   });
 }
 /* 单镜重做：只重做这一镜（对某镜不满意/该镜失败），不影响其它镜 */
@@ -1008,9 +1037,9 @@ function regenBedVshot(i){
   v.vstat = '排队中'; v.vidErr = ''; v.vidURL = ''; v.taskId = '';
   bt.videoStatus = '正在重做第 ' + (i + 1) + ' 镜…'; renderBedtime();
   submitAgnesVideo(bedVideoBody(v), {
-    onWait: function(a, backoff, mx){
+    onWait: function(a, backoff, mx, kind){
       if(state.bedtimeId !== myId) return;
-      bt.videoStatus = '队列已满，重试中 (' + a + '/' + mx + ')…'; renderBedtime();
+      bt.videoStatus = (kind === 'limit' ? '已触发 API 限流' : '队列已满') + '，退避重试中 (' + a + '/' + mx + ')…'; renderBedtime();
     }
   }).then(function(vid){
     if(state.bedtimeId !== myId) return;

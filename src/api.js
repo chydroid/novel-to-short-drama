@@ -1060,7 +1060,10 @@ function isRetryableVideoErr(r, text){
   var t = (text || '').toLowerCase();
   if(r && (r.status === 429 || r.status === 503)) return true;                       // 限流 / 服务暂不可用
   if(/video_queue_full|queue_full|队列已满/.test(t)) return true;                     // 队列满（官方明确「请稍后重试」）
-  if(/rate[_\s-]?limit|too_many_requests|触发限流|请求过于频繁/.test(t)) return true;  // 限流类
+  /* v2.61：补中文限流文案——免费用户限流原文是「您已达到免费用户的 API 速率限制」，
+     旧词表只有 rate limit/too_many_requests/触发限流，这条 200 响应匹配不上，
+     被当成非瞬时错误直接失败（真实案例：睡前故事短视频整批一个都没成功） */
+  if(/rate[_\s-]?limit|too[_\s-]?many|请求过于频繁|触发限流|限流|速率限制|quota/.test(t)) return true;
   return false;
 }
 /* v2.55：Agnes 视频任务创建对「队列已满 / 限流」类瞬时错误做指数退避重试。
@@ -1073,10 +1076,26 @@ function isRetryableVideoErr(r, text){
      任务，重试等于重复创建、重复计费。这类错误直接抛出，由上层标记失败、用户知情后再决定。 */
 function submitAgnesVideo(body, opts){
   opts = opts || {};
-  var max = opts.max || 5;                                   // 最多 5 次提交尝试
+  var max = opts.max || 6;                                   // v2.61：限流时一轮重试要跨过按分钟计的速率窗口，5 次不够 → 6
   var onWait = opts.onWait || function(){};
   var attempt = 0;
   function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  /* v2.61：服务端错误信息透传。 Agnes 把限流放在 {error:{message}} / {message} / {detail}，
+     原来最终失败只抛「未取到 video_id：{原文}」——用户看到的是接口异常，
+     看不到「免费用户速率限制」这个真实原因，也不知道该等待还是该升级套餐。 */
+  function srvErrMsg(j, r){
+    var m = j && (j.error && (j.error.message || j.error) || j.message || j.detail);
+    if(typeof m === 'string' && m.trim()) return m.trim();
+    if(m && typeof m === 'object'){ try{ return JSON.stringify(m); }catch(e){} }
+    return String((r && r.text) || '').slice(0, 180);
+  }
+  /* 限流类（429/503 或命中限流词）：免费账号速率窗口通常按分钟计，
+     2s→4s→8s→16s→30s 的五连击全部落在同一窗口内必全军覆没（整批一个都没成功的根因）——
+     限流改用 10s→20s→40s→60s→60s 长退避跨窗口；队列满等其它瞬时错误保持短退避。 */
+  function isLimit(r, text){
+    if(r && (r.status === 429 || r.status === 503)) return true;
+    return /限流|速率限制|rate|quota|too many|too_many/i.test(String(text || ''));
+  }
   function tryOnce(){
     attempt++;
     return apiPostAgnes(cfg.agnesBase + '/videos', body).then(function(r){
@@ -1085,17 +1104,22 @@ function submitAgnesVideo(body, opts){
       if(vid) return vid;
       /* 永久 HTTP 校验错误（size/images/audios 超限等）：不重试，原样抛 HTTP 错误 */
       if(r.status >= 400 && !isRetryableVideoErr(r, r.text)){
-        var msg = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,180);
-        throw new Error('HTTP ' + r.status + ' ' + msg);
+        throw new Error('HTTP ' + r.status + ' ' + srvErrMsg(j, r));
       }
-      /* 瞬时错误（有响应：队列满/限流/503）且未达上限：退避后重试 */
+      /* 瞬时错误（有响应：队列满/限流/503；注意限流也可能是 200 + {error}）且未达上限：退避后重试 */
       if(isRetryableVideoErr(r, r.text) && attempt < max){
-        var backoff = Math.min(30000, 2000 * Math.pow(2, attempt - 1));  // 2s→4s→8s→16s→30s（封顶）
-        onWait(attempt, backoff, max);
+        var limit = isLimit(r, r.text);
+        var backoff = limit ? Math.min(60000, 10000 * Math.pow(2, attempt - 1))   // 限流：10s→20s→40s→60s→60s
+                            : Math.min(30000, 2000 * Math.pow(2, attempt - 1));  // 队列满：2s→4s→8s→16s→30s
+        onWait(attempt, backoff, max, limit ? 'limit' : 'queue');
         return wait(backoff).then(tryOnce);
       }
-      /* 已达上限或非瞬时：抛出未取到 video_id 错误 */
-      throw new Error('未取到 video_id：' + (r.text || '').slice(0,180));
+      /* 已达上限或非瞬时：透传服务端真实原因；限流类附行动指引 */
+      var msg = srvErrMsg(j, r);
+      if(isLimit(r, r.text)){
+        throw new Error('API 速率限制：' + msg + '。免费账号有速率限额，请等待 1-2 分钟后重试（不会重复计费），或升级 Token Plan');
+      }
+      throw new Error('视频提交失败：' + msg);
     }, function(e){
       /* 网络层失败（超时 / 断网 / CORS）：没有响应就无法确认服务端是否已创建任务，
          重试极可能造成重复创建与重复计费 —— 不重试，直接把错误抛给上层。 */
@@ -1122,9 +1146,9 @@ function genVideo(id){
   }
   state.busy[id] = true; refreshAll();
   return submitAgnesVideo(buildVideoBody(s), {
-    onWait: function(a, backoff, mx){
+    onWait: function(a, backoff, mx, kind){
       var sh = shotById(id);
-      if(sh){ sh['视频状态'] = '队列已满，重试中 (' + a + '/' + mx + ')…'; refreshAll(); }
+      if(sh){ sh['视频状态'] = (kind === 'limit' ? '已触发限流' : '队列已满') + '，退避重试中 (' + a + '/' + mx + ')…'; refreshAll(); }
     }
   }).then(function(vid){
     delete state.busy[id];
