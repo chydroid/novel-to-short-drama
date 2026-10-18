@@ -19,6 +19,7 @@ function newBedStoryObj(theme){
     id: 's_' + Date.now() + '_' + Math.floor(Math.random() * 1e6),
     theme: theme || '', title:'', pages:[], age:'3-8 岁', artStyle:'童话水彩绘本',
     voice:'', style:'温柔', ratio:'3:4', pagesN:6,
+    charDesc:'', charRefURL:'', charRefErr:'',   /* v2.58：主角固定外观设定 + 角色设定图（插画一致性的锚） */
     status:'idle', videoURL:'', videoStatus:'', videoTaskId:'', videoErr:'',
     _cur:0, _playing:false, _moviePlaying:false, demo:false, mergedAudioURL:'', mergedCount:0
   };
@@ -89,6 +90,8 @@ function loadBedtimeStory(id, initial){
   o._cur = 0; o._playing = false; o._moviePlaying = false; o.demo = false;
   o.videoURL=''; o.videoStatus=''; o.videoTaskId=''; o.videoErr='';
   o.mergedAudioURL=''; o.mergedCount=0;
+  /* v2.58：角色一致性字段（charRefURL 是远程 URL，可持久化；刷新后继续作为每页插画的参考图） */
+  o.charDesc = o.charDesc || ''; o.charRefURL = o.charRefURL || ''; o.charRefErr = '';
   state.bedtime = o;
   if(!initial) populateBedInputs(o);
   bedtimeReady = true;
@@ -101,6 +104,7 @@ function saveStoryData(bt){
     id: bt.id, theme: bt.theme || '', title: bt.title || '',
     pagesN: bt.pagesN || 6, artStyle: bt.artStyle || '童话水彩绘本', voice: bt.voice || '',
     style: bt.style || '温柔', ratio: bt.ratio || '3:4', age: bt.age || '3-8 岁', status: bt.status || '',
+    charDesc: bt.charDesc || '', charRefURL: bt.charRefURL || '',
     pages: (bt.pages || []).map(function(p){
       var o = { text:p.text||'', imgPrompt:p.imgPrompt||'', imgURL:p.imgURL||'', imgErr:p.imgErr||'', audErr:p.audErr||'', audRemote:!!p.audRemote, audMime:p.audMime||'', clips:(p.clips||[]).slice() };
       if(p.audRemote && p.audURL && p.audURL.indexOf('blob:') !== 0) o.audURL = p.audURL;
@@ -263,7 +267,7 @@ function bedtimeDemoStory(theme){
   ];
   var pages = [];
   for(var i=0;i<n;i++){ var t = arcs[i % arcs.length]; pages.push({ text:t, imgPrompt:'儿童绘本插画，梦幻柔和，' + (theme || '小熊') + '，第 ' + (i + 1) + ' 幕：' + t }); }
-  return { title:title, pages:pages };
+  return { title:title, character:'本故事的主角（' + (theme || '小熊') + '）：圆滚滚的可爱卡通小动物，大而圆的眼睛，柔和的暖色毛发，身穿柔软的星星图案睡衣', pages:pages };
 }
 
 /* -------- 各步骤 -------- */
@@ -283,7 +287,9 @@ function genBedtimeStory(){
   var bt = state.bedtime, target = bt;         /* target 固定指向本次要生成的故事，防生成期间切换串档 */
   if(cfg.textKey){
     var sys = '你是一个儿童睡前故事作家。根据用户的「主题」创作一个温柔、治愈、适合 3-8 岁儿童的睡前故事。'
-      + '请只输出 JSON，格式：{"title":"故事标题","pages":[{"text":"这一页的旁白文字（1-3 句，温暖简短）","imgPrompt":"这一页对应的绘本插画提示词（中文，描述画面、角色、氛围，不要含文字）"}]}。'
+      + '请只输出 JSON，格式：{"title":"故事标题","character":"主角的固定外观设定","pages":[{"text":"这一页的旁白文字（1-3 句，温暖简短）","imgPrompt":"这一页对应的绘本插画提示词（中文，描述画面、角色、氛围，不要含文字）"}]}。'
+      + '「character」是整本绘本唯一的主角外观设定（20-60字）：写清物种/年龄/性别、发型发色、五官特点、服装款式与配色、标志性特征，所有页必须完全一致。'
+      + '每页的 imgPrompt 只描述该页的场景、动作与氛围，严禁改写主角的外观、服装或配色（主角形象以 character 为准，始终保持同一形象）。'
       + '页数由用户指定。不要输出 JSON 以外的任何内容。';
     var user = '主题：' + theme0 + '\n适读年龄：' + (bt.age || '3-8 岁') + '\n页数：' + bt.pagesN
       + '\n画风：' + bt.artStyle + '\n情绪基调：' + bt.style;
@@ -308,6 +314,9 @@ function genBedtimeStory(){
 function applyStory(obj, target){
   var bt = target || state.bedtime;
   bt.title = obj.title || bt.theme || '睡前故事';
+  /* v2.58：主角外观设定整本统一；故事内容变了旧设定图作废（避免新故事顶着上一版的脸） */
+  if(obj.character && String(obj.character).trim()) bt.charDesc = String(obj.character).trim();
+  bt.charRefURL = ''; bt.charRefErr = '';
   bt.pages = (obj.pages || []).map(function(p){
     return { text:String(p.text || ''), imgPrompt:String(p.imgPrompt || p.text || ''), imgURL:'', audURL:'', audB64:'', audMime:'', audRemote:false, imgErr:'', audErr:'' };
   });
@@ -316,19 +325,88 @@ function applyStory(obj, target){
   renderBedtime();
   toast('故事已生成：' + bt.pages.length + ' 页');
 }
-function genBedtimeImage(p, idx){
+/* -------- v2.58：角色一致性（解决「每页独立绘制、人物形象不统一」） --------
+ * 做法对齐主流程已验证的一致性体系（compute.js anchorsForShot + api.js buildImageBody）：
+ *   ① 文字锚点：整本故事共用同一段主角外观设定 charDesc（LLM 生成故事时一并产出），
+ *      每页插画提示词都注入「必须与参考图同一角色 / 外观以 charDesc 为准，禁止重新设计」；
+ *   ② 图片参考：先花 1 张图生成「角色设定图」charRefURL，之后每一页插画都通过
+ *      extra_body.image=[charRefURL] 把它作为参考图传给接口（主流程副图同款机制），
+ *      模型有图可依，人物/服装/配色才不会每页重新抽卡；
+ *   ③ 画风令牌：artStyle + 情绪每页固定注入，整本统一调性。 */
+function bedCharDesc(){
+  var bt = state.bedtime || {};
+  if(bt.charDesc && String(bt.charDesc).trim()) return String(bt.charDesc).trim();
+  var th = (bt.theme || '').trim();
+  return th ? ('本故事的主角（' + th + '）的可爱卡通形象') : '本故事的可爱主角';
+}
+/* 每页插画提示词：角色锁（参考图 + 文字锚点）+ 本页场景动作 + 统一画风 */
+function bedImgPrompt(p){
+  var bt = state.bedtime || {};
+  var parts = [];
+  if(bt.charRefURL){
+    parts.push('画面主角必须与参考图是同一个角色：保持完全相同的物种、年龄、发型发色、五官、服装款式与配色，'
+      + '不要重新设计角色外观、不要更换衣服、不要改变体型；');
+  }
+  if(bt.charDesc && String(bt.charDesc).trim()) parts.push('主角外观设定（所有页统一）：' + bedCharDesc() + '。');
+  parts.push('场景与动作：' + (p.imgPrompt || p.text || '') + '。');
+  parts.push('画风（整本绘本统一）：' + (bt.artStyle || '童话水彩绘本') + '，氛围：' + (bt.style || '温柔')
+    + '，儿童绘本插画，画面柔和温暖，不要出现任何文字。');
+  return parts.join('');
+}
+/* 生成「角色设定图」：全书一致性的锚。失败时 resolve(false) 让后续插画退化为纯文字锚点，不中断流程 */
+function genBedtimeCharRef(){
+  var bt = state.bedtime, myId = bt.id;
+  if(!bt.pages.length){ toast('请先生成故事'); return Promise.resolve(false); }
+  if(!hasAgnesKey()){ toast('需要 Agnes Key 才能生成角色设定图（决定所有插画的人物一致性）'); return Promise.resolve(false); }
+  if(guardBudget()) return Promise.resolve(false);
+  if(bt._charRefRunning){ toast('角色设定图生成中，请稍候…'); return Promise.resolve(false); }
+  bt._charRefRunning = true;
+  bt.status = '角色设定图生成中（人物一致性的关键）…'; bt.charRefErr = ''; renderBedtime();
   return apiPostAgnes(cfg.agnesBase + '/images/generations', {
     model:(cfg.imgModel || 'agnes-image-2.5-flash'),
-    prompt:(p.imgPrompt || '') + '。' + (state.bedtime.artStyle || ''),
+    prompt:'儿童绘本角色设定图（character reference sheet）：' + bedCharDesc() + '。'
+      + '主角全身正面立绘，完整清晰展示发型、服装与配色，表情温柔安定，'
+      + (bt.artStyle || '童话水彩绘本') + '风格，纯色柔和渐变背景，画面中不要出现任何文字。',
     size:cfg.imgSize || '1024x1024',
-    ratio:state.bedtime.ratio || '3:4',
+    ratio:bt.ratio || '3:4',
     extra_body:{ response_format:'url' }
   }).then(function(r){
     var j = parseJsonSafe(r.text);
     var url = j && j.data && j.data[0] && (j.data[0].url || (j.data[0].b64_json ? 'data:image/png;base64,' + j.data[0].b64_json : ''));
-    if(r.status >= 400 || !url){ var m = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0, 180); throw new Error('HTTP ' + r.status + ' ' + m); }
-    return url;
-  });
+    if(r.status >= 400 || !url){ var m = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0,180); throw new Error('HTTP ' + r.status + ' ' + m); }
+    if(state.bedtimeId !== myId) return false;
+    bt.charRefURL = url; bt.charRefErr = '';
+    bt.status = '角色设定图完成（后续插画都以它为参考，人物全程一致）';
+    renderBedtime(); toast('角色设定图完成——每一页插画都会参考它，人物形象统一');
+    return true;
+  }).catch(function(e){
+    console.error(e);
+    if(state.bedtimeId === myId){
+      bt.charRefErr = guessCorsMsg(e);
+      bt.status = '角色设定图失败（' + bt.charRefErr + '），插画将仅用文字锚点';
+      renderBedtime(); toast('角色设定图失败：' + bt.charRefErr + '（插画仍会按文字设定生成）');
+    }
+    return false;
+  }).then(function(ok){ bt._charRefRunning = false; return ok; });
+}
+function genBedtimeImage(p, idx){
+  var bt = state.bedtime;
+  var body = {
+    model:(cfg.imgModel || 'agnes-image-2.5-flash'),
+    prompt: bedImgPrompt(p),
+    size:cfg.imgSize || '1024x1024',
+    ratio:bt.ratio || '3:4',
+    extra_body:{ response_format:'url' }
+  };
+  /* 角色设定图作为参考图传入（主流程副图同款机制）：模型有图可依，人物才不漂移 */
+  if(bt.charRefURL) body.extra_body.image = [bt.charRefURL];
+  return apiPostAgnes(cfg.agnesBase + '/images/generations', body)
+    .then(function(r){
+      var j = parseJsonSafe(r.text);
+      var url = j && j.data && j.data[0] && (j.data[0].url || (j.data[0].b64_json ? 'data:image/png;base64,' + j.data[0].b64_json : ''));
+      if(r.status >= 400 || !url){ var m = (j && (j.detail || j.message || j.error)) ? JSON.stringify(j.detail || j.message || j.error) : (r.text || '').slice(0, 180); throw new Error('HTTP ' + r.status + ' ' + m); }
+      return url;
+    });
 }
 function genBedtimeImages(){
   var bt = state.bedtime, myId = bt.id;
@@ -340,15 +418,25 @@ function genBedtimeImages(){
   }
   if(guardBudget()) return;
   bt.status = '插画生成中…'; renderBedtime();
-  var seq = bt.pages.map(function(p, i){ return i; });
-  var run = function(k){
-    if(state.bedtimeId !== myId) return;          /* 已切换到其它故事 → 中止，避免串档 */
-    if(k >= seq.length){ bt.status = '绘本插画完成'; renderBedtime(); toast('绘本插画完成'); return; }
-    var i = seq[k], p = bt.pages[i];
-    genBedtimeImage(p, i).then(function(url){ if(state.bedtimeId !== myId) return; p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1); })
-      .catch(function(e){ if(state.bedtimeId !== myId) return; console.error(e); p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1); });
+  var kick = function(){
+    if(state.bedtimeId !== myId) return;
+    var seq = bt.pages.map(function(p, i){ return i; });
+    var run = function(k){
+      if(state.bedtimeId !== myId) return;          /* 已切换到其它故事 → 中止，避免串档 */
+      if(k >= seq.length){ bt.status = '绘本插画完成'; renderBedtime(); toast('绘本插画完成'); return; }
+      var i = seq[k], p = bt.pages[i];
+      genBedtimeImage(p, i).then(function(url){ if(state.bedtimeId !== myId) return; p.imgURL = url; p.imgErr = ''; renderBedtime(); run(k + 1); })
+        .catch(function(e){ if(state.bedtimeId !== myId) return; console.error(e); p.imgErr = guessCorsMsg(e); renderBedtime(); run(k + 1); });
+    };
+    run(0);
   };
-  run(0);
+  /* 先确保有角色设定图：没有就先生成（1 张图的成本换全书人物一致，非常值）；
+     生成失败也继续（退化为纯文字锚点，不阻断插画流程）；正在生成中则等它，避免这批插画丢了参考图 */
+  if(!bt.charRefURL){
+    if(bt._charRefRunning){ toast('角色设定图生成中，请稍候…（它决定所有插画的人物一致性）'); return; }
+    genBedtimeCharRef().then(kick); return;
+  }
+  kick();
 }
 function genBedtimeAudio(p){
   return apiPostTts(cfg.ttsBase.replace(/\/+$/, '') + '/chat/completions', cfg.ttsKey, buildTtsBody(p.text, bedtimeVoiceId(), state.bedtime.style))
@@ -450,6 +538,9 @@ function genOneClip(p, seg){
     + '重要：这段是第三人称画外旁白，角色不要开口说话、不要出现说话口型；'
     + '请生成温柔舒缓的画外旁白配音来朗读它（音色：' + voice + '），'
     + '并配以轻柔舒缓的摇篮曲背景音乐，营造安静助眠的氛围。';
+  /* v2.58：主角外观锚点——视频以本页插画为首帧，角色形象已由设定图锁定，这里再用文字锁一道 */
+  var cd = (state.bedtime.charDesc && String(state.bedtime.charDesc).trim()) ? String(state.bedtime.charDesc).trim() : '';
+  if(cd) prompt += '主角外观必须与首帧插画严格一致，不要改变：' + cd + '。';
   /* 对齐官方 agnes-video-2.5-flash（OpenAI-Videos 兼容）：mode 必填；插画作首帧走 keyframe；
      秒数取 4–12，Flash 固定 720P。禁用不存在的 width/height/num_frames/frame_rate/extra_body。 */
   var sec = Math.min(12, Math.max(4, Math.round(seg.length / 4) || 5));
@@ -748,6 +839,7 @@ function buildBedtimeShell(){
     + '  <button id="bed-merge" class="bed-btn">④b 合成单视频(ffmpeg)</button>'
     + '</div>'
     + '<div id="bed-status" style="font-size:13px;color:#8ad;min-height:18px;margin-bottom:6px"></div>'
+    + '<div id="bed-charref"></div>'
     + '<div id="bed-stage" style="display:none;margin:8px 0;padding:10px;border:1px solid #345;border-radius:10px;background:#0b1030">'
     + '  <img id="bed-stage-img" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:8px" alt="绘本">'
     + '  <div id="bed-stage-cap" style="font-size:13px;color:#cdd;margin:8px 0;text-align:center"></div>'
@@ -814,6 +906,28 @@ function renderBedtime(){
   syncBedStorySelect();                         /* 把故事下拉同步到当前编辑项 */
   // 状态
   var st = $('bed-status'); if(st) st.textContent = (bt.title ? '《' + bt.title + '》 ' : '') + (bt.status || '');
+  // 角色设定图（v2.58：插画/视频人物一致性的锚）
+  var cr = $('bed-charref');
+  if(cr){
+    var thumb = bt.charRefURL
+      ? '<img src="' + bt.charRefURL + '" alt="角色设定图" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid #345;flex:0 0 auto">'
+      : '<div style="width:72px;height:72px;border-radius:8px;border:1px dashed #345;display:flex;align-items:center;justify-content:center;color:#789;font-size:11px;text-align:center;flex:0 0 auto">暂无<br>设定图</div>';
+    var desc = (bt.charDesc && String(bt.charDesc).trim())
+      ? ('主角设定：' + String(bt.charDesc))
+      : '点「② 生成绘本插画」会先自动生成一张主角设定图，之后每一页都以它为参考，人物形象全程统一。';
+    cr.innerHTML = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0;padding:8px;border:1px solid #345;border-radius:10px;background:#0b1030">'
+      + thumb
+      + '<div style="flex:1 1 220px;min-width:200px"><div style="font-size:13px;color:#8ad">🎯 角色设定图（人物一致性的关键）</div>'
+      + '<div style="font-size:12px;color:#9aa;line-height:1.5">' + desc
+      + (bt.charRefErr ? ' <span style="color:#f99">上次失败：' + bt.charRefErr + '</span>' : '')
+      + '</div></div>'
+      + '<button id="bed-regen-charref" class="bed-btn">' + (bt.charRefURL ? '↻ 重画角色设定' : '🎨 生成角色设定') + '</button>'
+      + '</div>';
+    var rb = $('bed-regen-charref'); if(rb) rb.onclick = function(){
+      if(bt.charRefURL && !confirm('重画角色设定图？已生成的绘本插画不会自动更新，需再点②才会按新设定重画。')) return;
+      genBedtimeCharRef();
+    };
+  }
   // 视频区（Agnes V2.0 音画同步片段）
   var vst = $('bed-video-status'); if(vst) vst.textContent = (bt.videoStatus ? ('视频状态：' + bt.videoStatus) : '') + (bt.videoErr ? '（' + bt.videoErr + '）' : '');
   var vc = $('bed-video-clips');
