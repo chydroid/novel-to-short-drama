@@ -628,7 +628,8 @@ function closeNewProjDlg(){ $('newProjDlg').classList.remove('on'); if(!$('projD
 function newProjAs(kind){
   closeNewProjDlg();
   var label = kind === 'bedtime' ? '睡前故事' : '新剧目';
-  askInput('给' + label + '起个名字', label).then(function(n){
+  /* v2.59：预填名也先去重——输入框里直接给一个不重名的默认值，用户不改名也不会重名 */
+  askInput('给' + label + '起个名字', uniqProjName(label)).then(function(n){
     if(!n) return;
     createProject(n, { kind: kind });
   });
@@ -665,6 +666,16 @@ function resetStuck(){
 }
 /* ============== v2.49：多剧目管理 ============== */
 function projName(id){ var p = (state.projects||[]).filter(function(x){ return x.id === id; })[0]; return p ? p.name : ''; }
+/* v2.59：剧目名去重——新建时连点确定拿到默认名（「新剧目」/「睡前故事」）会重名，
+   下拉里多项同名让用户以为列表没更新。这里自动加序号，保证每一项都认得出。 */
+function uniqProjName(name){
+  var taken = {};
+  (state.projects || []).forEach(function(p){ if(p.name) taken[p.name] = 1; });
+  if(!taken[name]) return name;
+  var i = 2;
+  while(taken[name + ' ' + i]) i++;
+  return name + ' ' + i;
+}
 function saveProjects(){
   /* v2.53：剧目列表写失败不能静默——否则删掉的剧目刷新后又冒出来（数据已删，只剩个空壳） */
   lsSet(LS+'projects', JSON.stringify(state.projects), { warn:true, msg:'剧目列表保存失败（存储已满）：本次改动刷新后不保留' });
@@ -730,8 +741,11 @@ function ensureProjects(){
 }
 function renderProjSel(){
   var sel = $('projSel'); if(!sel) return;
+  /* v2.59：选项带类型后缀（与管理弹窗口径一致）——否则建了几个都叫「新剧目」的剧目时，
+     下拉里几项长得一模一样，用户会以为「列表没有更新」。 */
   sel.innerHTML = (state.projects || []).map(function(p){
-    return '<option value="' + esc(p.id) + '"' + (p.id === state.pid ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+    return '<option value="' + esc(p.id) + '"' + (p.id === state.pid ? ' selected' : '') + '>'
+      + esc(p.name) + (p.kind === 'bedtime' ? ' · 睡前故事' : '') + '</option>';
   }).join('');
 }
 function renderProjDlg(){
@@ -764,7 +778,7 @@ function resetProjUiState(){
   try{ if(typeof closePromptBox === 'function') closePromptBox(); }catch(e){}
 }
 function createProject(name, opts){
-  name = (name || '新剧目').trim() || '新剧目';
+  name = uniqProjName((name || '新剧目').trim() || '新剧目');   /* v2.59：重名自动加序号，下拉项可区分 */
   opts = opts || {};
   var id = 'prj_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
   state.projects.push({ id:id, name:name, kind:(opts.kind === 'bedtime' ? 'bedtime' : 'drama'), createdAt:Date.now(), updatedAt:Date.now() });
@@ -779,6 +793,7 @@ function createProject(name, opts){
   renderProjSel(); renderProjDlg();
   return loadShots().then(function(){ return loadAssets(); }).then(function(){
     restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    toast('已创建并切换到「' + name + '」');   /* v2.59：明确反馈，避免用户以为没生效 */
     if((opts.kind || 'drama') === 'bedtime') setView('bedtime');
     return id;
   });
