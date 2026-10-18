@@ -17,7 +17,7 @@ var bedtimeReady = false;
 function newBedStoryObj(theme){
   return {
     id: 's_' + Date.now() + '_' + Math.floor(Math.random() * 1e6),
-    theme: theme || '', title:'', pages:[], age:'3-8 岁', artStyle:'童话水彩绘本',
+    theme: theme || '', title:'', pages:[], age:'5-8 岁', artStyle:'童话水彩绘本',
     voice:'', style:'温柔', ratio:'3:4', pagesN:6,
     charDesc:'', charRefURL:'', charRefErr:'',   /* v2.58：主角固定外观设定 + 角色设定图（插画一致性的锚） */
     /* v2.60：独立短视频分镜（参考小说转短剧管线：完整故事拆镜 + 每镜 5-12s + 运镜/环境声） */
@@ -123,7 +123,7 @@ function saveStoryData(bt){
   var payload = {
     id: bt.id, theme: bt.theme || '', title: bt.title || '',
     pagesN: bt.pagesN || 6, artStyle: bt.artStyle || '童话水彩绘本', voice: bt.voice || '',
-    style: bt.style || '温柔', ratio: bt.ratio || '3:4', age: bt.age || '3-8 岁', status: bt.status || '',
+    style: bt.style || '温柔', ratio: bt.ratio || '3:4', age: bt.age || '5-8 岁', status: bt.status || '',
     charDesc: bt.charDesc || '', charRefURL: bt.charRefURL || '',
     /* v2.60：短视频分镜（taskId/vstat 也落盘——刷新后据此恢复在途轮询，不重复提交） */
     vshotSig: bt.vshotSig || '', vidSec: bedVShotClampSec(num(bt.vidSec) || 6), vshotsN: Math.max(0, num(bt.vshotsN) || 0),
@@ -146,10 +146,19 @@ function saveStoryData(bt){
   state.bedtimeList = list; bedListSave(list);
 }
 function saveBedtime(){ if(!bedtimeReady) return; if(!state.bedtime || !state.bedtime.id) return; saveStoryData(state.bedtime); }
+/* 适读年龄回填：旧故事存的「3-8 岁」等已下档选项 → 回落默认档，避免下拉显示空白 */
+function bedAgeOpt(v){
+  var sel = $('bed-age');
+  if(!sel) return v || '5-8 岁';
+  for(var i = 0; i < sel.options.length; i++){
+    if(sel.options[i].value === v) return v;
+  }
+  return '5-8 岁';
+}
 function populateBedInputs(bt){
   bt = bt || state.bedtime || {};
   if($('bed-theme')) $('bed-theme').value = bt.theme || '';
-  if($('bed-age')) $('bed-age').value = bt.age || '3-8 岁';
+  if($('bed-age')) $('bed-age').value = bedAgeOpt(bt.age);
   if($('bed-pages')) $('bed-pages').value = String(bt.pagesN || 6);
   if($('bed-art')) $('bed-art').value = bt.artStyle || '童话水彩绘本';
   if($('bed-ratio')) $('bed-ratio').value = bt.ratio || '3:4';
@@ -207,8 +216,8 @@ function delBedtimeStory(){
 }
 function syncBedOpts(){
   var bt = state.bedtime;
-  if($('bed-age')) bt.age = $('bed-age').value;
-  if($('bed-pages')) bt.pagesN = Math.max(2, Math.min(12, num($('bed-pages').value) || 6));
+  if($('bed-age')) bt.age = $('bed-age').value || '5-8 岁';
+  if($('bed-pages')) bt.pagesN = Math.max(2, Math.min(20, num($('bed-pages').value) || 6));
   if($('bed-art')) bt.artStyle = $('bed-art').value;
   if($('bed-voice')) bt.voice = $('bed-voice').value;
   if($('bed-style')) bt.style = $('bed-style').value;
@@ -313,12 +322,12 @@ function genBedtimeStory(){
   syncBedOpts();                               /* 读入表单到当前故事 */
   var bt = state.bedtime, target = bt;         /* target 固定指向本次要生成的故事，防生成期间切换串档 */
   if(cfg.textKey){
-    var sys = '你是一个儿童睡前故事作家。根据用户的「主题」创作一个温柔、治愈、适合 3-8 岁儿童的睡前故事。'
+    var sys = '你是一个儿童睡前故事作家。根据用户的「主题」创作一个温柔、治愈、适合 5-8 岁儿童的睡前故事。'
       + '请只输出 JSON，格式：{"title":"故事标题","character":"主角的固定外观设定","pages":[{"text":"这一页的旁白文字（1-3 句，温暖简短）","imgPrompt":"这一页对应的绘本插画提示词（中文，描述画面、角色、氛围，不要含文字）"}]}。'
       + '「character」是整本绘本唯一的主角外观设定（20-60字）：写清物种/年龄/性别、发型发色、五官特点、服装款式与配色、标志性特征，所有页必须完全一致。'
       + '每页的 imgPrompt 只描述该页的场景、动作与氛围，严禁改写主角的外观、服装或配色（主角形象以 character 为准，始终保持同一形象）。'
       + '页数由用户指定。不要输出 JSON 以外的任何内容。';
-    var user = '主题：' + theme0 + '\n适读年龄：' + (bt.age || '3-8 岁') + '\n页数：' + bt.pagesN
+    var user = '主题：' + theme0 + '\n适读年龄：' + (bt.age || '5-8 岁') + '\n页数：' + bt.pagesN
       + '\n画风：' + bt.artStyle + '\n情绪基调：' + bt.style;
     bt.status = '故事生成中…'; renderBedtime();
     apiPost(cfg.textBase.replace(/\/+$/, '') + '/chat/completions', cfg.textKey, { model:cfg.textModel, messages:[{ role:'system', content:sys }, { role:'user', content:user }] })
@@ -1369,8 +1378,8 @@ function buildBedtimeShell(){
     + '    <textarea id="bed-theme" rows="2" placeholder="例如：一只怕黑的小熊，在森林里找星星" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #345;background:#0e1530;color:#e8ecff"></textarea>'
     + '  </div>'
     + '  <div style="flex:1 1 320px;min-width:280px;display:grid;grid-template-columns:1fr 1fr;gap:8px">'
-    + '    <label style="font-size:13px;color:#9aa">适读年龄<select id="bed-age" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option>3-5 岁</option><option selected>3-8 岁</option><option>6-10 岁</option></select></label>'
-    + '    <label style="font-size:13px;color:#9aa">页数<select id="bed-pages" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option>4</option><option selected>6</option><option>8</option><option>10</option><option>12</option></select></label>'
+    + '    <label style="font-size:13px;color:#9aa">适读年龄<select id="bed-age" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option>3-5 岁</option><option selected>5-8 岁</option><option>6-10 岁</option></select></label>'
+    + '    <label style="font-size:13px;color:#9aa">页数<select id="bed-pages" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option>4</option><option selected>6</option><option>8</option><option>10</option><option>12</option><option>14</option><option>16</option><option>18</option><option>20</option></select></label>'
     + '    <label style="font-size:13px;color:#9aa">画风<select id="bed-art" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option>童话水彩绘本</option><option>柔和 3D 卡通</option><option>蜡笔手绘</option><option>国风水墨</option><option>梦幻光影</option></select></label>'
     + '    <label style="font-size:13px;color:#9aa">比例<select id="bed-ratio" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option value="3:4" selected>3:4 竖版</option><option value="1:1">1:1 方图</option><option value="16:9">16:9 横版</option><option value="9:16">9:16 手机</option></select></label>'
     + '    <label style="font-size:13px;color:#9aa">旁白音色<select id="bed-voice" style="width:100%;padding:6px;border-radius:6px;border:1px solid #345;background:#0e1530;color:#e8ecff"><option>温柔女声</option><option>慈爱爷爷</option><option>柔和男声</option><option>精灵妹妹</option></select></label>'
