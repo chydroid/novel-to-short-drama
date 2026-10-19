@@ -7,12 +7,13 @@
 function initBedtimeState(){
   if(!state.bedtime) state.bedtime = newBedStoryObj('');
 }
-/* -------- 多故事模型（v2.57）：每个睡前故事独立存储，互不干扰 --------
- * 存储：LS+'bedlist'        → 故事索引 [{id,theme,title,updated}]（不含正文）
- *       LS+'bedstory_'+id   → 单个故事正文（含 pages/视频片段；不存 audB64，音频本体走 audSave）
- * 音频本体按 storyId 隔离：audKey(id+'_bed_'+i)，保证不同故事的同一页不会互相覆盖。
- * 下拉框在「儿童睡前故事生成器」右侧选择要编辑的故事；填写主题并生成＝新建一份独立故事。
- * 旧版单故事（LS+'bedtime'）在首次启动时自动迁移为第一条故事。 */
+/* -------- 多故事模型（v2.57 → v2.63 改为「项目内多故事」父子关系） --------
+ * 每个睡前故事归属一个「睡前故事项目」；故事索引/正文/音频全部按 pid 命名空间隔离（与 shots/assets 一致）。
+ * 存储：LS+pid+':bedlist'        → 该项目下故事索引 [{id,theme,title,updated}]（不含正文）
+ *       LS+pid+':bedstory_'+id   → 单个故事正文（含 pages/视频片段；不存 audB64，音频本体走 audSave）
+ * 音频本体按 storyId 隔离：audKey(id+'_bed_'+i) 经 pk 落 LS+pid+':aud_…'，归属于故事所在项目。
+ * 切换剧目（顶部「剧目」下拉）→ 载入该项目自己的故事集（下方「编辑故事」下拉随之刷新）；二者为父子关系、不强求同名。
+ * 旧版全局 bedtime（LS+'bedlist' / LS+'bedstory_'+id）在首次进入某睡前故事项目时整体迁入该项目（仅一次）。 */
 var bedtimeReady = false;
 function newBedStoryObj(theme){
   return {
@@ -26,12 +27,49 @@ function newBedStoryObj(theme){
     _cur:0, _playing:false, _moviePlaying:false, demo:false, mergedAudioURL:'', mergedCount:0
   };
 }
+/* v2.63：睡前故事归属到具体「睡前故事项目」（父子关系：顶部剧目＝项目，编辑故事＝项目内的故事）。
+ * 列表/正文/音频全部按 pid 命名空间隔离（与 shots/assets 一致）；切换剧目即切换故事集，不再有全局 bedtime 列表与剧目脱钩。 */
+function bedNs(){ return state.pid || 'g'; }
 function bedListLoad(){
-  try{ var raw = localStorage.getItem(LS + 'bedlist'); if(!raw) return []; var o = JSON.parse(raw); return Array.isArray(o) ? o : []; }catch(e){ return []; }
+  try{ var raw = localStorage.getItem(LS + bedNs() + ':bedlist'); if(!raw) return []; var o = JSON.parse(raw); return Array.isArray(o) ? o : []; }catch(e){ return []; }
 }
-function bedListSave(list){ try{ localStorage.setItem(LS + 'bedlist', JSON.stringify(list || [])); }catch(e){} }
-function bedStoryKey(id){ return LS + 'bedstory_' + id; }
+function bedListSave(list){ try{ localStorage.setItem(LS + bedNs() + ':bedlist', JSON.stringify(list || [])); }catch(e){} }
+function bedStoryKey(id){ return LS + bedNs() + ':bedstory_' + id; }
 function bedAudKey(i){ return ((state.bedtime && state.bedtime.id) ? state.bedtime.id : 's') + '_bed_' + i; }
+/* 旧版全局 bedtime（LS+'bedlist' + LS+'bedstory_'+id）整体迁入指定 pid 命名空间；迁完即删全局键（只迁一次）。 */
+function migLegacyBedtimeTo(pid){
+  var raw = null; try{ raw = localStorage.getItem(LS + 'bedlist'); }catch(e){}
+  if(!raw) return false;
+  var glist = null; try{ glist = JSON.parse(raw); }catch(e){ glist = null; }
+  if(!Array.isArray(glist) || !glist.length){ try{ localStorage.removeItem(LS + 'bedlist'); }catch(e){} return false; }
+  var ns = pid;
+  var newList = [];
+  glist.forEach(function(m){
+    var id = m.id;
+    var body = null; try{ body = localStorage.getItem(LS + 'bedstory_' + id); }catch(e){}
+    if(body){ try{ localStorage.setItem(LS + ns + ':bedstory_' + id, body); }catch(e){} }
+    if(body){
+      try{
+        var pages = (JSON.parse(body).pages || []);
+        for(var i = 0; i < pages.length; i++){
+          var ok = findBedAudioKey(id, i);
+          if(ok){ var aj = null; try{ aj = localStorage.getItem(ok); }catch(e){} if(aj){ try{ localStorage.setItem(LS + ns + ':aud_' + id + '_bed_' + i, aj); }catch(e){} try{ localStorage.removeItem(ok); }catch(e){} } }
+        }
+      }catch(e){}
+    }
+    newList.push({ id:id, theme:m.theme || '', title:m.title || '', updated:m.updated || Date.now() });
+  });
+  state.bedtimeList = newList; bedListSave(newList);
+  try{ localStorage.removeItem(LS + 'bedlist'); }catch(e){}
+  glist.forEach(function(m){ try{ localStorage.removeItem(LS + 'bedstory_' + m.id); }catch(e){} });
+  return true;
+}
+/* 旧音频按「当时 state.pid」落 pk 键，扫描全部 LS 键里以 ':aud_<id>_bed_<i>' 结尾的那个 */
+function findBedAudioKey(id, i){
+  var suffix = ':aud_' + id + '_bed_' + i;
+  try{ for(var k = 0; k < localStorage.length; k++){ var key = localStorage.key(k); if(key && key.indexOf(suffix) === key.length - suffix.length) return key; } }catch(e){}
+  return '';
+}
 function addBedtimeToList(meta){
   var list = state.bedtimeList || [];
   if(!list.some(function(x){ return x.id === meta.id; })) list.push(meta);
@@ -40,23 +78,9 @@ function addBedtimeToList(meta){
 function safeParseBed(raw){ try{ var o = JSON.parse(raw); return (o && typeof o === 'object') ? o : null; }catch(e){ return null; } }
 function ensureBedtime(){
   var list = bedListLoad();
-  if(!list.length){
-    /* 迁移旧版单故事：LS+'bedtime' → 第一条故事，并把其音频从旧键 bed_<i> 迁到 新键 id+'_bed_'+i */
-    var oldRaw = null; try{ oldRaw = localStorage.getItem(LS + 'bedtime'); }catch(e){}
-    if(oldRaw){
-      try{
-        var o = JSON.parse(oldRaw); if(!o || !o.pages) throw 0;
-        var id = 's_mig_' + Date.now();
-        o.id = id;
-        (o.pages || []).forEach(function(p, i){
-          if(!p.audRemote){ try{ var a = audLoad('bed_' + i); if(a && a.b64) audSave(id + '_bed_' + i, a.b64, a.mime || 'audio/mpeg', 0); }catch(e){} }
-        });
-        list.push({ id:id, theme:o.theme || '', title:o.title || '', updated:Date.now() });
-        bedListSave(list);
-        try{ localStorage.setItem(bedStoryKey(id), oldRaw); }catch(e){}   /* 正文也要落盘，否则 loadBedtimeStory 读空 */
-        try{ localStorage.removeItem(LS + 'bedtime'); }catch(e){}
-      }catch(e){}
-    }
+  if(!list.length && currentProjectKind() === 'bedtime'){
+    /* 仅当当前剧目是睡前故事项目时才迁移旧全局数据，避免把睡前故事错塞进短剧项目 */
+    if(migLegacyBedtimeTo(bedNs())) list = bedListLoad();
   }
   if(!list.length){
     var ns = newBedStoryObj('');
@@ -66,8 +90,8 @@ function ensureBedtime(){
     bedtimeReady = true; return;
   }
   state.bedtimeList = list;
-  var cur = state.bedtimeId || (list[0] && list[0].id);
-  if(!cur || !list.some(function(x){ return x.id === cur; })) cur = list[0].id;
+  var cur = state.bedtimeId;
+  if(!cur || !list.some(function(x){ return x.id === cur; })) cur = list[0].id;   /* 切换项目后 bedtimeId 可能属于别的项目，必须按本列表校验/回落 */
   state.bedtimeId = cur;
   loadBedtimeStory(cur, true);
 }

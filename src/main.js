@@ -805,6 +805,7 @@ function createProject(name, opts){
   renderProjSel(); renderProjDlg();
   return loadShots().then(function(){ return loadAssets(); }).then(function(){
     restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    if((opts.kind || 'drama') === 'bedtime') ensureBedtime();   /* v2.63：新建睡前故事项目→初始化该项目的默认故事 */
     toast('已创建并切换到「' + name + '」');   /* v2.59：明确反馈，避免用户以为没生效 */
     /* v2.61：无条件按新剧目类型切视图+同步平台框架——之前只有 bedtime 才 setView，
      * 从睡前故事平台新建短剧剧目时会停在睡前故事视图（两平台内容互串） */
@@ -814,6 +815,7 @@ function createProject(name, opts){
 }
 function switchProject(pid){
   if(!pid || pid === state.pid) return Promise.resolve();
+  try{ if(bedtimeReady && currentProjectKind() === 'bedtime') saveBedtime(); }catch(e){}   /* v2.63：仅当正离开睡前故事项目时才 flush（归属旧 pid）；离开短剧项目时 state.bedtime 是残留的睡前故事，不能误写进短剧命名空间 */
   state.pid = pid; saveProjects();
   state.shots = []; state.assets = []; state.chapters = []; state.undo = []; state.redo = [];
   resetProjUiState();                 /* v2.53：同上 */
@@ -823,6 +825,7 @@ function switchProject(pid){
   refreshAll(); renderProjSel(); renderProjDlg();
   return loadShots().then(function(){ return loadAssets(); }).then(function(){
     restoreChapters(); loadUndo(); loadRedo(); refreshAll(); renderProjSel(); renderProjDlg();
+    if(currentProjectKind() === 'bedtime') ensureBedtime();   /* v2.63：切到睡前故事项目→按 pid 载入该项目的故事集 */
     setView(currentProjectKind() === 'bedtime' ? 'bedtime' : 'script');
     return true;
   });
